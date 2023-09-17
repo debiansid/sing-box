@@ -175,6 +175,9 @@ func (m *Manager) Close() error {
 	m.started = false
 	outbounds := m.outbounds
 	m.outbounds = nil
+	clear(m.outboundByTag)
+	clear(m.dependByTag)
+	m.defaultOutbound = nil
 	m.access.Unlock()
 	var err error
 	for _, outbound := range outbounds {
@@ -215,9 +218,20 @@ func (m *Manager) Default() adapter.Outbound {
 }
 
 func (m *Manager) Remove(tag string) error {
+	return m.remove(tag, nil)
+}
+
+func (m *Manager) RemoveIfSame(member adapter.Outbound) error {
+	return m.remove(member.Tag(), member)
+}
+
+func (m *Manager) remove(tag string, expected adapter.Outbound) error {
 	m.access.Lock()
 	defer m.access.Unlock()
 	outbound, found := m.outboundByTag[tag]
+	if expected != nil && outbound != expected {
+		return nil
+	}
 	if !found {
 		return os.ErrInvalid
 	}
@@ -279,6 +293,10 @@ func (m *Manager) Create(ctx context.Context, router adapter.Router, logger log.
 	}
 	m.access.Lock()
 	defer m.access.Unlock()
+	if expected, conditional := adapter.ProviderUpdateFromContext(ctx); conditional && m.outboundByTag[tag] != expected {
+		common.Close(outbound)
+		return E.New("outbound tag is owned by another configuration: ", tag)
+	}
 	if existsOutbound, loaded := m.outboundByTag[tag]; loaded {
 		if m.started {
 			err = common.Close(existsOutbound)

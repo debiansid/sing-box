@@ -66,6 +66,7 @@ func (m *Manager) Close() error {
 	m.started = false
 	endpoints := m.endpoints
 	m.endpoints = nil
+	clear(m.endpointByTag)
 	monitor := taskmonitor.New(m.logger, C.StopTimeout)
 	var err error
 	for _, endpoint := range endpoints {
@@ -95,8 +96,20 @@ func (m *Manager) Get(tag string) (adapter.Endpoint, bool) {
 }
 
 func (m *Manager) Remove(tag string) error {
+	return m.remove(tag, nil)
+}
+
+func (m *Manager) RemoveIfSame(member adapter.Outbound) error {
+	return m.remove(member.Tag(), member)
+}
+
+func (m *Manager) remove(tag string, expected adapter.Outbound) error {
 	m.access.Lock()
 	endpoint, found := m.endpointByTag[tag]
+	if expected != nil && endpoint != expected {
+		m.access.Unlock()
+		return nil
+	}
 	if !found {
 		m.access.Unlock()
 		return os.ErrInvalid
@@ -124,6 +137,10 @@ func (m *Manager) Create(ctx context.Context, router adapter.Router, logger log.
 	}
 	m.access.Lock()
 	defer m.access.Unlock()
+	if expected, conditional := adapter.ProviderUpdateFromContext(ctx); conditional && m.endpointByTag[tag] != expected {
+		endpoint.Close()
+		return E.New("endpoint tag is owned by another configuration: ", tag)
+	}
 	if m.started {
 		name := "endpoint/" + endpoint.Type() + "[" + endpoint.Tag() + "]"
 		for _, stage := range adapter.ListStartStages {
