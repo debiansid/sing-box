@@ -11,54 +11,6 @@ import (
 	E "github.com/sagernet/sing/common/exceptions"
 )
 
-func (s *Box) startOutbounds() error {
-	monitor := taskmonitor.New(s.logger, C.StartTimeout)
-	outboundTags := make(map[adapter.Outbound]string)
-	outbounds := make(map[string]adapter.Outbound)
-	for i, outboundToStart := range s.outbounds {
-		var outboundTag string
-		if outboundToStart.Tag() == "" {
-			outboundTag = F.ToString(i)
-		} else {
-			outboundTag = outboundToStart.Tag()
-		}
-		if _, exists := outbounds[outboundTag]; exists {
-			return E.New("outbound tag ", outboundTag, " duplicated")
-		}
-		outboundTags[outboundToStart] = outboundTag
-		outbounds[outboundTag] = outboundToStart
-	}
-	started := make(map[string]bool)
-	for {
-		canContinue := false
-	startOne:
-		for _, outboundToStart := range s.outbounds {
-			outboundTag := outboundTags[outboundToStart]
-			if started[outboundTag] {
-				continue
-			}
-			dependencies := outboundToStart.Dependencies()
-			for _, dependency := range dependencies {
-				if !started[dependency] {
-					continue startOne
-				}
-			}
-			started[outboundTag] = true
-			canContinue = true
-			if starter, isStarter := outboundToStart.(common.Starter); isStarter {
-				monitor.Start("initialize outbound/", outboundToStart.Type(), "[", outboundTag, "]")
-				err := starter.Start()
-				monitor.Finish()
-				if err != nil {
-					return E.Cause(err, "initialize outbound/", outboundToStart.Type(), "[", outboundTag, "]")
-				}
-			}
-		}
-		if len(started) == len(s.outbounds) {
-			break
-		}
-		if canContinue {
-		}
 func (s *Box) startOutboundsAndOutboundProviders() error {
 	outboundGraph := datastructure.NewGraph[string, adapter.Outbound]()
 	startedOutboundMap := make(map[string]bool)
@@ -80,11 +32,6 @@ func (s *Box) startOutboundsAndOutboundProviders() error {
 			if dpNode == nil {
 				dpNode = datastructure.NewGraphNode[string, adapter.Outbound](dependency, nil)
 				outboundGraph.AddNode(dpNode)
-			} else {
-				data := dpNode.Data()
-				if data != nil {
-					return E.New("outbound [", dependency, "] already exists")
-				}
 			}
 			dpNode.AddNext(node)
 			node.AddPrev(dpNode)
@@ -107,7 +54,7 @@ func (s *Box) startOutboundsAndOutboundProviders() error {
 	}
 	outboundQueue := datastructure.NewQueue[*datastructure.GraphNode[string, adapter.Outbound]]()
 	providerQueue := datastructure.NewQueue[adapter.OutboundProvider]()
-	monitor := taskmonitor.New(s.logger, C.DefaultStartTimeout)
+	monitor := taskmonitor.New(s.logger, C.StartTimeout)
 	for {
 		for outboundQueue.Len() > 0 {
 			node := outboundQueue.Pop()
@@ -152,14 +99,11 @@ func (s *Box) startOutboundsAndOutboundProviders() error {
 					if dpNode == nil {
 						dpNode = datastructure.NewGraphNode[string, adapter.Outbound](dependency, nil)
 						outboundGraph.AddNode(dpNode)
-					} else if dpNode.Data() != nil {
-						_, loaded := provider.Outbound(dependency)
-						if !loaded {
-							return E.New("outbound [", dependency, "] already exists")
-						}
 					}
-					dpNode.AddNext(outNode)
-					outNode.AddPrev(dpNode)
+					if !startedOutboundMap[dependency] {
+						dpNode.AddNext(outNode)
+						outNode.AddPrev(dpNode)
+					}
 				}
 			}
 			startedProviderMap[provider.Tag()] = true
@@ -201,6 +145,11 @@ func (s *Box) startOutboundsAndOutboundProviders() error {
 		}
 		for _, node := range outboundGraph.NodeMap() {
 			if node.Data() == nil {
+				for _, provider := range s.outboundProviders {
+					if node.ID() == provider.Tag() {
+						return E.New("outbound [", provider.DependentOutbound(), "] not found")
+					}
+				}
 				return E.New("outbound [", node.ID(), "] not found")
 			}
 		}

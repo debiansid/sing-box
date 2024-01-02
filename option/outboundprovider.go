@@ -14,6 +14,7 @@ type OutboundProvider struct {
 	HTTP3           bool                                    `json:"http3,omitempty"`
 	Headers         map[string]string                       `json:"headers,omitempty"`
 	SelectorOptions SelectorOutboundOptions                 `json:"selector,omitempty"`
+	Optimize        bool                                    `json:"optimize,omitempty"`
 	Actions         Listable[OutboundProviderActionOptions] `json:"actions,omitempty"`
 	DialerOptions
 }

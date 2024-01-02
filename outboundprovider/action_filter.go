@@ -7,7 +7,6 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
-	E "github.com/sagernet/sing/common/exceptions"
 )
 
 var _ action = (*actionFilter)(nil)
@@ -19,13 +18,14 @@ func init() {
 }
 
 type actionFilterOptions struct {
-	Rules     option.Listable[string] `json:"rules"`
-	WhiteMode bool                    `json:"white_mode,omitempty"`
+	Rules   option.Listable[string] `json:"rules"`
+	Logical string                  `json:"logical,omitempty"`
+	Invert  bool                    `json:"invert,omitempty"`
 }
 
 type actionFilter struct {
-	outboundMatchers []outboundMatcher
-	whiteMode        bool
+	outboundMatcherGroup adapter.OutboundMatcher
+	invert               bool
 }
 
 func (a *actionFilter) UnmarshalJSON(content []byte) error {
@@ -34,33 +34,29 @@ func (a *actionFilter) UnmarshalJSON(content []byte) error {
 	if err != nil {
 		return err
 	}
-	if len(options.Rules) > 0 {
-		a.outboundMatchers = make([]outboundMatcher, 0, len(options.Rules))
-		for i, rule := range options.Rules {
-			matcher, err := newOutboundMatcher(rule)
-			if err != nil {
-				return E.Cause(err, "invalid rule[", i, "]: ", rule)
-			}
-			a.outboundMatchers = append(a.outboundMatchers, matcher)
-		}
+	logical := options.Logical
+	if logical == "" {
+		logical = "or"
 	}
-	a.whiteMode = options.WhiteMode
+	a.outboundMatcherGroup, err = adapter.NewOutboundMatcherGroup(options.Rules, logical)
+	if err != nil {
+		return err
+	}
+	a.invert = options.Invert
 	return nil
 }
 
 func (a *actionFilter) apply(_ context.Context, _ adapter.Router, logger log.ContextLogger, processor *processor) error {
 	var deleteOutbounds []string
 	processor.ForeachOutbounds(func(outbound *option.Outbound) bool {
-		for _, matcher := range a.outboundMatchers {
-			if matcher.match(outbound) {
-				if !a.whiteMode {
-					deleteOutbounds = append(deleteOutbounds, outbound.Tag)
-				}
-				return true
+		if a.outboundMatcherGroup.MatchOptions(outbound) {
+			if !a.invert {
+				deleteOutbounds = append(deleteOutbounds, outbound.Tag)
 			}
-		}
-		if a.whiteMode {
-			deleteOutbounds = append(deleteOutbounds, outbound.Tag)
+		} else {
+			if a.invert {
+				deleteOutbounds = append(deleteOutbounds, outbound.Tag)
+			}
 		}
 		return true
 	})
