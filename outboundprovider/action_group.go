@@ -20,15 +20,16 @@ func init() {
 }
 
 type actionGroupOptions struct {
-	Rules     option.Listable[string] `json:"rules,omitempty"`
-	BlackMode bool                    `json:"black_mode,omitempty"`
-	Outbound  option.Outbound         `json:"outbound"`
+	Rules    option.Listable[string] `json:"rules,omitempty"`
+	Logical  string                  `json:"logical,omitempty"`
+	Invert   bool                    `json:"invert,omitempty"`
+	Outbound option.Outbound         `json:"outbound"`
 }
 
 type actionGroup struct {
-	outboundMatchers []outboundMatcher
-	blackMode        bool
-	outbound         option.Outbound
+	outboundMatcherGroup adapter.OutboundMatcher
+	invert               bool
+	outbound             option.Outbound
 }
 
 func (a *actionGroup) UnmarshalJSON(content []byte) error {
@@ -37,17 +38,15 @@ func (a *actionGroup) UnmarshalJSON(content []byte) error {
 	if err != nil {
 		return err
 	}
-	if len(options.Rules) > 0 {
-		a.outboundMatchers = make([]outboundMatcher, 0, len(options.Rules))
-		for i, rule := range options.Rules {
-			matcher, err := newOutboundMatcher(rule)
-			if err != nil {
-				return E.Cause(err, "invalid rule[", i, "]: ", rule)
-			}
-			a.outboundMatchers = append(a.outboundMatchers, matcher)
-		}
+	logical := options.Logical
+	if logical == "" {
+		logical = "or"
 	}
-	a.blackMode = options.BlackMode
+	a.outboundMatcherGroup, err = adapter.NewOutboundMatcherGroup(options.Rules, logical)
+	if err != nil {
+		return err
+	}
+	a.invert = options.Invert
 	switch options.Outbound.Type {
 	case C.TypeSelector:
 	case C.TypeURLTest:
@@ -61,16 +60,14 @@ func (a *actionGroup) UnmarshalJSON(content []byte) error {
 func (a *actionGroup) apply(_ context.Context, _ adapter.Router, logger log.ContextLogger, processor *processor) error {
 	var outbounds []string
 	processor.ForeachOutbounds(func(outbound *option.Outbound) bool {
-		for _, matcher := range a.outboundMatchers {
-			if matcher.match(outbound) {
-				if !a.blackMode {
-					outbounds = append(outbounds, outbound.Tag)
-				}
-				return true
+		if a.outboundMatcherGroup.MatchOptions(outbound) {
+			if !a.invert {
+				outbounds = append(outbounds, outbound.Tag)
 			}
-		}
-		if a.blackMode {
-			outbounds = append(outbounds, outbound.Tag)
+		} else {
+			if a.invert {
+				outbounds = append(outbounds, outbound.Tag)
+			}
 		}
 		return true
 	})
@@ -80,9 +77,23 @@ func (a *actionGroup) apply(_ context.Context, _ adapter.Router, logger log.Cont
 	outbound := a.outbound
 	switch outbound.Type {
 	case C.TypeSelector:
-		outbound.SelectorOptions.Outbounds = outbounds
+		if len(outbound.SelectorOptions.Outbounds) > 0 {
+			oldOutbounds := outbound.SelectorOptions.Outbounds
+			outbound.SelectorOptions.Outbounds = make([]string, 0, len(oldOutbounds)+len(outbounds))
+			outbound.SelectorOptions.Outbounds = append(outbound.SelectorOptions.Outbounds, oldOutbounds...)
+			outbound.SelectorOptions.Outbounds = append(outbound.SelectorOptions.Outbounds, outbounds...)
+		} else {
+			outbound.SelectorOptions.Outbounds = outbounds
+		}
 	case C.TypeURLTest:
-		outbound.URLTestOptions.Outbounds = outbounds
+		if len(outbound.URLTestOptions.Outbounds) > 0 {
+			oldOutbounds := outbound.URLTestOptions.Outbounds
+			outbound.URLTestOptions.Outbounds = make([]string, 0, len(oldOutbounds)+len(outbounds))
+			outbound.URLTestOptions.Outbounds = append(outbound.URLTestOptions.Outbounds, oldOutbounds...)
+			outbound.URLTestOptions.Outbounds = append(outbound.URLTestOptions.Outbounds, outbounds...)
+		} else {
+			outbound.URLTestOptions.Outbounds = outbounds
+		}
 	}
 	processor.AddGroupOutbound(outbound)
 	logger.Debug("add group outbound: ", outbound.Tag)

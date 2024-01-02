@@ -35,13 +35,6 @@ func (p *processor) GroupOutbounds() []option.Outbound {
 	return p.groupOutbounds
 }
 
-func (p *processor) Build() []option.Outbound {
-	outbounds := make([]option.Outbound, 0, len(p.outbounds)+len(p.groupOutbounds))
-	outbounds = append(outbounds, p.outbounds...)
-	outbounds = append(outbounds, p.groupOutbounds...)
-	return outbounds
-}
-
 func (p *processor) AddOutbound(outbound option.Outbound) {
 	p.outbounds = append(p.outbounds, outbound)
 	p.outboundByTag[outbound.Tag] = &outbound

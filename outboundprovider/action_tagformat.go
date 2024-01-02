@@ -21,15 +21,16 @@ func init() {
 }
 
 type actionTagFormatOptions struct {
-	Rules     option.Listable[string] `json:"rules"`
-	BlackMode bool                    `json:"black_mode,omitempty"`
-	Format    string                  `json:"format"`
+	Rules   option.Listable[string] `json:"rules"`
+	Logical string                  `json:"logical,omitempty"`
+	Invert  bool                    `json:"invert,omitempty"`
+	Format  string                  `json:"format"`
 }
 
 type actionTagFormat struct {
-	outboundMatchers []outboundMatcher
-	blackMode        bool
-	format           string
+	outboundMatcherGroup adapter.OutboundMatcher
+	invert               bool
+	format               string
 }
 
 func (a *actionTagFormat) UnmarshalJSON(content []byte) error {
@@ -38,17 +39,15 @@ func (a *actionTagFormat) UnmarshalJSON(content []byte) error {
 	if err != nil {
 		return err
 	}
-	if len(options.Rules) > 0 {
-		a.outboundMatchers = make([]outboundMatcher, 0, len(options.Rules))
-		for i, rule := range options.Rules {
-			matcher, err := newOutboundMatcher(rule)
-			if err != nil {
-				return E.Cause(err, "invalid rule[", i, "]: ", rule)
-			}
-			a.outboundMatchers = append(a.outboundMatchers, matcher)
-		}
+	logical := options.Logical
+	if logical == "" {
+		logical = "or"
 	}
-	a.blackMode = options.BlackMode
+	a.outboundMatcherGroup, err = adapter.NewOutboundMatcherGroup(options.Rules, logical)
+	if err != nil {
+		return err
+	}
+	a.invert = options.Invert
 	if options.Format == "" {
 		return E.New("missing format")
 	}
@@ -66,16 +65,14 @@ func (a *actionTagFormat) formatTag(s string) string {
 func (a *actionTagFormat) apply(_ context.Context, _ adapter.Router, logger log.ContextLogger, processor *processor) error {
 	var outbounds []*option.Outbound
 	processor.ForeachOutbounds(func(outbound *option.Outbound) bool {
-		for _, matcher := range a.outboundMatchers {
-			if matcher.match(outbound) {
-				if !a.blackMode {
-					outbounds = append(outbounds, outbound)
-				}
-				return true
+		if a.outboundMatcherGroup.MatchOptions(outbound) {
+			if !a.invert {
+				outbounds = append(outbounds, outbound)
 			}
-		}
-		if a.blackMode {
-			outbounds = append(outbounds, outbound)
+		} else {
+			if a.invert {
+				outbounds = append(outbounds, outbound)
+			}
 		}
 		return true
 	})
