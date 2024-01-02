@@ -24,7 +24,11 @@ func (p *VMess) ParseLink(link string) error {
 	sLink := strings.TrimPrefix(link, "vmess://")
 	raw, err := base64.URLEncoding.DecodeString(sLink)
 	if err != nil {
-		return fmt.Errorf("parse link `%s` failed: %w", link, err)
+		var err2 error
+		raw, err2 = base64.StdEncoding.DecodeString(sLink)
+		if err2 != nil {
+			return fmt.Errorf("parse link `%s` failed: %w", link, err)
+		}
 	}
 	var _vmessInfo vmessInfo
 	err = json.Unmarshal(raw, &_vmessInfo)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/srs"
@@ -66,6 +67,16 @@ func NewLocalRuleSet(router adapter.Router, options option.RuleSet) (*LocalRuleS
 	metadata.ContainsWIFIRule = hasHeadlessRule(plainRuleSet.Rules, isWIFIHeadlessRule)
 	metadata.ContainsIPCIDRRule = hasHeadlessRule(plainRuleSet.Rules, isIPCIDRHeadlessRule)
 	return &LocalRuleSet{tag: options.Tag, rules: rules, metadata: metadata}, nil
+	metadata.Format = options.Format
+	return &LocalRuleSet{options.Tag, rules, metadata}, nil
+}
+
+func (s *LocalRuleSet) Tag() string {
+	return s.tag
+}
+
+func (s *LocalRuleSet) Type() string {
+	return "local"
 }
 
 func (s *LocalRuleSet) Name() string {
@@ -113,6 +124,7 @@ func (s *LocalRuleSet) RegisterCallback(callback adapter.RuleSetUpdateCallback) 
 }
 
 func (s *LocalRuleSet) UnregisterCallback(element *list.Element[adapter.RuleSetUpdateCallback]) {
+	return nil
 }
 
 func (s *LocalRuleSet) Close() error {
@@ -127,4 +139,5 @@ func (s *LocalRuleSet) Match(metadata *adapter.InboundContext) bool {
 		}
 	}
 	return false
+func (s *LocalRuleSet) Update() {
 }

@@ -49,6 +49,7 @@ type RemoteRuleSet struct {
 	callbackAccess sync.Mutex
 	callbacks      list.List[adapter.RuleSetUpdateCallback]
 	refs           atomic.Int32
+	updateChan     chan struct{}
 }
 
 func NewRemoteRuleSet(ctx context.Context, router adapter.Router, logger logger.ContextLogger, options option.RuleSet) *RemoteRuleSet {
@@ -67,6 +68,7 @@ func NewRemoteRuleSet(ctx context.Context, router adapter.Router, logger logger.
 		options:        options,
 		updateInterval: updateInterval,
 		pauseManager:   service.FromContext[pause.Manager](ctx),
+		updateChan:     make(chan struct{}, 1),
 	}
 }
 
@@ -76,6 +78,21 @@ func (s *RemoteRuleSet) Name() string {
 
 func (s *RemoteRuleSet) String() string {
 	return strings.Join(F.MapToString(s.rules), " ")
+func (s *RemoteRuleSet) Tag() string {
+	return s.options.Tag
+}
+
+func (s *RemoteRuleSet) Type() string {
+	return "remote"
+}
+
+func (s *RemoteRuleSet) Match(metadata *adapter.InboundContext) bool {
+	for _, rule := range s.rules {
+		if rule.Match(metadata) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *RemoteRuleSet) StartContext(ctx context.Context, startContext adapter.RuleSetStartContext) error {
@@ -121,7 +138,10 @@ func (s *RemoteRuleSet) PostStart() error {
 }
 
 func (s *RemoteRuleSet) Metadata() adapter.RuleSetMetadata {
-	return s.metadata
+	metadata := s.metadata
+	metadata.LastUpdated = s.lastUpdated
+	metadata.Format = s.options.Format
+	return metadata
 }
 
 func (s *RemoteRuleSet) ExtractIPSet() []*netipx.IPSet {
@@ -187,6 +207,8 @@ func (s *RemoteRuleSet) loadBytes(content []byte) error {
 	s.metadata.ContainsProcessRule = hasHeadlessRule(plainRuleSet.Rules, isProcessHeadlessRule)
 	s.metadata.ContainsWIFIRule = hasHeadlessRule(plainRuleSet.Rules, isWIFIHeadlessRule)
 	s.metadata.ContainsIPCIDRRule = hasHeadlessRule(plainRuleSet.Rules, isIPCIDRHeadlessRule)
+	s.metadata.RuleNum = len(rules)
+	s.lastUpdated = time.Now()
 	s.rules = rules
 	s.callbackAccess.Lock()
 	callbacks := s.callbacks.Array()
@@ -218,6 +240,16 @@ func (s *RemoteRuleSet) loopUpdate() {
 				s.logger.Error("fetch rule-set ", s.options.Tag, ": ", err)
 			} else if s.refs.Load() == 0 {
 				s.rules = nil
+			}
+		case <-s.updateChan:
+			s.pauseManager.WaitActive()
+			err := s.fetchOnce(s.ctx, nil)
+			if err != nil {
+				s.logger.Error("fetch rule-set ", s.options.Tag, ": ", err)
+			}
+			select {
+			case <-s.updateTicker.C:
+			default:
 			}
 		}
 	}
@@ -305,6 +337,7 @@ func (s *RemoteRuleSet) fetchOnce(ctx context.Context, startContext adapter.Rule
 func (s *RemoteRuleSet) Close() error {
 	s.rules = nil
 	s.updateTicker.Stop()
+	close(s.updateChan)
 	s.cancel()
 	return nil
 }
@@ -316,4 +349,10 @@ func (s *RemoteRuleSet) Match(metadata *adapter.InboundContext) bool {
 		}
 	}
 	return false
+}
+func (s *RemoteRuleSet) Update() {
+	select {
+	case s.updateChan <- struct{}{}:
+	default:
+	}
 }
