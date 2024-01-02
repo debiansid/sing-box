@@ -71,19 +71,26 @@ type OutboundProvider struct {
 	http3                bool
 	header               http.Header
 	selectorOptions      option.SelectorOutboundOptions
+	optimize             bool
 	dialer               N.Dialer
 	dependentOutboundTag string
 	actions              []action
 	httpClient           *http.Client
 	cacheFile            adapter.CacheFile
 	cacheData            adapter.OutboundProviderData
-	outbounds            []adapter.Outbound
-	outboundByTag        map[string]adapter.Outbound
-	basicOutoundLen      int
-	updateLock           sync.Mutex
-	loopCtx              context.Context
-	loopCancel           context.CancelFunc
-	loopCloseDone        chan struct{}
+	//
+	basicOutbounds     []adapter.Outbound
+	basicOutboundByTag map[string]adapter.Outbound
+	groupOutbounds     []adapter.Outbound
+	groupOutboundByTag map[string]adapter.Outbound
+	globalOutbound     adapter.Outbound
+	cacheOutbounds     []adapter.Outbound
+	//
+	updateLock    sync.Mutex
+	loopCtx       context.Context
+	loopCancel    context.CancelFunc
+	loopCloseDone chan struct{}
+	started       bool
 }
 
 func New(ctx context.Context, router adapter.Router, logFactory log.Factory, logger log.ContextLogger, tag string, options option.OutboundProvider) (adapter.OutboundProvider, error) {
@@ -100,6 +107,7 @@ func New(ctx context.Context, router adapter.Router, logFactory log.Factory, log
 		http3:           options.HTTP3,
 		header:          make(http.Header),
 		selectorOptions: options.SelectorOptions,
+		optimize:        options.Optimize,
 	}
 	if p.url == "" {
 		return nil, E.New("missing url")
@@ -161,23 +169,31 @@ func (p *OutboundProvider) PreStart() error {
 		}
 	}
 	p.cacheData = data
-	outbounds, basicOutboundLen, err := p.newOutbounds(data.Outbounds)
+	basicOutbounds, groupOutbounds, globalOutbound, err := p.newOutbounds(data.Outbounds)
 	p.cacheData.Outbounds = nil
 	if err != nil {
 		return E.Cause(err, "create outbounds failed")
 	}
-	outboundByTag := make(map[string]adapter.Outbound, len(outbounds))
-	for _, outbound := range outbounds {
-		outboundByTag[outbound.Tag()] = outbound
+	var (
+		basicOutboundByTag = make(map[string]adapter.Outbound, len(basicOutbounds))
+		groupOutboundByTag = make(map[string]adapter.Outbound, len(groupOutbounds))
+	)
+	for _, outbound := range basicOutbounds {
+		basicOutboundByTag[outbound.Tag()] = outbound
 	}
-	p.basicOutoundLen = basicOutboundLen
-	p.outbounds = outbounds
-	p.outboundByTag = outboundByTag
+	for _, outbound := range groupOutbounds {
+		groupOutboundByTag[outbound.Tag()] = outbound
+	}
+	p.basicOutbounds = basicOutbounds
+	p.basicOutboundByTag = basicOutboundByTag
+	p.groupOutbounds = groupOutbounds
+	p.groupOutboundByTag = groupOutboundByTag
+	p.globalOutbound = globalOutbound
 	return nil
 }
 
 func (p *OutboundProvider) Start() error {
-	if p.updateInterval > 0 {
+	if p.updateInterval > 0 && p.loopCtx == nil {
 		p.loopCtx, p.loopCancel = context.WithCancel(p.ctx)
 		p.loopCloseDone = make(chan struct{}, 1)
 		go p.loopUpdate()
@@ -186,7 +202,7 @@ func (p *OutboundProvider) Start() error {
 }
 
 func (p *OutboundProvider) Close() error {
-	if p.updateInterval > 0 {
+	if p.updateInterval > 0 && p.loopCancel != nil {
 		p.loopCancel()
 		<-p.loopCloseDone
 		close(p.loopCloseDone)
@@ -195,16 +211,73 @@ func (p *OutboundProvider) Close() error {
 }
 
 func (p *OutboundProvider) Outbounds() []adapter.Outbound {
-	return p.outbounds
+	outbounds := p.cacheOutbounds
+	if len(outbounds) == 0 {
+		outbounds = make([]adapter.Outbound, 0, len(p.basicOutbounds)+len(p.groupOutbounds)+1)
+		outbounds = append(outbounds, p.basicOutbounds...)
+		outbounds = append(outbounds, p.groupOutbounds...)
+		if p.globalOutbound != nil {
+			outbounds = append(outbounds, p.globalOutbound)
+		}
+		p.cacheOutbounds = outbounds
+	}
+	return outbounds
 }
 
 func (p *OutboundProvider) BasicOutbounds() []adapter.Outbound {
-	return p.outbounds[:p.basicOutoundLen]
+	if p.optimize {
+		basicOutbounds := make([]adapter.Outbound, 0, len(p.basicOutbounds))
+		for _, outbound := range p.basicOutbounds {
+			switch outbound.Type() {
+			case C.TypeDNS:
+			case C.TypeBlock:
+			case C.TypeShadowTLS:
+			default:
+				basicOutbounds = append(basicOutbounds, outbound)
+			}
+		}
+		return basicOutbounds
+	} else {
+		return p.basicOutbounds
+	}
+}
+
+func (p *OutboundProvider) FilterOutbounds(matcher adapter.OutboundMatcher, invert bool) []adapter.Outbound {
+	outbounds := make([]adapter.Outbound, 0, len(p.basicOutbounds)+len(p.groupOutbounds))
+	outbounds = append(outbounds, p.basicOutbounds...)
+	outbounds = append(outbounds, p.groupOutbounds...)
+	filterOutbounds := make([]adapter.Outbound, 0, len(outbounds))
+	for _, outbound := range outbounds {
+		if !invert {
+			if matcher.MatchOutbound(outbound) {
+				filterOutbounds = append(filterOutbounds, outbound)
+			}
+		} else {
+			if !matcher.MatchOutbound(outbound) {
+				filterOutbounds = append(filterOutbounds, outbound)
+			}
+		}
+	}
+	return filterOutbounds
 }
 
 func (p *OutboundProvider) Outbound(tag string) (adapter.Outbound, bool) {
-	outbound, loaded := p.outboundByTag[tag]
-	return outbound, loaded
+	if p.globalOutbound != nil && p.globalOutbound.Tag() == tag {
+		return p.globalOutbound, true
+	}
+	if p.basicOutboundByTag != nil {
+		outbound, loaded := p.basicOutboundByTag[tag]
+		if loaded {
+			return outbound, true
+		}
+	}
+	if p.groupOutboundByTag != nil {
+		outbound, loaded := p.groupOutboundByTag[tag]
+		if loaded {
+			return outbound, true
+		}
+	}
+	return nil, false
 }
 
 func (p *OutboundProvider) Update() {
@@ -231,7 +304,7 @@ func (p *OutboundProvider) HealthCheck() {
 	if urlTestHistoryStroage == nil {
 		return
 	}
-	outbounds := p.outbounds
+	outbounds := p.basicOutbounds
 	ctx, cancel := context.WithTimeout(p.ctx, DefaultHealthCheckTimeout)
 	defer cancel()
 	b, _ := batch.New(ctx, batch.WithConcurrencyNum[*struct{}](10))
@@ -241,9 +314,7 @@ func (p *OutboundProvider) HealthCheck() {
 	)
 	for _, out := range outbounds {
 		switch out.Type() {
-		case C.TypeSelector:
-			continue
-		case C.TypeURLTest:
+		case C.TypeDNS, C.TypeShadowTLS, C.TypeBlock, C.TypeSelector, C.TypeURLTest:
 			continue
 		}
 		detour := out
@@ -279,32 +350,54 @@ func (p *OutboundProvider) HealthCheck() {
 	}
 }
 
-func (p *OutboundProvider) newOutbounds(outboundOptions []option.Outbound) ([]adapter.Outbound, int, error) { // basicOutboundLen
+func (p *OutboundProvider) newOutbounds(outboundOptions []option.Outbound) ([]adapter.Outbound, []adapter.Outbound, adapter.Outbound, error) { // basicOutbound, groupOutbound, globalOutbound
 	processor := newProcessor(outboundOptions)
 	var err error
 	for i, action := range p.actions {
 		err = action.apply(p.ctx, p.router, p.logger, processor)
 		if err != nil {
-			return nil, 0, E.Cause(err, "apply action[", i, "] failed")
+			return nil, nil, nil, E.Cause(err, "apply action[", i, "] failed")
 		}
 	}
-	outboundOptions = processor.Build()
+	basicOutboundOptions := processor.BasicOutbounds()
+	if len(basicOutboundOptions) == 0 {
+		return nil, nil, nil, E.New("missing basic outbound")
+	}
+	groupOutboundOptions := processor.GroupOutbounds()
 	globalOutboundOptions := option.Outbound{
 		Tag:             p.tag,
 		Type:            C.TypeSelector,
 		SelectorOptions: p.selectorOptions,
 	}
-	outboundTags := make([]string, 0, len(globalOutboundOptions.SelectorOptions.Outbounds)+len(outboundOptions))
+	outboundTags := make([]string, 0, len(globalOutboundOptions.SelectorOptions.Outbounds)+len(basicOutboundOptions)+len(groupOutboundOptions))
 	if len(globalOutboundOptions.SelectorOptions.Outbounds) > 0 {
 		outboundTags = append(outboundTags, globalOutboundOptions.SelectorOptions.Outbounds...)
 	}
-	for _, outbound := range outboundOptions {
+	if p.optimize {
+		for _, outbound := range basicOutboundOptions {
+			switch outbound.Type {
+			case C.TypeDNS:
+			case C.TypeBlock:
+			case C.TypeShadowTLS:
+			default:
+				outboundTags = append(outboundTags, outbound.Tag)
+			}
+		}
+	} else {
+		for _, outbound := range basicOutboundOptions {
+			outboundTags = append(outboundTags, outbound.Tag)
+		}
+	}
+	for _, outbound := range groupOutboundOptions {
 		outboundTags = append(outboundTags, outbound.Tag)
 	}
 	globalOutboundOptions.SelectorOptions.Outbounds = outboundTags
 	// create outbounds
-	outbounds := make([]adapter.Outbound, 0, len(outboundOptions)+1)
-	for i, outboundOptions := range outboundOptions {
+	var (
+		basicOutbounds = make([]adapter.Outbound, 0, len(basicOutboundOptions))
+		groupOutbounds = make([]adapter.Outbound, 0, len(groupOutboundOptions))
+	)
+	for i, outboundOptions := range basicOutboundOptions {
 		var out adapter.Outbound
 		out, err = outbound.New(
 			p.ctx,
@@ -313,9 +406,22 @@ func (p *OutboundProvider) newOutbounds(outboundOptions []option.Outbound) ([]ad
 			outboundOptions.Tag,
 			outboundOptions)
 		if err != nil {
-			return nil, 0, E.Cause(err, "parse outbound[", i, "]")
+			return nil, nil, nil, E.Cause(err, "parse basic outbound[", i, "]")
 		}
-		outbounds = append(outbounds, out)
+		basicOutbounds = append(basicOutbounds, out)
+	}
+	for i, outboundOptions := range groupOutboundOptions {
+		var out adapter.Outbound
+		out, err = outbound.New(
+			p.ctx,
+			p.router,
+			p.logFactory.NewLogger(F.ToString("outbound/", outboundOptions.Type, "[", outboundOptions.Tag, "]")),
+			outboundOptions.Tag,
+			outboundOptions)
+		if err != nil {
+			return nil, nil, nil, E.Cause(err, "parse group outbound[", i, "]")
+		}
+		groupOutbounds = append(groupOutbounds, out)
 	}
 	var globalOutbound adapter.Outbound
 	globalOutbound, err = outbound.New(
@@ -325,10 +431,9 @@ func (p *OutboundProvider) newOutbounds(outboundOptions []option.Outbound) ([]ad
 		globalOutboundOptions.Tag,
 		globalOutboundOptions)
 	if err != nil {
-		return nil, 0, E.Cause(err, "parse global outbound[", globalOutboundOptions.Tag, "]")
+		return nil, nil, nil, E.Cause(err, "parse global outbound[", globalOutboundOptions.Tag, "]")
 	}
-	outbounds = append(outbounds, globalOutbound)
-	return outbounds, len(processor.BasicOutbounds()), nil
+	return basicOutbounds, groupOutbounds, globalOutbound, nil
 }
 
 func (p *OutboundProvider) loopUpdate() {

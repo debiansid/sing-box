@@ -38,6 +38,7 @@ type RemoteRuleSet struct {
 	lastEtag       string
 	updateTicker   *time.Ticker
 	pauseManager   pause.Manager
+	updateChan     chan struct{}
 }
 
 func NewRemoteRuleSet(ctx context.Context, router adapter.Router, logger logger.ContextLogger, options option.RuleSet) *RemoteRuleSet {
@@ -56,7 +57,16 @@ func NewRemoteRuleSet(ctx context.Context, router adapter.Router, logger logger.
 		options:        options,
 		updateInterval: updateInterval,
 		pauseManager:   service.FromContext[pause.Manager](ctx),
+		updateChan:     make(chan struct{}, 1),
 	}
+}
+
+func (s *RemoteRuleSet) Tag() string {
+	return s.options.Tag
+}
+
+func (s *RemoteRuleSet) Type() string {
+	return "remote"
 }
 
 func (s *RemoteRuleSet) Match(metadata *adapter.InboundContext) bool {
@@ -117,7 +127,10 @@ func (s *RemoteRuleSet) PostStart() error {
 }
 
 func (s *RemoteRuleSet) Metadata() adapter.RuleSetMetadata {
-	return s.metadata
+	metadata := s.metadata
+	metadata.LastUpdated = s.lastUpdated
+	metadata.Format = s.options.Format
+	return metadata
 }
 
 func (s *RemoteRuleSet) loadBytes(content []byte) error {
@@ -150,6 +163,8 @@ func (s *RemoteRuleSet) loadBytes(content []byte) error {
 	}
 	s.metadata.ContainsProcessRule = hasHeadlessRule(plainRuleSet.Rules, isProcessHeadlessRule)
 	s.metadata.ContainsWIFIRule = hasHeadlessRule(plainRuleSet.Rules, isWIFIHeadlessRule)
+	s.metadata.RuleNum = len(rules)
+	s.lastUpdated = time.Now()
 	s.rules = rules
 	return nil
 }
@@ -171,6 +186,16 @@ func (s *RemoteRuleSet) loopUpdate() {
 			err := s.fetchOnce(s.ctx, nil)
 			if err != nil {
 				s.logger.Error("fetch rule-set ", s.options.Tag, ": ", err)
+			}
+		case <-s.updateChan:
+			s.pauseManager.WaitActive()
+			err := s.fetchOnce(s.ctx, nil)
+			if err != nil {
+				s.logger.Error("fetch rule-set ", s.options.Tag, ": ", err)
+			}
+			select {
+			case <-s.updateTicker.C:
+			default:
 			}
 		}
 	}
@@ -257,6 +282,14 @@ func (s *RemoteRuleSet) fetchOnce(ctx context.Context, startContext adapter.Rule
 
 func (s *RemoteRuleSet) Close() error {
 	s.updateTicker.Stop()
+	close(s.updateChan)
 	s.cancel()
 	return nil
+}
+
+func (s *RemoteRuleSet) Update() {
+	select {
+	case s.updateChan <- struct{}{}:
+	default:
+	}
 }
