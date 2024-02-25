@@ -6,7 +6,7 @@ on:
       - '**.md'
       - '.github/**'
       - '!.github/workflows/debug.yml'
-
+  workflow_dispatch:
 jobs:
   build:
     runs-on: ubuntu-latest
