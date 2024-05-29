@@ -902,6 +902,9 @@ func (r *Router) RuleSet(tag string) (adapter.RuleSet, bool) {
 func (r *Router) NeedWIFIState() bool {
 	return r.needWIFIState
 }
+func (r *Router) RuleSets() []adapter.RuleSet {
+	return r.ruleSets
+}
 
 func (r *Router) RouteConnection(ctx context.Context, conn net.Conn, metadata adapter.InboundContext) error {
 	if r.pauseManager.IsDevicePaused() {

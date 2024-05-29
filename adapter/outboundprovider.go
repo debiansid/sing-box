@@ -14,6 +14,7 @@ type OutboundProvider interface {
 	Outbounds() []Outbound
 	Outbound(tag string) (Outbound, bool)
 	BasicOutbounds() []Outbound
+	FilterOutbounds(matcher OutboundMatcher, invert bool) []Outbound
 	Update()
 	HealthCheck()
 	GetSubsctibeData() OutboundProviderSubscribeData

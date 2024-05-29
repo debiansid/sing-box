@@ -4,7 +4,7 @@ import (
 	"context"
 	"os"
 	"strings"
-
+	"time"
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/srs"
 	C "github.com/sagernet/sing-box/constant"
@@ -17,6 +17,7 @@ import (
 var _ adapter.RuleSet = (*LocalRuleSet)(nil)
 
 type LocalRuleSet struct {
+	tag      string
 	rules    []adapter.HeadlessRule
 	metadata adapter.RuleSetMetadata
 }
@@ -70,7 +71,6 @@ func (s *LocalRuleSet) Tag() string {
 
 func (s *LocalRuleSet) Type() string {
 	return "local"
->>>>>>> eec57995 (fix)
 }
 
 func (s *LocalRuleSet) Match(metadata *adapter.InboundContext) bool {
@@ -100,4 +100,7 @@ func (s *LocalRuleSet) Metadata() adapter.RuleSetMetadata {
 
 func (s *LocalRuleSet) Close() error {
 	return nil
+}
+
+func (s *LocalRuleSet) Update() {
 }
