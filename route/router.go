@@ -521,6 +521,7 @@ func (r *Router) initDefaultOutboundAgain() error {
 func (r *Router) Outbounds() []adapter.Outbound {
 	if !r.started {
 		return nil
+	}
 	if len(r.outboundProviders) > 0 {
 		outbounds := make([]adapter.Outbound, 0, len(r.outbounds)+len(r.outboundProviders))
 		outbounds = append(outbounds, r.outbounds...)
