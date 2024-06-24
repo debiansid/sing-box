@@ -542,6 +542,7 @@ func (r *Router) PreStart() error {
 			return err
 		}
 	}
+}
 	if r.networkMonitor != nil {
 		monitor.Start("initialize network monitor")
 		err := r.networkMonitor.Start()

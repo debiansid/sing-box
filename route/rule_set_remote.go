@@ -78,6 +78,7 @@ func (s *RemoteRuleSet) Name() string {
 
 func (s *RemoteRuleSet) String() string {
 	return strings.Join(F.MapToString(s.rules), " ")
+}
 func (s *RemoteRuleSet) Tag() string {
 	return s.options.Tag
 }

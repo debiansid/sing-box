@@ -139,5 +139,6 @@ func (s *LocalRuleSet) Match(metadata *adapter.InboundContext) bool {
 		}
 	}
 	return false
+}
 func (s *LocalRuleSet) Update() {
 }
