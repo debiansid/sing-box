@@ -69,7 +69,7 @@ func NewLocalRuleSet(router adapter.Router, options option.RuleSet) (*LocalRuleS
 	metadata.RuleNum = len(rules)
 	metadata.LastUpdated = time.Now()
 	metadata.Format = options.Format
-	return &LocalRuleSet{options.Tag, rules, metadata}, nil
+	return &LocalRuleSet{options.Tag, rules, metadata: metadata}, nil
 }
 
 func (s *LocalRuleSet) Tag() string {
@@ -125,7 +125,6 @@ func (s *LocalRuleSet) RegisterCallback(callback adapter.RuleSetUpdateCallback) 
 }
 
 func (s *LocalRuleSet) UnregisterCallback(element *list.Element[adapter.RuleSetUpdateCallback]) {
-	return nil
 }
 
 func (s *LocalRuleSet) Close() error {
