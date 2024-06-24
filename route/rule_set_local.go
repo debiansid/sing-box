@@ -66,7 +66,8 @@ func NewLocalRuleSet(router adapter.Router, options option.RuleSet) (*LocalRuleS
 	metadata.ContainsProcessRule = hasHeadlessRule(plainRuleSet.Rules, isProcessHeadlessRule)
 	metadata.ContainsWIFIRule = hasHeadlessRule(plainRuleSet.Rules, isWIFIHeadlessRule)
 	metadata.ContainsIPCIDRRule = hasHeadlessRule(plainRuleSet.Rules, isIPCIDRHeadlessRule)
-	return &LocalRuleSet{tag: options.Tag, rules: rules, metadata: metadata}, nil
+	metadata.RuleNum = len(rules)
+	metadata.LastUpdated = time.Now()
 	metadata.Format = options.Format
 	return &LocalRuleSet{options.Tag, rules, metadata}, nil
 }

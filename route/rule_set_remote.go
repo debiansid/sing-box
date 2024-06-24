@@ -343,14 +343,6 @@ func (s *RemoteRuleSet) Close() error {
 	return nil
 }
 
-func (s *RemoteRuleSet) Match(metadata *adapter.InboundContext) bool {
-	for _, rule := range s.rules {
-		if rule.Match(metadata) {
-			return true
-		}
-	}
-	return false
-}
 func (s *RemoteRuleSet) Update() {
 	select {
 	case s.updateChan <- struct{}{}:
