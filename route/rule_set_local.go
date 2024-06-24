@@ -69,7 +69,7 @@ func NewLocalRuleSet(router adapter.Router, options option.RuleSet) (*LocalRuleS
 	metadata.RuleNum = len(rules)
 	metadata.LastUpdated = time.Now()
 	metadata.Format = options.Format
-	return &LocalRuleSet{options.Tag, rules: rules, metadata: metadata}, nil
+	return &LocalRuleSet{tag: options.Tag, rules: rules, metadata: metadata}, nil
 }
 
 func (s *LocalRuleSet) Tag() string {
