@@ -97,7 +97,7 @@ type RawDefaultDNSRule struct {
 	User                     badoption.Listable[string]                                                  `json:"user,omitempty"`
 	UserID                   badoption.Listable[int32]                                                   `json:"user_id,omitempty"`
 	Outbound                 badoption.Listable[string]                                                  `json:"outbound,omitempty"`
-	ClashMode                string                                                                      `json:"clash_mode,omitempty"`
+	ClashMode                badoption.Listable[string]                                                  `json:"clash_mode,omitempty"`
 	NetworkType              badoption.Listable[InterfaceType]                                           `json:"network_type,omitempty"`
 	NetworkIsExpensive       bool                                                                        `json:"network_is_expensive,omitempty"`
 	NetworkIsConstrained     bool                                                                        `json:"network_is_constrained,omitempty"`
@@ -110,7 +110,6 @@ type RawDefaultDNSRule struct {
 	RuleSetIPCIDRMatchSource bool                                                                        `json:"rule_set_ip_cidr_match_source,omitempty"`
 	RuleSetIPCIDRAcceptEmpty bool                                                                        `json:"rule_set_ip_cidr_accept_empty,omitempty"`
 	Invert                   bool                                                                        `json:"invert,omitempty"`
-
 	// Deprecated: renamed to rule_set_ip_cidr_match_source
 	Deprecated_RulesetIPCIDRMatchSource bool `json:"rule_set_ipcidr_match_source,omitempty"`
 }
