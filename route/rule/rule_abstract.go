@@ -10,7 +10,25 @@ import (
 	F "github.com/sagernet/sing/common/format"
 )
 
+type abstractRule struct {
+	disabled bool
+	uuid     string
+}
+
+func (r *abstractRule) Disabled() bool {
+	return r.disabled
+}
+
+func (r *abstractRule) UUID() string {
+	return r.uuid
+}
+
+func (r *abstractRule) ChangeStatus() {
+	r.disabled = !r.disabled
+}
+
 type abstractDefaultRule struct {
+	abstractRule
 	items                   []RuleItem
 	sourceAddressItems      []RuleItem
 	sourcePortItems         []RuleItem
@@ -19,12 +37,17 @@ type abstractDefaultRule struct {
 	destinationPortItems    []RuleItem
 	allItems                []RuleItem
 	ruleSetItem             RuleItem
+	ruleCount               uint64
 	invert                  bool
 	action                  adapter.RuleAction
 }
 
 func (r *abstractDefaultRule) Type() string {
 	return C.RuleTypeDefault
+}
+
+func (r *abstractDefaultRule) RuleCount() uint64 {
+	return r.ruleCount
 }
 
 func (r *abstractDefaultRule) Start() error {
@@ -149,14 +172,20 @@ func (r *abstractDefaultRule) String() string {
 }
 
 type abstractLogicalRule struct {
-	rules  []adapter.HeadlessRule
-	mode   string
-	invert bool
-	action adapter.RuleAction
+	abstractRule
+	rules     []adapter.HeadlessRule
+	mode      string
+	invert    bool
+	action    adapter.RuleAction
+	ruleCount uint64
 }
 
 func (r *abstractLogicalRule) Type() string {
 	return C.RuleTypeLogical
+}
+
+func (r *abstractLogicalRule) RuleCount() uint64 {
+	return r.ruleCount
 }
 
 func (r *abstractLogicalRule) Start() error {
