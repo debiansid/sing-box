@@ -246,6 +246,9 @@ func (r *Router) Close() error {
 	}
 	return nil
 }
+func (r *Router) RuleSets() []adapter.RuleSet {
+	return r.ruleSets
+}
 func (r *Router) RuleSet(tag string) (adapter.RuleSet, bool) {
 	ruleSet, loaded := r.ruleSetMap[tag]
 	return ruleSet, loaded
