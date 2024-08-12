@@ -36,6 +36,7 @@ type RemoteRuleSet struct {
 	hash           hash.HashType
 	lastEtag       string
 	updateTicker   *time.Ticker
+	cacheFile      adapter.CacheFile
 	pauseManager   pause.Manager
 }
 
@@ -73,6 +74,7 @@ func (s *RemoteRuleSet) String() string {
 }
 
 func (s *RemoteRuleSet) StartContext(ctx context.Context, startContext *adapter.HTTPStartContext) error {
+	s.cacheFile = service.FromContext[adapter.CacheFile](s.ctx)
 	transport, err := s.resolveTransport()
 	if err != nil {
 		return E.Cause(err, "create rule-set http client")
@@ -121,6 +123,16 @@ func (s *RemoteRuleSet) update() {
 	} else if s.refs.Load() == 0 {
 		s.rules = nil
 	}
+}
+
+func (s *RemoteRuleSet) Update(ctx context.Context) error {
+	err := s.fetch(log.ContextWithNewID(ctx), false)
+	if err != nil {
+		return err
+	} else if s.refs.Load() == 0 {
+		s.rules = nil
+	}
+	return nil
 }
 
 func (s *RemoteRuleSet) fetch(ctx context.Context, isStart bool) error {
