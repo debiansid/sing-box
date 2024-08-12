@@ -47,7 +47,7 @@ import (
 func Context(ctx context.Context) context.Context {
 	return box.Context(ctx, InboundRegistry(), ProviderRegistry(), OutboundRegistry(), EndpointRegistry(), DNSTransportRegistry(), ServiceRegistry(), CertificateProviderRegistry())
 
-
+}
 
 func InboundRegistry() *inbound.Registry {
 	registry := inbound.NewRegistry()
