@@ -21,7 +21,7 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/dialer"
 	"github.com/sagernet/sing-box/common/outboundprovider/action"
-	"github.com/sagernet/sing-box/common/outboundprovider/proxyparser"
+	"github.com/sagernet/sing-box/common/proxyparser"
 	"github.com/sagernet/sing-box/common/taskmonitor"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
@@ -264,9 +264,9 @@ func (p *Provider) update(ctx context.Context) error {
 		p.logger.Error("failed to update outbound info: ", err)
 	} else {
 		p.logger.Info("outbound info updated")
+		info.Outbounds = nil
+		p.providerInfo = info
 	}
-	info.Outbounds = nil
-	p.providerInfo = info
 	return err
 }
 
