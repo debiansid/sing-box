@@ -49,7 +49,7 @@ jobs:
           CGO_ENABLED=0 GOARCH=amd64 GOOS=windows go build -v -trimpath -ldflags "-X 'github.com/sagernet/sing-box/constant.Version=${VERSION}' -H windowsgui -s -w -buildid=" -tags ${TAGS} ./cmd/sing-box
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4.4.0
         with:
           name: sing-box_core
           path: sing-box*
