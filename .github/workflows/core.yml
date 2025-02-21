@@ -2,6 +2,7 @@ name: Build Core
 
 on:
   push:
+    workflow_dispatch:
     paths-ignore:
       - '**.md'
       - '.github/**'
