@@ -12,6 +12,7 @@ import (
 	"github.com/sagernet/bbolt"
 	bboltErrors "github.com/sagernet/bbolt/errors"
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
@@ -132,8 +133,7 @@ func (c *CacheFile) Start(stage adapter.StartStage) error {
 	}
 	err = filemanager.Chown(c.ctx, c.path)
 	if err != nil {
-		db.Close()
-		return E.Cause(err, "platform chown")
+		log.WarnContext(c.ctx, "platform chown: ", err)
 	}
 	err = db.Batch(func(tx *bbolt.Tx) error {
 		return tx.ForEach(func(name []byte, b *bbolt.Bucket) error {
