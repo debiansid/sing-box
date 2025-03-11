@@ -77,6 +77,10 @@ it will be rejected.
 
 拒绝未知 SNI：如果连接的 server name 与 `server_name` 不符 且 证书中不包含它，则拒绝连接。
 
+For extended features
+
+- Providers: [中文](./docs/configuration/provider/index.zh.md), [English](./docs/configuration/provider/index.md)
+
 ## License
 
 ```
