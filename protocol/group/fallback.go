@@ -3,6 +3,7 @@ package group
 import (
 	"context"
 	"net"
+	"regexp"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -45,6 +46,16 @@ type Fallback struct {
 	idleTimeout                  time.Duration
 	group                        *FallbackGroup
 	interruptExternalConnections bool
+
+	provider       adapter.ProviderManager
+	providers      map[string]adapter.Provider
+	outboundsCache map[string][]adapter.Outbound
+	cancel         context.CancelFunc
+
+	providerTags    []string
+	exclude         *regexp.Regexp
+	include         *regexp.Regexp
+	useAllProviders bool
 }
 
 func NewFallback(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.FallbackOutboundOptions) (adapter.Outbound, error) {
@@ -59,20 +70,53 @@ func NewFallback(ctx context.Context, router adapter.Router, logger log.ContextL
 		interval:                     time.Duration(options.Interval),
 		idleTimeout:                  time.Duration(options.IdleTimeout),
 		interruptExternalConnections: options.InterruptExistConnections,
-	}
-	if len(outbound.tags) == 0 {
-		return nil, E.New("missing tags")
+
+		provider:       service.FromContext[adapter.ProviderManager](ctx),
+		providers:      make(map[string]adapter.Provider),
+		outboundsCache: make(map[string][]adapter.Outbound),
+
+		providerTags:    options.Providers,
+		exclude:         (*regexp.Regexp)(options.Exclude),
+		include:         (*regexp.Regexp)(options.Include),
+		useAllProviders: options.UseAllProviders,
 	}
 	return outbound, nil
 }
 
 func (s *Fallback) Start() error {
+	if s.useAllProviders {
+		var providerTags []string
+		for _, provider := range s.provider.Providers() {
+			providerTags = append(providerTags, provider.Tag())
+			s.providers[provider.Tag()] = provider
+			provider.RegisterCallback(s.onProviderUpdated)
+		}
+		s.providerTags = providerTags
+	} else {
+		for i, tag := range s.providerTags {
+			provider, loaded := s.provider.Get(tag)
+			if !loaded {
+				return E.New("outbound provider ", i, " not found: ", tag)
+			}
+			s.providers[tag] = provider
+			provider.RegisterCallback(s.onProviderUpdated)
+		}
+	}
+	if len(s.tags)+len(s.providerTags) == 0 {
+		return E.New("missing outbound and provider tags")
+	}
+
 	outbounds := make([]adapter.Outbound, 0, len(s.tags))
 	for i, tag := range s.tags {
 		detour, loaded := s.outbound.Outbound(tag)
 		if !loaded {
 			return E.New("outbound ", i, " not found: ", tag)
 		}
+		outbounds = append(outbounds, detour)
+	}
+	if len(s.tags) == 0 {
+		detour, _ := s.outbound.Outbound("Compatible")
+		s.tags = append(s.tags, detour.Tag())
 		outbounds = append(outbounds, detour)
 	}
 	group, err := NewFallbackGroup(s.ctx, s.outbound, s.logger, outbounds, s.link, s.interval, s.idleTimeout, s.interruptExternalConnections)
@@ -100,7 +144,10 @@ func (s *Fallback) Now() string {
 	} else if s.group.selectedOutboundUDP != nil {
 		return s.group.selectedOutboundUDP.Tag()
 	}
-	return s.tags[0]
+	if len(s.tags) > 0 {
+		return s.tags[0]
+	}
+	return ""
 }
 
 func (s *Fallback) All() []string {
@@ -113,6 +160,73 @@ func (s *Fallback) URLTest(ctx context.Context) (map[string]uint16, error) {
 
 func (s *Fallback) CheckOutbounds() {
 	s.group.CheckOutbounds(true)
+}
+
+func (s *Fallback) isGroupActive() bool {
+	if !s.group.started {
+		return false
+	}
+	return time.Since(s.group.lastActive.Load()) <= s.group.idleTimeout
+}
+
+func (s *Fallback) onProviderUpdated(tag string) error {
+	_, loaded := s.providers[tag]
+	if !loaded {
+		return E.New("outbound provider not found: ", tag)
+	}
+	var (
+		tags      = s.Dependencies()
+		outbounds []adapter.Outbound
+	)
+	for _, tag := range tags {
+		detour, _ := s.outbound.Outbound(tag)
+		outbounds = append(outbounds, detour)
+	}
+	for _, providerTag := range s.providerTags {
+		if providerTag != tag && s.outboundsCache[providerTag] != nil {
+			for _, detour := range s.outboundsCache[providerTag] {
+				tags = append(tags, detour.Tag())
+				outbounds = append(outbounds, detour)
+			}
+			continue
+		}
+		provider := s.providers[providerTag]
+		var cache []adapter.Outbound
+		for _, detour := range provider.Outbounds() {
+			tag := detour.Tag()
+			if s.exclude != nil && s.exclude.MatchString(tag) {
+				continue
+			}
+			if s.include != nil && !s.include.MatchString(tag) {
+				continue
+			}
+			tags = append(tags, tag)
+			cache = append(cache, detour)
+		}
+		outbounds = append(outbounds, cache...)
+		s.outboundsCache[providerTag] = cache
+	}
+	if len(tags) == 0 {
+		detour, _ := s.outbound.Outbound("Compatible")
+		tags = append(tags, detour.Tag())
+		outbounds = append(outbounds, detour)
+	}
+	s.tags, s.group.outbounds = tags, outbounds
+	s.group.performUpdateCheck()
+	if s.isGroupActive() {
+		s.group.access.Lock()
+		if s.group.ticker != nil {
+			s.group.ticker.Reset(s.group.interval)
+		}
+		s.group.access.Unlock()
+		ctx, cancel := context.WithCancel(s.ctx)
+		if s.cancel != nil {
+			s.cancel()
+		}
+		s.cancel = cancel
+		s.URLTest(ctx)
+	}
+	return nil
 }
 
 func (s *Fallback) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
@@ -134,7 +248,7 @@ func (s *Fallback) DialContext(ctx context.Context, network string, destination 
 	}
 	conn, err := outbound.DialContext(ctx, network, destination)
 	if err == nil {
-		return s.group.interruptGroup.NewConn(conn, interrupt.IsExternalConnectionFromContext(ctx)), nil
+		return s.group.interruptGroup.NewConn(conn, interrupt.IsExternalConnectionFromContext(ctx), interrupt.IsProviderConnectionFromContext(ctx)), nil
 	}
 	s.logger.ErrorContext(ctx, err)
 	s.group.history.DeleteURLTestHistory(outbound.Tag())
@@ -154,7 +268,7 @@ func (s *Fallback) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
 	}
 	conn, err := outbound.ListenPacket(ctx, destination)
 	if err == nil {
-		return s.group.interruptGroup.NewPacketConn(conn, interrupt.IsExternalConnectionFromContext(ctx)), nil
+		return s.group.interruptGroup.NewPacketConn(conn, interrupt.IsExternalConnectionFromContext(ctx), interrupt.IsProviderConnectionFromContext(ctx)), nil
 	}
 	s.logger.ErrorContext(ctx, err)
 	s.group.history.DeleteURLTestHistory(outbound.Tag())
@@ -361,7 +475,11 @@ func (g *FallbackGroup) urlTest(ctx context.Context, force bool) (map[string]uin
 		})
 	}
 	b.Wait()
-	g.performUpdateCheck()
+	select {
+	case <-ctx.Done():
+	default:
+		g.performUpdateCheck()
+	}
 	return result, nil
 }
 
