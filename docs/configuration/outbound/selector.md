@@ -10,7 +10,18 @@
     "proxy-b",
     "proxy-c"
   ],
+  "providers": [
+    "provider-a",
+    "provider-b",
+  ],
+  "exclude": "",
+  "include": "",
+  "include_order": [
+    "proxy-b",
+    "proxy-a"
+  ],
   "default": "proxy-c",
+  "use_all_providers": false,
   "interrupt_exist_connections": false
 }
 ```
@@ -23,13 +34,37 @@
 
 #### outbounds
 
-==Required==
-
 List of outbound tags to select.
+
+#### providers
+
+List of [Provider](/configuration/provider) tags to select.
+
+#### use_all_providers
+
+Use all [Provider](/configuration/provider) to fill `outbounds`.
+
+#### exclude
+
+Exclude regular expression to filter `providers` nodes. The priority of the exclude expression is higher than the include expression.
+
+#### include
+
+Include regular expression to filter `providers` nodes.
+
+#### include_order
+
+List of regular expressions to sort `providers` nodes after filtering.
+
+The node priority is determined by the first matched regular expression. Unmatched nodes are placed after matched nodes.
 
 #### default
 
 The default outbound tag. The first outbound will be used if empty.
+
+#### use_all_providers
+
+Whether to use all providers for testing. `false` will be used if empty.
 
 #### interrupt_exist_connections
 

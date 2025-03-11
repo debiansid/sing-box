@@ -10,10 +10,21 @@
     "proxy-b",
     "proxy-c"
   ],
+  "providers": [
+    "provider-a",
+    "provider-b",
+  ],
+  "exclude": "",
+  "include": "",
+  "include_order": [
+    "proxy-b",
+    "proxy-a"
+  ],
   "url": "",
   "interval": "",
   "tolerance": 50,
   "idle_timeout": "",
+  "use_all_providers": false,
   "interrupt_exist_connections": false
 }
 ```
@@ -22,9 +33,25 @@
 
 #### outbounds
 
-==必填==
-
 用于测试的出站标签列表。
+
+#### providers
+
+用于测试的[订阅](/zh/configuration/provider)标签列表。
+
+#### exclude
+
+排除 `providers` 节点的正则表达式。
+
+#### include
+
+包含 `providers` 节点的正则表达式。
+
+#### include_order
+
+用于在筛选后排序 `providers` 节点的正则表达式列表。
+
+节点优先级由第一个匹配的正则表达式决定。未匹配的节点将排在已匹配节点之后。
 
 #### url
 
@@ -41,6 +68,10 @@
 #### idle_timeout
 
 空闲超时。默认使用 `30m`。
+
+#### use_all_providers
+
+是否使用所有提供者。默认使用 `false`。
 
 #### interrupt_exist_connections
 
