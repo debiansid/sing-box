@@ -7,6 +7,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/sagernet/sing-box/common/hash"
 	"github.com/sagernet/sing/common/observable"
 	"github.com/sagernet/sing/common/varbin"
 )
@@ -55,9 +56,12 @@ type CacheFile interface {
 	StoreGroupExpand(group string, expand bool) error
 	LoadRuleSet(tag string) *SavedBinary
 	SaveRuleSet(tag string, set *SavedBinary) error
+	LoadSubscription(tag string) *SavedBinary
+	SaveSubscription(tag string, sub *SavedBinary) error
 }
 
 type SavedBinary struct {
+	Hash        hash.HashType
 	Content     []byte
 	LastUpdated time.Time
 	LastEtag    string
@@ -74,6 +78,12 @@ func (s *SavedBinary) MarshalBinary() ([]byte, error) {
 		return nil, err
 	}
 	_, err = buffer.Write(s.Content)
+	hash, _ := s.Hash.MarshalBinary()
+	err = binary.Write(&buffer, binary.BigEndian, hash)
+	if err != nil {
+		return nil, err
+	}
+	err = varbin.Write(&buffer, binary.BigEndian, s.Content)
 	if err != nil {
 		return nil, err
 	}
@@ -99,12 +109,24 @@ func (s *SavedBinary) UnmarshalBinary(data []byte) error {
 	if err != nil {
 		return err
 	}
+<<<<<<< HEAD
 	contentLength, err := binary.ReadUvarint(reader)
 	if err != nil {
 		return err
 	}
 	s.Content = make([]byte, contentLength)
 	_, err = io.ReadFull(reader, s.Content)
+=======
+	var hash [16]byte
+	err = binary.Read(reader, binary.BigEndian, &hash)
+	if err != nil {
+		return err
+	}
+	err = s.Hash.UnmarshalBinary(hash)
+	if err != nil {
+		return err
+	}
+	err = varbin.Read(reader, binary.BigEndian, &s.Content)
 	if err != nil {
 		return err
 	}
