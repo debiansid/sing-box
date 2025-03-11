@@ -3,6 +3,7 @@ package group
 import (
 	"context"
 	"net"
+	"regexp"
 	"sync"
 	"time"
 
@@ -51,6 +52,17 @@ type Fallback struct {
 	maxAttempts                  int
 	group                        *FallbackGroup
 	interruptExternalConnections bool
+
+	provider       adapter.ProviderManager
+	providerAccess sync.Mutex
+	providers      map[string]adapter.Provider
+	outboundsCache map[string][]adapter.Outbound
+	cancel         context.CancelFunc
+
+	providerTags    []string
+	exclude         *regexp.Regexp
+	include         *regexp.Regexp
+	useAllProviders bool
 }
 
 func NewFallback(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.FallbackOutboundOptions) (adapter.Outbound, error) {
@@ -67,21 +79,50 @@ func NewFallback(ctx context.Context, router adapter.Router, logger log.ContextL
 		idleTimeout:                  time.Duration(options.IdleTimeout),
 		maxAttempts:                  int(options.MaxAttempts),
 		interruptExternalConnections: options.InterruptExistConnections,
-	}
-	if len(outbound.tags) == 0 {
-		return nil, E.New("missing tags")
+
+		provider:       service.FromContext[adapter.ProviderManager](ctx),
+		providers:      make(map[string]adapter.Provider),
+		outboundsCache: make(map[string][]adapter.Outbound),
+
+		providerTags:    options.Providers,
+		exclude:         (*regexp.Regexp)(options.Exclude),
+		include:         (*regexp.Regexp)(options.Include),
+		useAllProviders: options.UseAllProviders,
 	}
 	return outbound, nil
 }
 
 func (s *Fallback) Start() error {
-	outbounds := make([]adapter.Outbound, 0, len(s.tags))
-	for i, tag := range s.tags {
-		detour, loaded := s.outbound.Outbound(tag)
-		if !loaded {
-			return E.New("outbound ", i, " not found: ", tag)
+	if s.useAllProviders {
+		var providerTags []string
+		for _, provider := range s.provider.Providers() {
+			providerTags = append(providerTags, provider.Tag())
+			s.providers[provider.Tag()] = provider
+			provider.RegisterCallback(s.onProviderUpdated)
 		}
-		outbounds = append(outbounds, detour)
+		s.providerTags = providerTags
+	} else {
+		for i, tag := range s.providerTags {
+			provider, loaded := s.provider.Get(tag)
+			if !loaded {
+				return E.New("outbound provider ", i, " not found: ", tag)
+			}
+			s.providers[tag] = provider
+			provider.RegisterCallback(s.onProviderUpdated)
+		}
+	}
+	if len(s.tags)+len(s.providerTags) == 0 {
+		return E.New("missing outbound and provider tags")
+	}
+
+	s.providerAccess.Lock()
+	tags, outbounds, err := s.collectOutbounds("")
+	if err == nil {
+		s.tags = tags
+	}
+	s.providerAccess.Unlock()
+	if err != nil {
+		return err
 	}
 	group, err := NewFallbackGroup(s.ctx, s.outbound, s.logger, outbounds, s.link, s.interval, s.recoveryInterval, s.idleTimeout, s.maxAttempts, s.interruptExternalConnections)
 	if err != nil {
@@ -107,6 +148,9 @@ func (s *Fallback) Now() string {
 		return outbound.Tag()
 	} else if outbound := s.group.SelectedOutbound(N.NetworkUDP); outbound != nil {
 		return outbound.Tag()
+	}
+	if len(s.tags) == 0 {
+		return ""
 	}
 	return s.tags[0]
 }
@@ -155,7 +199,7 @@ func (s *Fallback) DialContext(ctx context.Context, network string, destination 
 			if len(errors) > 0 {
 				s.group.reportFailure()
 			}
-			return s.group.interruptGroup.NewConn(conn, interrupt.IsExternalConnectionFromContext(ctx)), nil
+			return s.group.interruptGroup.NewConn(conn, interrupt.IsExternalConnectionFromContext(ctx), interrupt.IsProviderConnectionFromContext(ctx)), nil
 		}
 		s.logger.ErrorContext(ctx, "outbound ", detour.Tag(), ": ", err)
 		s.group.history.DeleteURLTestHistory(RealTag(detour))
@@ -184,7 +228,7 @@ func (s *Fallback) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
 			if len(errors) > 0 {
 				s.group.reportFailure()
 			}
-			return s.group.interruptGroup.NewPacketConn(conn, interrupt.IsExternalConnectionFromContext(ctx)), nil
+			return s.group.interruptGroup.NewPacketConn(conn, interrupt.IsExternalConnectionFromContext(ctx), interrupt.IsProviderConnectionFromContext(ctx)), nil
 		}
 		s.logger.ErrorContext(ctx, "outbound ", detour.Tag(), ": ", err)
 		s.group.history.DeleteURLTestHistory(RealTag(detour))
@@ -207,12 +251,108 @@ func (s *Fallback) NewPacketConnection(ctx context.Context, conn N.PacketConn, m
 	s.connection.NewPacketConnection(ctx, s, conn, metadata, onClose)
 }
 
+// collectOutbounds builds the ordered outbound list of the group, configured outbounds first,
+// followed by the outbounds of each provider in order.
+// Outbounds of the provider matching refreshTag are reloaded, the others are taken from the cache.
+func (s *Fallback) collectOutbounds(refreshTag string) ([]string, []adapter.Outbound, error) {
+	dependencies := s.Dependencies()
+	tags := make([]string, 0, len(dependencies))
+	outbounds := make([]adapter.Outbound, 0, len(dependencies))
+	for i, tag := range dependencies {
+		detour, loaded := s.outbound.Outbound(tag)
+		if !loaded {
+			return nil, nil, E.New("outbound ", i, " not found: ", tag)
+		}
+		tags = append(tags, tag)
+		outbounds = append(outbounds, detour)
+	}
+	for _, providerTag := range s.providerTags {
+		cache := s.outboundsCache[providerTag]
+		if cache == nil || providerTag == refreshTag {
+			cache = s.providerOutbounds(s.providers[providerTag])
+			s.outboundsCache[providerTag] = cache
+		}
+		for _, detour := range cache {
+			tags = append(tags, detour.Tag())
+			outbounds = append(outbounds, detour)
+		}
+	}
+	if len(outbounds) == 0 {
+		detour, loaded := s.outbound.Outbound("Compatible")
+		if loaded {
+			tags = append(tags, detour.Tag())
+			outbounds = append(outbounds, detour)
+		}
+	}
+	return tags, outbounds, nil
+}
+
+func (s *Fallback) providerOutbounds(provider adapter.Provider) []adapter.Outbound {
+	if provider == nil {
+		return nil
+	}
+	var outbounds []adapter.Outbound
+	for _, detour := range provider.Outbounds() {
+		tag := detour.Tag()
+		if s.exclude != nil && s.exclude.MatchString(tag) {
+			continue
+		}
+		if s.include != nil && !s.include.MatchString(tag) {
+			continue
+		}
+		outbounds = append(outbounds, detour)
+	}
+	return outbounds
+}
+
+func (s *Fallback) onProviderUpdated(tag string) error {
+	s.providerAccess.Lock()
+	defer s.providerAccess.Unlock()
+	_, loaded := s.providers[tag]
+	if !loaded {
+		return E.New("outbound provider not found: ", tag)
+	}
+	tags, outbounds, err := s.collectOutbounds(tag)
+	if err != nil {
+		return err
+	}
+	s.tags = tags
+	if s.group == nil {
+		// not started yet, the outbounds cached above are picked up by Start
+		return nil
+	}
+	s.group.UpdateOutbounds(outbounds)
+	if !s.isGroupActive() {
+		return nil
+	}
+	s.group.access.Lock()
+	if s.group.ticker != nil {
+		s.group.ticker.Reset(s.group.recoveryInterval)
+	}
+	s.group.access.Unlock()
+	ctx, cancel := context.WithCancel(s.ctx)
+	if s.cancel != nil {
+		s.cancel()
+	}
+	s.cancel = cancel
+	s.URLTest(ctx)
+	return nil
+}
+
+func (s *Fallback) isGroupActive() bool {
+	if !s.group.started {
+		return false
+	}
+	return time.Since(s.group.lastActive.Load()) <= s.group.idleTimeout
+}
+
 type FallbackGroup struct {
 	ctx                          context.Context
 	outbound                     adapter.OutboundManager
 	pause                        pause.Manager
 	pauseCallback                *list.Element[pause.Callback]
 	logger                       log.Logger
+	outboundAccess               sync.RWMutex
 	outbounds                    []adapter.Outbound
 	link                         string
 	interval                     time.Duration
@@ -317,8 +457,30 @@ func (g *FallbackGroup) Close() error {
 	return nil
 }
 
+func (g *FallbackGroup) Outbounds() []adapter.Outbound {
+	g.outboundAccess.RLock()
+	defer g.outboundAccess.RUnlock()
+	return g.outbounds
+}
+
+func (g *FallbackGroup) UpdateOutbounds(outbounds []adapter.Outbound) {
+	g.outboundAccess.Lock()
+	g.outbounds = outbounds
+	g.outboundAccess.Unlock()
+	g.selectedAccess.Lock()
+	if g.selectedOutboundTCP != nil && !common.Contains(outbounds, g.selectedOutboundTCP) {
+		g.selectedOutboundTCP = nil
+	}
+	if g.selectedOutboundUDP != nil && !common.Contains(outbounds, g.selectedOutboundUDP) {
+		g.selectedOutboundUDP = nil
+	}
+	g.selectedAccess.Unlock()
+	g.performUpdateCheck()
+}
+
 func (g *FallbackGroup) Select(network string) (adapter.Outbound, bool) {
-	for _, detour := range g.outbounds {
+	outbounds := g.Outbounds()
+	for _, detour := range outbounds {
 		if !common.Contains(detour.Network(), network) {
 			continue
 		}
@@ -326,7 +488,7 @@ func (g *FallbackGroup) Select(network string) (adapter.Outbound, bool) {
 			return detour, true
 		}
 	}
-	for _, detour := range g.outbounds {
+	for _, detour := range outbounds {
 		if !common.Contains(detour.Network(), network) {
 			continue
 		}
@@ -345,9 +507,10 @@ func (g *FallbackGroup) SelectedOutbound(network string) adapter.Outbound {
 }
 
 func (g *FallbackGroup) Candidates(network string) []adapter.Outbound {
-	start := g.indexOf(g.SelectedOutbound(network))
+	outbounds := g.Outbounds()
+	start := indexOfOutbound(outbounds, g.SelectedOutbound(network))
 	candidates := make([]adapter.Outbound, 0, g.maxAttempts)
-	for _, detour := range g.outbounds[start:] {
+	for _, detour := range outbounds[start:] {
 		if !common.Contains(detour.Network(), network) {
 			continue
 		}
@@ -359,11 +522,11 @@ func (g *FallbackGroup) Candidates(network string) []adapter.Outbound {
 	return candidates
 }
 
-func (g *FallbackGroup) indexOf(detour adapter.Outbound) int {
+func indexOfOutbound(outbounds []adapter.Outbound, detour adapter.Outbound) int {
 	if detour == nil {
 		return 0
 	}
-	for i, it := range g.outbounds {
+	for i, it := range outbounds {
 		if it == detour {
 			return i
 		}
@@ -371,11 +534,11 @@ func (g *FallbackGroup) indexOf(detour adapter.Outbound) int {
 	return 0
 }
 
-func (g *FallbackGroup) recoveryIndex() int {
+func (g *FallbackGroup) recoveryIndex(outbounds []adapter.Outbound) int {
 	g.selectedAccess.RLock()
 	defer g.selectedAccess.RUnlock()
-	index := g.indexOf(g.selectedOutboundTCP)
-	if udpIndex := g.indexOf(g.selectedOutboundUDP); udpIndex > index {
+	index := indexOfOutbound(outbounds, g.selectedOutboundTCP)
+	if udpIndex := indexOfOutbound(outbounds, g.selectedOutboundUDP); udpIndex > index {
 		index = udpIndex
 	}
 	return index
@@ -417,11 +580,12 @@ func (g *FallbackGroup) loopCheck(ticker *time.Ticker, closeChan <-chan struct{}
 }
 
 func (g *FallbackGroup) checkRecovery() {
-	index := g.recoveryIndex()
+	outbounds := g.Outbounds()
+	index := g.recoveryIndex(outbounds)
 	if index == 0 {
 		return
 	}
-	_, _ = g.urlTest(g.ctx, false, g.outbounds[:index])
+	_, _ = g.urlTest(g.ctx, false, outbounds[:index])
 }
 
 func (g *FallbackGroup) CheckOutbounds(force bool) {
@@ -444,7 +608,7 @@ func (g *FallbackGroup) urlTest(ctx context.Context, force bool, candidates []ad
 
 func (g *FallbackGroup) urlTestOnce(ctx context.Context, force bool, candidates []adapter.Outbound) (any, error) {
 	if candidates == nil {
-		candidates = g.outbounds
+		candidates = g.Outbounds()
 		g.lastFullCheck.Store(time.Now())
 	}
 	result := make(map[string]uint16)

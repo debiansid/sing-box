@@ -3,13 +3,13 @@ package option
 import "github.com/sagernet/sing/common/json/badoption"
 
 type SelectorOutboundOptions struct {
-	Outbounds                 []string `json:"outbounds" reference:"outbound"`
-	Default                   string   `json:"default,omitempty" reference:"outbound"`
-	InterruptExistConnections bool     `json:"interrupt_exist_connections,omitempty"`
+	GroupCommonOption
+	Default                   string `json:"default,omitempty" reference:"outbound"`
+	InterruptExistConnections bool   `json:"interrupt_exist_connections,omitempty"`
 }
 
 type URLTestOutboundOptions struct {
-	Outbounds                 []string           `json:"outbounds" reference:"outbound"`
+	GroupCommonOption
 	URL                       string             `json:"url,omitempty"`
 	Interval                  badoption.Duration `json:"interval,omitempty"`
 	Tolerance                 uint16             `json:"tolerance,omitempty"`
@@ -18,11 +18,19 @@ type URLTestOutboundOptions struct {
 }
 
 type FallbackOutboundOptions struct {
-	Outbounds                 []string           `json:"outbounds" reference:"outbound"`
+	GroupCommonOption
 	URL                       string             `json:"url,omitempty"`
 	Interval                  badoption.Duration `json:"interval,omitempty"`
 	RecoveryInterval          badoption.Duration `json:"recovery_interval,omitempty"`
 	IdleTimeout               badoption.Duration `json:"idle_timeout,omitempty"`
 	MaxAttempts               uint16             `json:"max_attempts,omitempty"`
 	InterruptExistConnections bool               `json:"interrupt_exist_connections,omitempty"`
+}
+
+type GroupCommonOption struct {
+	Outbounds       []string          `json:"outbounds" reference:"outbound"`
+	Providers       []string          `json:"providers" reference:"provider"`
+	Exclude         *badoption.Regexp `json:"exclude,omitempty"`
+	Include         *badoption.Regexp `json:"include,omitempty"`
+	UseAllProviders bool              `json:"use_all_providers,omitempty"`
 }
