@@ -300,6 +300,21 @@ func (r *Router) matchRule(
 	selectedRule adapter.Rule, selectedRuleIndex int,
 	buffers []*buf.Buffer, packetBuffers []*N.PacketBuffer, fatalErr error,
 ) {
+	if !preMatch && inputPacketConn != nil && (metadata.InboundType == C.TypeSOCKS || metadata.InboundType == C.TypeMixed) && !metadata.Destination.IsFqdn() && !metadata.Destination.Addr.IsValid() {
+		buffer := buf.NewPacket()
+		if destination, err := inputPacketConn.ReadPacket(buffer); err == nil {
+			metadata.Destination = destination
+			inputPacketConn = bufio.NewCachedPacketConn(inputPacketConn, buffer, destination)
+			packetBuffers = append(packetBuffers, &N.PacketBuffer{
+				Buffer:      buffer,
+				Destination: destination,
+			})
+		} else {
+			buffer.Release()
+			return
+		}
+	}
+
 	if r.processSearcher != nil && metadata.ProcessInfo == nil {
 		var originDestination netip.AddrPort
 		if metadata.OriginDestination.IsValid() {
@@ -495,18 +510,6 @@ match:
 			break match
 		}
 	}
-	if !preMatch && inputPacketConn != nil && (metadata.InboundType == C.TypeSOCKS || metadata.InboundType == C.TypeMixed) && !metadata.Destination.IsFqdn() && !metadata.Destination.Addr.IsGlobalUnicast() {
-		newBuffer, newPacketBuffers, newErr := r.actionSniff(ctx, metadata, &rule.RuleActionSniff{Timeout: C.TCPTimeout}, inputConn, inputPacketConn)
-		if newErr != nil {
-			fatalErr = newErr
-			return
-		}
-		if newBuffer != nil {
-			buffers = append(buffers, newBuffer)
-		} else if len(newPacketBuffers) > 0 {
-			packetBuffers = append(packetBuffers, newPacketBuffers...)
-		}
-	}
 	return
 }
 
@@ -592,9 +595,6 @@ func (r *Router) actionSniff(
 					return
 				}
 			} else {
-				if (metadata.InboundType == C.TypeSOCKS || metadata.InboundType == C.TypeMixed) && !metadata.Destination.IsFqdn() && !metadata.Destination.Addr.IsGlobalUnicast() && !metadata.RouteOriginalDestination.IsValid() {
-					metadata.Destination = destination
-				}
 				if len(packetBuffers) > 0 {
 					err = sniff.PeekPacket(
 						ctx,
