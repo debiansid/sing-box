@@ -214,17 +214,6 @@ func New(options Options) (*Box, error) {
 			return nil, E.Cause(err, "initialize inbound[", i, "]")
 		}
 	}
-	err = outboundManager.Create(
-		ctx,
-		router,
-		logFactory.NewLogger(F.ToString("outbound/", C.TypeDirect, "[OUTBOUNDLESS]")),
-		"OUTBOUNDLESS",
-		C.TypeDirect,
-		&option.DirectOutboundOptions{},
-	)
-	if err != nil {
-		return nil, E.Cause(err, "initialize outbound")
-	}
 	for i, outboundOptions := range options.Outbounds {
 		var tag string
 		if outboundOptions.Tag != "" {
@@ -250,6 +239,17 @@ func New(options Options) (*Box, error) {
 		if err != nil {
 			return nil, E.Cause(err, "initialize outbound[", i, "]")
 		}
+	}
+	err = outboundManager.Create(
+		ctx,
+		router,
+		logFactory.NewLogger(F.ToString("outbound/", C.TypeDirect, "[OUTBOUNDLESS]")),
+		"OUTBOUNDLESS",
+		C.TypeDirect,
+		&option.DirectOutboundOptions{},
+	)
+	if err != nil {
+		return nil, E.Cause(err, "initialize outbound")
 	}
 	outboundManager.Initialize(common.Must1(
 		direct.NewOutbound(
