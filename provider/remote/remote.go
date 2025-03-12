@@ -107,7 +107,7 @@ func NewProviderRemote(ctx context.Context, router adapter.Router, logFactory lo
 		// minimum interval is 1 minute
 		interval = time.Minute
 	}
-	ua := "sing-box " + C.Version
+	ua := "clash"
 	logger := logFactory.NewLogger(F.ToString("provider/remote", "[", tag, "]"))
 	return &ProviderRemote{
 		router:       router,
