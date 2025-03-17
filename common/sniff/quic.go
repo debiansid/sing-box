@@ -9,6 +9,7 @@ import (
 	"encoding/binary"
 	"io"
 	"os"
+	"slices"
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/ja3"
@@ -310,8 +311,9 @@ find:
 		metadata.SniffContext = fragments
 		return E.Cause1(ErrNeedMoreData, err)
 	}
-	if domain := M.ParseSocksaddrHostPort(fingerprint.ServerName, 0).Fqdn; domain != "" && domain != metadata.ECHPublicName {
-		metadata.Domain = domain
+	metadata.SniffHasECHExtension = slices.Contains(fingerprint.Extensions, extensionEncryptedClientHello)
+	if domain := M.ParseSocksaddrHostPort(fingerprint.ServerName, 0).Fqdn; domain != "" {
+		metadata.SniffHost = domain
 	}
 	for metadata.Client == "" {
 		if len(frameTypeList) == 1 {
@@ -376,4 +378,15 @@ type qCryptoFragment struct {
 	offset  uint64
 	length  uint64
 	payload []byte
+}
+
+func QUICShortHeader(_ context.Context, metadata *adapter.InboundContext, packet []byte) error {
+	if len(packet) == 0 {
+		return E.New("empty packet")
+	}
+	if packet[0]&0xc0 != 0x40 {
+		return E.New("not a QUIC short header packet")
+	}
+	metadata.Protocol = C.ProtocolQUIC
+	return nil
 }
