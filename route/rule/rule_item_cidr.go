@@ -2,7 +2,6 @@ package rule
 
 import (
 	"net/netip"
-	"slices"
 	"strings"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -80,8 +79,20 @@ func (r *IPCIDRItem) Match(metadata *adapter.InboundContext) bool {
 	if metadata.Destination.IsIP() {
 		return r.ipSet.Contains(metadata.Destination.Addr)
 	}
-	if len(metadata.DestinationAddresses) > 0 {
-		return slices.ContainsFunc(metadata.DestinationAddresses, r.ipSet.Contains)
+	if len(metadata.DestinationAddresses) > 0 || len(metadata.CacheIPs) > 0 {
+		for _, address := range metadata.DestinationAddresses {
+			if r.ipSet.Contains(address) {
+				return true
+			}
+		}
+		if len(metadata.CacheIPs) > 0 {
+			for _, address := range metadata.CacheIPs {
+				if r.ipSet.Contains(address) {
+					return true
+				}
+			}
+		}
+		return false
 	}
 	return metadata.IPCIDRAcceptEmpty
 }
