@@ -116,6 +116,7 @@ func NewRuleAction(ctx context.Context, logger logger.ContextLogger, action opti
 			DisableOptimisticCache: action.ResolveOptions.DisableOptimisticCache,
 			RewriteTTL:             action.ResolveOptions.RewriteTTL,
 			ClientSubnet:           action.ResolveOptions.ClientSubnet.Build(netip.Prefix{}),
+			MatchOnly:              action.ResolveOptions.MatchOnly,
 		}, nil
 	default:
 		panic(F.ToString("unknown rule action: ", action.Action))
@@ -553,6 +554,7 @@ type RuleActionResolve struct {
 	DisableOptimisticCache bool
 	RewriteTTL             *uint32
 	ClientSubnet           netip.Prefix
+	MatchOnly              bool
 }
 
 func (r *RuleActionResolve) Type() string {
@@ -581,6 +583,9 @@ func (r *RuleActionResolve) String() string {
 	}
 	if r.ClientSubnet.IsValid() {
 		options = append(options, F.ToString("client_subnet=", r.ClientSubnet))
+	}
+	if r.MatchOnly {
+		options = append(options, "match_only")
 	}
 	if len(options) == 0 {
 		return "resolve"
