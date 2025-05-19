@@ -45,24 +45,6 @@ jobs:
     strategy:
       matrix:
         include:
-          # windows
-          - name: windows-amd64
-            goos: windows
-            goarch: amd64
-            goamd64: v1
-
-          # linux
-          - name: linux-amd64
-            goos: linux
-            goarch: amd64
-            goamd64: v1
-
-          # darwin
-          - name: darwin-amd64
-            goos: darwin
-            goarch: amd64
-            goamd64: v1
-
           # android
           - name: android-arm64
             goos: android
