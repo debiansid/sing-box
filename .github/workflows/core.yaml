@@ -37,7 +37,7 @@ jobs:
           API_ID: ${{ secrets.API_ID }}
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
-          TAGS: with_gvisor,with_dhcp,with_wireguard,with_clash_api,with_quic,with_utls,with_tailscale
+          TAGS: with_clash_api,with_quic,with_utls
 
   build:
     runs-on: ubuntu-latest
