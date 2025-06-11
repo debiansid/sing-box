@@ -5857,6 +5857,15 @@
                   }
                 }
               ]
+            },
+            "fallback": {
+              "$ref": "#/$defs/ServerOptions"
+            },
+            "fallback_for_alpn": {
+              "type": "object",
+              "additionalProperties": {
+                "$ref": "#/$defs/ServerOptions"
+              }
             }
           },
           "required": [
