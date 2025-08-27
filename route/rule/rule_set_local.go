@@ -3,7 +3,6 @@ package rule
 import (
 	"context"
 	"sync"
-	"sync/atomic"
 
 	"github.com/sagernet/fswatch"
 	"github.com/sagernet/sing-box/adapter"
