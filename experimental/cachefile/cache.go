@@ -23,7 +23,6 @@ var (
 	bucketExpand   = []byte("group_expand")
 	bucketMode     = []byte("clash_mode")
 	bucketRuleSet  = []byte("rule_set")
-	bucketRuleSet          = []byte("rule_set")
 	bucketOutboundProvider = []byte("outbound_provider")
 
 	bucketNameList = []string{

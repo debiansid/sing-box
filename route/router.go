@@ -22,26 +22,6 @@ import (
 var _ adapter.Router = (*Router)(nil)
 
 type Router struct {
-<<<<<<< HEAD
-	ctx               context.Context
-	logger            log.ContextLogger
-	inbound           adapter.InboundManager
-	outbound          adapter.OutboundManager
-	dns               adapter.DNSRouter
-	dnsTransport      adapter.DNSTransportManager
-	connection        adapter.ConnectionManager
-	network           adapter.NetworkManager
-	rules             []adapter.Rule
-	needFindProcess   bool
-	ruleSets          []adapter.RuleSet
-	ruleSetMap        map[string]adapter.RuleSet
-	processSearcher   process.Searcher
-	pauseManager      pause.Manager
-	trackers          []adapter.ConnectionTracker
-	platformInterface platform.Interface
-	needWIFIState     bool
-	started           bool
-=======
 	ctx                        context.Context
 	logger                     log.ContextLogger
 	inbound                    adapter.InboundManager
@@ -60,29 +40,11 @@ type Router struct {
 	platformInterface          platform.Interface
 	needWIFIState              bool
 	started                    bool
-	defaultDomainMatchStrategy C.DomainMatchStrategy
 	reloadChan                 chan<- struct{}
->>>>>>> 9ea370017 (Add reload support)
 }
 
 func NewRouter(ctx context.Context, logFactory log.Factory, options option.RouteOptions, dnsOptions option.DNSOptions, reloadChan chan<- struct{}) *Router {
 	return &Router{
-<<<<<<< HEAD
-		ctx:               ctx,
-		logger:            logFactory.NewLogger("router"),
-		inbound:           service.FromContext[adapter.InboundManager](ctx),
-		outbound:          service.FromContext[adapter.OutboundManager](ctx),
-		dns:               service.FromContext[adapter.DNSRouter](ctx),
-		dnsTransport:      service.FromContext[adapter.DNSTransportManager](ctx),
-		connection:        service.FromContext[adapter.ConnectionManager](ctx),
-		network:           service.FromContext[adapter.NetworkManager](ctx),
-		rules:             make([]adapter.Rule, 0, len(options.Rules)),
-		ruleSetMap:        make(map[string]adapter.RuleSet),
-		needFindProcess:   hasRule(options.Rules, isProcessRule) || hasDNSRule(dnsOptions.Rules, isProcessDNSRule) || options.FindProcess,
-		pauseManager:      service.FromContext[pause.Manager](ctx),
-		platformInterface: service.FromContext[platform.Interface](ctx),
-		needWIFIState:     hasRule(options.Rules, isWIFIRule) || hasDNSRule(dnsOptions.Rules, isWIFIDNSRule),
-=======
 		ctx:                        ctx,
 		logger:                     logFactory.NewLogger("router"),
 		inbound:                    service.FromContext[adapter.InboundManager](ctx),
@@ -97,9 +59,7 @@ func NewRouter(ctx context.Context, logFactory log.Factory, options option.Route
 		pauseManager:               service.FromContext[pause.Manager](ctx),
 		platformInterface:          service.FromContext[platform.Interface](ctx),
 		needWIFIState:              hasRule(options.Rules, isWIFIRule) || hasDNSRule(dnsOptions.Rules, isWIFIDNSRule),
-		defaultDomainMatchStrategy: C.DomainMatchStrategy(options.DefaultDomainMatchStrategy),
 		reloadChan:                 reloadChan,
->>>>>>> 9ea370017 (Add reload support)
 	}
 }
 
@@ -253,12 +213,6 @@ func (r *Router) ResetNetwork() {
 	r.network.ResetNetwork()
 	r.dns.ResetNetwork()
 }
-<<<<<<< HEAD
-=======
-
-func (r *Router) DefaultDomainMatchStrategy() C.DomainMatchStrategy {
-	return r.defaultDomainMatchStrategy
-}
 
 func (r *Router) Reload() {
 	if r.platformInterface == nil {
@@ -268,4 +222,3 @@ func (r *Router) Reload() {
 		}
 	}
 }
->>>>>>> 9ea370017 (Add reload support)
