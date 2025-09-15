@@ -52,6 +52,13 @@ type CacheFile interface {
 	StoreGroupExpand(group string, expand bool) error
 	LoadRuleSet(tag string) *SavedBinary
 	SaveRuleSet(tag string, set *SavedBinary) error
+<<<<<<< HEAD
+=======
+	LoadExternalUI(tag string) *SavedBinary
+	SaveExternalUI(tag string, info *SavedBinary) error
+	LoadSubscription(tag string) *SavedBinary
+	SaveSubscription(tag string, sub *SavedBinary) error
+>>>>>>> f9c7f139c (add outbound provider)
 }
 
 type SavedBinary struct {
