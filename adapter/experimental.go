@@ -109,14 +109,12 @@ func (s *SavedBinary) UnmarshalBinary(data []byte) error {
 	if err != nil {
 		return err
 	}
-<<<<<<< HEAD
 	contentLength, err := binary.ReadUvarint(reader)
 	if err != nil {
 		return err
 	}
 	s.Content = make([]byte, contentLength)
 	_, err = io.ReadFull(reader, s.Content)
-=======
 	var hash [16]byte
 	err = binary.Read(reader, binary.BigEndian, &hash)
 	if err != nil {
