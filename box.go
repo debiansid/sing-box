@@ -568,11 +568,9 @@ func (s *Box) Outbound() adapter.OutboundManager {
 	return s.outbound
 }
 
-<<<<<<< HEAD
 func (s *Box) LogFactory() log.Factory {
 	return s.logFactory
-=======
+}
 func (s *Box) ReloadChan() <-chan struct{} {
 	return s.reloadChan
->>>>>>> 945ff4c2 (clash-api: Add reload support)
 }
