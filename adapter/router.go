@@ -27,6 +27,7 @@ type Router interface {
 	RuleSet(tag string) (RuleSet, bool)
 	Rules() []Rule
 	NeedFindProcess() bool
+	Rule(uuid string) (Rule, bool)
 	AppendTracker(tracker ConnectionTracker)
 	ResetNetwork()
 	Reload()
