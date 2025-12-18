@@ -163,7 +163,7 @@ jobs:
       - name: Set build tags (SFA)
         if: matrix.type == 'sfa'
         run: |
-          echo "BUILD_TAGS=with_quic,with_utls,with_clash_api,with_provider,with_conntrack,without_badtls,with_naive_outbound,badlinkname,tfogo_checklinkname0" >> "${GITHUB_ENV}"
+          echo "BUILD_TAGS=with_gvisor,with_quic,with_utls,with_clash_api,with_provider,with_conntrack,without_badtls,with_naive_outbound,badlinkname,tfogo_checklinkname0" >> "${GITHUB_ENV}"
       - name: Set build tags (Windows)
         if: runner.os == 'Windows'
         run: |
