@@ -38,6 +38,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.outputs.outputs.version }}
+      git_hash: ${{ steps.outputs.outputs.git_hash }}
     steps:
       - name: Checkout
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
@@ -56,10 +57,15 @@ jobs:
         if: github.event_name != 'workflow_dispatch'
         run: |-
           go run -v ./cmd/internal/read_tag --ci --nightly
+      - name: Get git hash
+        run: |-
+          GIT_HASH=$(git rev-parse --short HEAD)
+          echo "git_hash=${GIT_HASH}" >> "$GITHUB_ENV"
       - name: Set outputs
         id: outputs
         run: |-
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "git_hash=$git_hash" >> "$GITHUB_OUTPUT"
   build:
     name: ${{ matrix.name }}
     if: github.event_name != 'workflow_dispatch' || inputs.build == 'All' || inputs.build == 'Binary' || inputs.build == 'Android' || inputs.build == 'Linux-package'
@@ -175,7 +181,7 @@ jobs:
           set -xeuo pipefail
           mkdir -p dist
           go build -v -trimpath -o dist/sing-box -tags "${BUILD_TAGS}" \
-          -ldflags '-s -buildid= -X github.com/sagernet/sing-box/constant.Version=${{ needs.calculate_version.outputs.version }} -checklinkname=0' \
+          -ldflags '-s -buildid= -X github.com/sagernet/sing-box/constant.Version=${{ needs.calculate_version.outputs.version }}-${{ needs.calculate_version.outputs.git_hash }} -checklinkname=0' \
           ./cmd/sing-box
         env:
           CGO_ENABLED: "1"
@@ -191,7 +197,7 @@ jobs:
           export CXX="${CC}++"
           mkdir -p dist
           GOOS=$BUILD_GOOS GOARCH=$BUILD_GOARCH build go build -v -trimpath -o dist/sing-box -tags "${BUILD_TAGS}" \
-          -ldflags '-s -buildid= -X github.com/sagernet/sing-box/constant.Version=${{ needs.calculate_version.outputs.version }} -checklinkname=0' \
+          -ldflags '-s -buildid= -X github.com/sagernet/sing-box/constant.Version=${{ needs.calculate_version.outputs.version }}-${{ needs.calculate_version.outputs.git_hash }} -checklinkname=0' \
           ./cmd/sing-box
         env:
           CGO_ENABLED: "1"
@@ -206,7 +212,7 @@ jobs:
           git fetch sekai
           mkdir -p SFA/app/libs/
           make lib_install
-          VERSION=${{ needs.calculate_version.outputs.version }}
+          VERSION=${{ needs.calculate_version.outputs.version }}-${{ needs.calculate_version.outputs.git_hash }}
           CC=${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang
           CGO_ENABLED=1 gomobile bind -v -a -trimpath -androidapi 21 -javapkg=io.nekohasekai -libname=box -tags "${BUILD_TAGS}" -ldflags "-X=runtime.godebugDefault=asynctimerchan=1 -X github.com/sagernet/sing-box/constant.Version=${VERSION} -s -w -buildid= -checklinkname=0" ./experimental/libbox
           cp ./libbox.aar SFA/app/libs/
@@ -239,10 +245,10 @@ jobs:
         run: |
           mkdir -p dist
           go build -v -trimpath -o dist/sing-box.exe -tags "$env:BUILD_TAGS" `
-          -ldflags "-X=runtime.godebugDefault=asynctimerchan=1 -X 'github.com/sagernet/sing-box/constant.Version=${{ needs.calculate_version.outputs.version }}' -H windowsgui -s -w -buildid=" `
+          -ldflags "-X=runtime.godebugDefault=asynctimerchan=1 -X 'github.com/sagernet/sing-box/constant.Version=${{ needs.calculate_version.outputs.version }}-${{ needs.calculate_version.outputs.git_hash }}' -H windowsgui -s -w -buildid=" `
           ./cmd/sing-box
           go build -v -trimpath -o dist/sing-box-cli.exe -tags "$env:BUILD_TAGS" `
-          -ldflags "-X=runtime.godebugDefault=asynctimerchan=1 -X 'github.com/sagernet/sing-box/constant.Version=${{ needs.calculate_version.outputs.version }}' -s -w -buildid=" `
+          -ldflags "-X=runtime.godebugDefault=asynctimerchan=1 -X 'github.com/sagernet/sing-box/constant.Version=${{ needs.calculate_version.outputs.version }}-${{ needs.calculate_version.outputs.git_hash }}' -s -w -buildid=" `
           ./cmd/sing-box
         env:
           CGO_ENABLED: "0"
