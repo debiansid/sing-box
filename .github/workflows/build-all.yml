@@ -245,10 +245,10 @@ jobs:
         run: |
           mkdir -p dist
           go build -v -trimpath -o dist/sing-box.exe -tags "$env:BUILD_TAGS" `
-          -ldflags "-X=runtime.godebugDefault=asynctimerchan=1 -X 'github.com/sagernet/sing-box/constant.Version=${{ needs.calculate_version.outputs.version }}-${{ needs.calculate_version.outputs.git_hash }}' -H windowsgui -s -w -buildid=" `
+          -ldflags "-X=runtime.godebugDefault=asynctimerchan=1 -X 'github.com/sagernet/sing-box/constant.Version=${{ needs.calculate_version.outputs.version }}-${{ needs.calculate_version.outputs.git_hash }}' -checklinkname=0 -H windowsgui -s -w -buildid=" `
           ./cmd/sing-box
           go build -v -trimpath -o dist/sing-box-cli.exe -tags "$env:BUILD_TAGS" `
-          -ldflags "-X=runtime.godebugDefault=asynctimerchan=1 -X 'github.com/sagernet/sing-box/constant.Version=${{ needs.calculate_version.outputs.version }}-${{ needs.calculate_version.outputs.git_hash }}' -s -w -buildid=" `
+          -ldflags "-X=runtime.godebugDefault=asynctimerchan=1 -X 'github.com/sagernet/sing-box/constant.Version=${{ needs.calculate_version.outputs.version }}-${{ needs.calculate_version.outputs.git_hash }}' -checklinkname=0 -s -w -buildid=" `
           ./cmd/sing-box
         env:
           CGO_ENABLED: "0"
