@@ -173,7 +173,7 @@ jobs:
       - name: Set build tags (Windows)
         if: runner.os == 'Windows'
         run: |
-          $TAGS = "with_gvisor,with_quic,with_utls,with_clash_api,with_provider,with_naive_outbound,with_purego"
+          $TAGS = "with_gvisor,with_quic,with_utls,with_clash_api,with_provider,with_naive_outbound,with_purego,with_tailscale,badlinkname,tfogo_checklinkname0"
           echo "BUILD_TAGS=$TAGS" >> $env:GITHUB_ENV
       - name: Build (musl)
         if: matrix.variant == 'musl'
