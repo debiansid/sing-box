@@ -1,0 +1,393 @@
+name: Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version name"
+        required: true
+        type: string
+      build:
+        description: "Build type"
+        required: true
+        type: choice
+        default: "All"
+        options:
+          - All
+          - Binary
+          - Android
+          - SFA
+          - Linux-package
+      forceBeta:
+        description: "Force beta package name"
+        required: false
+        type: boolean
+        default: false
+  push:
+    branches:
+      - main-next
+      - dev-next
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}-${{ inputs.build }}
+  cancel-in-progress: true
+
+jobs:
+  calculate_version:
+    name: Calculate version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.outputs.outputs.version }}
+      git_hash: ${{ steps.outputs.outputs.git_hash }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+        with:
+          fetch-depth: 0
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ^1.25.5
+      - name: Check input version
+        if: github.event_name == 'workflow_dispatch'
+        run: |-
+          echo "version=${{ inputs.version }}"
+          echo "version=${{ inputs.version }}" >> "$GITHUB_ENV"
+      - name: Calculate version
+        if: github.event_name != 'workflow_dispatch'
+        run: |-
+          go run -v ./cmd/internal/read_tag --ci --nightly
+      - name: Get git hash
+        run: |-
+          GIT_HASH=$(git rev-parse --short HEAD)
+          echo "git_hash=${GIT_HASH}" >> "$GITHUB_ENV"
+      - name: Set outputs
+        id: outputs
+        run: |-
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "git_hash=$git_hash" >> "$GITHUB_OUTPUT"
+  build:
+    name: ${{ matrix.name }}
+    if: github.event_name != 'workflow_dispatch' || inputs.build == 'All' || inputs.build == 'Binary' || inputs.build == 'Android' || inputs.build == 'Linux-package'
+    runs-on: ${{ matrix.runner }}
+    needs:
+      - calculate_version
+    strategy:
+      matrix:
+        include:
+          - { name: "Linux amd64 (musl)", os: linux, arch: amd64, variant: musl, runner: ubuntu-latest, type: binary, debian: amd64 }
+          - { name: "Android arm64 core", os: android, arch: arm64, ndk: "aarch64-linux-android35", runner: ubuntu-latest, type: android }
+          - { name: "Windows amd64", os: windows, arch: amd64, runner: windows-latest, type: binary }
+          - { name: "SFA (sing-box for android)", os: android, arch: arm64, ndk: "aarch64-linux-android35", runner: ubuntu-latest, type: sfa }
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+        with:
+          fetch-depth: 0
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ^1.25.5
+      - name: Setup Android NDK
+        if: matrix.os == 'android'
+        id: setup-ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r29
+          local-cache: true
+      - name: Setup Java
+        if: matrix.type == 'sfa'
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'oracle'
+          java-version: 17
+      - name: Checkout SFA Repository
+        if: matrix.type == 'sfa'
+        uses: actions/checkout@v4.1.1
+        with:
+          repository: SagerNet/sing-box-for-android
+          ref: dev
+          path: SFA
+          submodules: recursive
+      - name: Set tag (Linux/Android/SFA)
+        if: runner.os != 'Windows'
+        run: |-
+          git ls-remote --exit-code --tags origin v${{ needs.calculate_version.outputs.version }} || echo "PUBLISHED=false" >> "$GITHUB_ENV"
+          git tag v${{ needs.calculate_version.outputs.version }} -f
+      - name: Set tag (Windows)
+        if: runner.os == 'Windows'
+        run: |-
+          git ls-remote --exit-code --tags origin v${{ needs.calculate_version.outputs.version }} || echo "PUBLISHED=false" >> "$env:GITHUB_ENV"
+          git tag v${{ needs.calculate_version.outputs.version }} -f
+      - name: Set build tags (Linux/Android)
+        if: runner.os != 'Windows' && matrix.type != 'sfa' && matrix.type != 'android'
+        run: |
+          set -xeuo pipefail
+          TAGS='with_quic,with_utls,with_clash_api,with_provider,badlinkname,tfogo_checklinkname0,with_musl'
+          echo "BUILD_TAGS=${TAGS}" >> "${GITHUB_ENV}"
+      - name: Set build tags (Android)
+        if: matrix.type == 'android'
+        run: |
+          set -xeuo pipefail
+          TAGS='with_quic,with_utls,with_clash_api,with_provider,badlinkname,tfogo_checklinkname0'
+          echo "BUILD_TAGS=${TAGS}" >> "${GITHUB_ENV}"
+      - name: Set build tags (SFA)
+        if: matrix.type == 'sfa'
+        run: |
+          echo "BUILD_TAGS=with_gvisor,with_quic,with_utls,with_clash_api,with_provider,with_conntrack,without_badtls,badlinkname,tfogo_checklinkname0" >> "${GITHUB_ENV}"
+      - name: Set build tags (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          $TAGS = "with_gvisor,with_quic,with_utls,with_clash_api,with_provider,with_tailscale,badlinkname,tfogo_checklinkname0"
+          echo "BUILD_TAGS=$TAGS" >> $env:GITHUB_ENV
+      - name: Build (musl)
+        if: matrix.variant == 'musl'
+        run: |
+          set -xeuo pipefail
+          mkdir -p dist
+          go build -v -trimpath -o dist/sing-box -tags "${BUILD_TAGS}" \
+          -ldflags '-s -buildid= -X github.com/sagernet/sing-box/constant.Version=${{ needs.calculate_version.outputs.version }}-${{ needs.calculate_version.outputs.git_hash }} -checklinkname=0' \
+          ./cmd/sing-box
+        env:
+          CGO_ENABLED: "1"
+          GOOS: linux
+          GOARCH: ${{ matrix.arch }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build Android core
+        if: matrix.type == 'android'
+        run: |
+          set -xeuo pipefail
+          go install -v ./cmd/internal/build
+          export CC='${{ matrix.ndk }}-clang'
+          export CXX="${CC}++"
+          mkdir -p dist
+          GOOS=$BUILD_GOOS GOARCH=$BUILD_GOARCH build go build -v -trimpath -o dist/sing-box -tags "${BUILD_TAGS}" \
+          -ldflags '-s -buildid= -X github.com/sagernet/sing-box/constant.Version=${{ needs.calculate_version.outputs.version }}-${{ needs.calculate_version.outputs.git_hash }} -checklinkname=0' \
+          ./cmd/sing-box
+        env:
+          CGO_ENABLED: "1"
+          BUILD_GOOS: ${{ matrix.os }}
+          BUILD_GOARCH: ${{ matrix.arch }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+      - name: Build SFA (sing-box for android app)
+        if: matrix.type == 'sfa'
+        run: |
+          git remote add sekai https://github.com/SagerNet/sing-box
+          git fetch sekai
+          mkdir -p SFA/app/libs/
+          make lib_install
+          VERSION=${{ needs.calculate_version.outputs.version }}-${{ needs.calculate_version.outputs.git_hash }}
+          CC=${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android35-clang
+          CGO_ENABLED=1 gomobile bind -v -a -trimpath -androidapi 23 -javapkg=io.nekohasekai -libname=box -tags "${BUILD_TAGS}" -ldflags "-X=runtime.godebugDefault=asynctimerchan=1 -X github.com/sagernet/sing-box/constant.Version=${VERSION} -s -w -buildid= -checklinkname=0" ./experimental/libbox
+          cp ./libbox.aar SFA/app/libs/
+          cd SFA
+          echo "" >> gradle.properties
+          echo "org.gradle.jvmargs=-Xmx4096m -Dfile.encoding=UTF-8 -XX:+UseParallelGC" >> gradle.properties
+          echo "org.gradle.caching=true" >> gradle.properties
+          echo "org.gradle.parallel=true" >> gradle.properties
+          echo "VERSION_NAME=${VERSION}" > local.properties
+          echo "VERSION_CODE=$(date +%Y%m%d%H)" >> local.properties
+          sed -i '/signingConfigs.release/d' app/build.gradle
+          chmod +x ./gradlew
+          ./gradlew assembleOtherRelease
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+      - name: Sign SFA
+        if: matrix.type == 'sfa'
+        uses: r0adkll/sign-android-release@v1
+        id: sign_app
+        with:
+          releaseDirectory: SFA/app/build/outputs/apk/other/release
+          signingKeyBase64: ${{ secrets.SIGNING_KEY }}
+          alias: ${{ secrets.ALIAS }}
+          keyStorePassword: ${{ secrets.KEY_STORE_PASSWORD }}
+          keyPassword: ${{ secrets.KEY_PASSWORD }}
+        env:
+          BUILD_TOOLS_VERSION: "34.0.0"
+      - name: Build Windows
+        if: matrix.os == 'windows'
+        run: |
+          mkdir -p dist
+          go build -v -trimpath -o dist/sing-box.exe -tags "$env:BUILD_TAGS" `
+          -ldflags "-X=runtime.godebugDefault=asynctimerchan=1 -X 'github.com/sagernet/sing-box/constant.Version=${{ needs.calculate_version.outputs.version }}-${{ needs.calculate_version.outputs.git_hash }}' -checklinkname=0 -H windowsgui -s -w -buildid=" `
+          ./cmd/sing-box
+          go build -v -trimpath -o dist/sing-box-cli.exe -tags "$env:BUILD_TAGS" `
+          -ldflags "-X=runtime.godebugDefault=asynctimerchan=1 -X 'github.com/sagernet/sing-box/constant.Version=${{ needs.calculate_version.outputs.version }}-${{ needs.calculate_version.outputs.git_hash }}' -checklinkname=0 -s -w -buildid=" `
+          ./cmd/sing-box
+        env:
+          CGO_ENABLED: "0"
+          GOOS: windows
+          GOARCH: amd64
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Set mtime (Linux)
+        if: matrix.variant == 'musl'
+        run: |-
+          TZ=UTC touch -t '197001010000' dist/sing-box
+      - name: Set package version (Linux)
+        if: matrix.variant == 'musl'
+        run: |-
+          PKG_VERSION="${{ needs.calculate_version.outputs.version }}"
+          PKG_VERSION="${PKG_VERSION//-/\~}"
+          echo "PKG_VERSION=${PKG_VERSION}" >> "${GITHUB_ENV}"
+      - name: Set package name (DEB)
+        if: matrix.debian != ''
+        run: |-
+          echo "NAME=sing-box" >> "$GITHUB_ENV"
+      - name: Package DEB
+        if: matrix.debian != '' && (github.event_name != 'workflow_dispatch' || inputs.build == 'All' || inputs.build == 'Linux-package')
+        run: |
+          set -xeuo pipefail
+          sudo gem install fpm
+          cp .fpm_systemd .fpm
+          fpm -t deb \
+            --name "sing-box" \
+            -v "$PKG_VERSION" \
+            -p "dist/sing-box_${{ needs.calculate_version.outputs.version }}_linux_${{ matrix.debian }}.deb" \
+            --architecture ${{ matrix.debian }} \
+            --after-install release/config/sing-box.postinst \
+            --config-files /etc/sing-box/config.json \
+            dist/sing-box=/usr/bin/sing-box \
+            release/config/config.json=/etc/sing-box/config.json \
+            release/config/sing-box.service=/usr/lib/systemd/system/sing-box.service \
+            release/config/sing-box@.service=/usr/lib/systemd/system/sing-box@.service \
+            release/config/sing-box.sysusers=/usr/lib/sysusers.d/sing-box.conf \
+            release/config/sing-box.initd=/etc/init.d/sing-box
+      - name: Set name (Linux/Android)
+        if: runner.os != 'Windows' && matrix.type != 'sfa'
+        run: |-
+          DIR_NAME="sing-box-${{ needs.calculate_version.outputs.version }}-${{ matrix.os }}-${{ matrix.arch }}"
+          if [[ "${{ matrix.variant }}" == "musl" ]]; then
+            DIR_NAME="${DIR_NAME}-musl"
+          fi
+          echo "DIR_NAME=${DIR_NAME}" >> "${GITHUB_ENV}"
+      - name: Set name (Windows)
+        if: runner.os == 'Windows'
+        run: |-
+          $DIR_NAME = "sing-box-${{ needs.calculate_version.outputs.version }}-${{ matrix.os }}-${{ matrix.arch }}"
+          echo "DIR_NAME=$DIR_NAME" >> $env:GITHUB_ENV
+      - name: Archive (Linux/Android)
+        if: runner.os != 'Windows' && matrix.type != 'sfa'
+        run: |
+          set -xeuo pipefail
+          cd dist
+          mkdir -p "${DIR_NAME}"
+          cp ../LICENSE "${DIR_NAME}"
+          cp sing-box "${DIR_NAME}"
+          tar -czvf "${DIR_NAME}.tar.gz" "${DIR_NAME}"
+          rm -r "${DIR_NAME}"
+      - name: Archive (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          cd dist
+          # Archive GUI version
+          mkdir "$env:DIR_NAME"
+          Copy-Item ../LICENSE "$env:DIR_NAME"
+          Copy-Item sing-box.exe "$env:DIR_NAME"
+          Compress-Archive -Path "$env:DIR_NAME" -DestinationPath "$env:DIR_NAME.zip"
+          Remove-Item -Recurse "$env:DIR_NAME"
+          
+          # Archive CLI version
+          $CLI_DIR_NAME = "$env:DIR_NAME-cli"
+          mkdir "$CLI_DIR_NAME"
+          Copy-Item ../LICENSE "$CLI_DIR_NAME"
+          Copy-Item sing-box-cli.exe "$CLI_DIR_NAME"
+          Compress-Archive -Path "$CLI_DIR_NAME" -DestinationPath "$CLI_DIR_NAME.zip"
+          Remove-Item -Recurse "$CLI_DIR_NAME"
+      - name: Cleanup (Linux/Android)
+        if: runner.os != 'Windows' && matrix.type != 'sfa'
+        run: rm dist/sing-box
+      - name: Cleanup (Windows)
+        if: runner.os == 'Windows'
+        run: Remove-Item dist/sing-box.exe, dist/sing-box-cli.exe
+      - name: Upload artifact (Binary/Android core)
+        if: (matrix.type == 'binary' || matrix.type == 'android') && matrix.debian == '' && runner.os != 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.os }}_${{ matrix.arch }}${{ matrix.variant && format('-{0}', matrix.variant) }}
+          path: "dist"
+      - name: Upload artifact (Binary with DEB)
+        if: (matrix.type == 'binary' || matrix.type == 'android') && matrix.debian != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.os }}_${{ matrix.arch }}${{ matrix.variant && format('-{0}', matrix.variant) }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+      - name: Upload artifact (Windows GUI)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.os }}_${{ matrix.arch }}
+          path: "dist/*[!-cli].zip"
+      - name: Upload artifact (Windows CLI)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.os }}_${{ matrix.arch }}-cli
+          path: "dist/*-cli.zip"
+      - name: Upload artifact (DEB package)
+        if: matrix.debian != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-deb-${{ matrix.debian }}
+          path: "dist/*.deb"
+      - name: Upload artifact (SFA)
+        if: matrix.type == 'sfa'
+        uses: actions/upload-artifact@v4.4.0
+        with:
+          name: SFA-${{ needs.calculate_version.outputs.version }}
+          path: SFA/app/build/outputs/apk/other/release/*arm64-v8a-unsigned-signed.apk
+
+  upload:
+    name: Upload builds
+    if: "!failure() && github.event_name == 'workflow_dispatch' && (inputs.build == 'All' || inputs.build == 'Binary' || inputs.build == 'Android' || inputs.build == 'SFA' || inputs.build == 'Linux-package')"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    needs:
+      - calculate_version
+      - build
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+        with:
+          fetch-depth: 0
+      - name: Cache ghr
+        uses: actions/cache@v4
+        id: cache-ghr
+        with:
+          path: |
+            ~/go/bin/ghr
+          key: ghr
+      - name: Setup ghr
+        if: steps.cache-ghr.outputs.cache-hit != 'true'
+        run: |-
+          cd $HOME
+          git clone https://github.com/nekohasekai/ghr ghr
+          cd ghr
+          go install -v .
+      - name: Set tag
+        run: |-
+          git ls-remote --exit-code --tags origin v${{ needs.calculate_version.outputs.version }} || echo "PUBLISHED=false" >> "$GITHUB_ENV"
+          git tag v${{ needs.calculate_version.outputs.version }} -f
+          echo "VERSION=${{ needs.calculate_version.outputs.version }}" >> "$GITHUB_ENV"
+      - name: Download builds
+        uses: actions/download-artifact@v5
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Upload builds
+        if: ${{ env.PUBLISHED == 'false' }}
+        run: |-
+          export PATH="$PATH:$HOME/go/bin"
+          ghr --replace -p 5 "v${VERSION}" dist
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Replace builds
+        if: ${{ env.PUBLISHED != 'false' }}
+        run: |-
+          export PATH="$PATH:$HOME/go/bin"
+          ghr --replace -p 5 "v${VERSION}" dist
+        env:
+         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
