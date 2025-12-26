@@ -76,9 +76,9 @@ jobs:
       matrix:
         include:
           - { name: "Linux amd64 (musl)", os: linux, arch: amd64, variant: musl, runner: ubuntu-latest, type: binary, debian: amd64 }
-          - { name: "Android arm64 core", os: android, arch: arm64, ndk: "aarch64-linux-android35", runner: ubuntu-latest, type: android }
+          - { name: "Android arm64 core", os: android, arch: arm64, ndk: "aarch64-linux-android34", runner: ubuntu-latest, type: android }
           - { name: "Windows amd64", os: windows, arch: amd64, runner: windows-latest, type: binary }
-          - { name: "SFA (sing-box for android)", os: android, arch: arm64, ndk: "aarch64-linux-android35", runner: ubuntu-latest, type: sfa }
+          - { name: "SFA (sing-box for android)", os: android, arch: arm64, ndk: "aarch64-linux-android34", runner: ubuntu-latest, type: sfa }
     steps:
       - name: Checkout
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
@@ -93,7 +93,7 @@ jobs:
         id: setup-ndk
         uses: nttld/setup-ndk@v1
         with:
-          ndk-version: r29
+          ndk-version: r28
           local-cache: true
       - name: Setup Java
         if: matrix.type == 'sfa'
@@ -106,7 +106,7 @@ jobs:
         uses: actions/checkout@v4.1.1
         with:
           repository: SagerNet/sing-box-for-android
-          ref: dev
+          ref: main
           path: SFA
           submodules: recursive
       - name: Set tag (Linux/Android/SFA)
