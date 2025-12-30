@@ -205,7 +205,7 @@ jobs:
           BUILD_GOARCH: ${{ matrix.arch }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
-      - name: Build SFA (sing-box for android app)
+    
       - name: Build SFA (sing-box for android app)
         if: matrix.type == 'sfa'
         run: |
