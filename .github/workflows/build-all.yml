@@ -178,7 +178,7 @@ jobs:
          make lib_install
          VERSION=${{ needs.calculate_version.outputs.version }}-${{ needs.calculate_version.outputs.git_hash }}
          CC=${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android35-clang
-         CGO_ENABLED=1 gomobile bind -v -a -trimpath -androidapi 23 -javapkg=io.nekohasekai -libname=box -tags "${BUILD_TAGS}" -ldflags "-X=runtime.godebugDefault=asynctimerchan=1 -X github.com/sagernet/sing-box/constant.Version=${VERSION} -s -w -buildid= -checklinkname=0" ./experimental/libbox
+         CGO_ENABLED=1 gomobile bind -v -a -trimpath -androidapi 21 -javapkg=io.nekohasekai -libname=box -tags "${BUILD_TAGS}" -ldflags "-X=runtime.godebugDefault=asynctimerchan=1 -X github.com/sagernet/sing-box/constant.Version=${VERSION} -s -w -buildid= -checklinkname=0" ./experimental/libbox
          cp ./libbox.aar SFA/app/libs/
          cd SFA
          sed -i '/signingConfigs.release/d' app/build.gradle.kts
