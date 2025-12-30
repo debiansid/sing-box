@@ -75,7 +75,7 @@ jobs:
     strategy:
       matrix:
         include:
-          - { name: "Linux amd64 (musl)", os: linux, arch: amd64, variant: musl, naive: true, runner: ubuntu-latest, type: binary, debian: amd64 }
+          - { name: "Linux amd64 (musl)", os: linux, arch: amd64, variant: musl, runner: ubuntu-latest, type: binary, debian: amd64 }
           - { name: "Android arm64 core", os: android, arch: arm64, ndk: "aarch64-linux-android35", runner: ubuntu-latest, type: android }
           - { name: "Windows amd64", os: windows, arch: amd64, runner: windows-latest, type: binary }
           - { name: "SFA (sing-box for android)", os: android, arch: arm64, ndk: "aarch64-linux-android35", runner: ubuntu-latest, type: sfa }
@@ -109,37 +109,6 @@ jobs:
           ref: dev
           path: SFA
           submodules: recursive
-      - name: Clone cronet-go
-        if: matrix.naive
-        run: |
-          set -xeuo pipefail
-          CRONET_GO_VERSION=$(cat .github/CRONET_GO_VERSION)
-          git init ~/cronet-go
-          git -C ~/cronet-go remote add origin https://github.com/sagernet/cronet-go.git
-          git -C ~/cronet-go fetch --depth=1 origin "$CRONET_GO_VERSION"
-          git -C ~/cronet-go checkout FETCH_HEAD
-          git -C ~/cronet-go submodule update --init --recursive --depth=1
-      - name: Cache Chromium toolchain
-        if: matrix.naive
-        id: cache-chromium-toolchain
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/cronet-go/naiveproxy/src/third_party/llvm-build/Release+Asserts
-            ~/cronet-go/naiveproxy/src/out/sysroot-build
-          key: chromium-toolchain-${{ matrix.arch }}-${{ matrix.variant }}-${{ hashFiles('.github/CRONET_GO_VERSION') }}
-      - name: Download Chromium toolchain
-        if: matrix.naive
-        run: |
-          set -xeuo pipefail
-          cd ~/cronet-go
-          go run ./cmd/build-naive --target=linux/${{ matrix.arch }} --libc=musl download-toolchain
-      - name: Set Chromium toolchain environment
-        if: matrix.naive
-        run: |
-          set -xeuo pipefail
-          cd ~/cronet-go
-          go run ./cmd/build-naive --target=linux/${{ matrix.arch }} --libc=musl env >> $GITHUB_ENV
       - name: Set tag (Linux/Android/SFA)
         if: runner.os != 'Windows'
         run: |-
@@ -154,27 +123,23 @@ jobs:
         if: runner.os != 'Windows' && matrix.type != 'sfa' && matrix.type != 'android'
         run: |
           set -xeuo pipefail
-          TAGS='with_quic,with_utls,with_clash_api,with_provider,badlinkname,tfogo_checklinkname0'
-          if [[ "${{ matrix.naive }}" == "true" ]]; then
-            TAGS="${TAGS},with_naive_outbound"
-          fi
-          TAGS="${TAGS},with_musl"
+          TAGS='with_quic,with_utls,with_clash_api,with_provider,badlinkname,tfogo_checklinkname0,with_musl'
           echo "BUILD_TAGS=${TAGS}" >> "${GITHUB_ENV}"
       - name: Set build tags (Android)
         if: matrix.type == 'android'
         run: |
           set -xeuo pipefail
-          TAGS='with_quic,with_utls,with_clash_api,with_provider,with_naive_outbound,badlinkname,tfogo_checklinkname0'
+          TAGS='with_quic,with_utls,with_clash_api,with_provider,badlinkname,tfogo_checklinkname0'
           echo "BUILD_TAGS=${TAGS}" >> "${GITHUB_ENV}"
       - name: Set build tags (SFA)
         if: matrix.type == 'sfa'
         run: |
-          echo "BUILD_TAGS=with_gvisor,with_quic,with_utls,with_clash_api,with_provider,with_conntrack,without_badtls,with_naive_outbound,badlinkname,tfogo_checklinkname0" >> "${GITHUB_ENV}"
+          echo "BUILD_TAGS=with_gvisor,with_quic,with_utls,with_clash_api,with_provider,with_conntrack,without_badtls,badlinkname,tfogo_checklinkname0" >> "${GITHUB_ENV}"
       - name: Set build tags (Windows)
         if: runner.os == 'Windows'
         run: |
-          $TAGS = "with_gvisor,with_quic,with_utls,with_clash_api,with_provider,with_naive_outbound,with_purego,with_tailscale,badlinkname,tfogo_checklinkname0"
-          echo "BUILD_TAGS=$TAGS" >> $env:GITHUB_EN2
+          $TAGS = "with_gvisor,with_quic,with_utls,with_clash_api,with_provider,with_tailscale,badlinkname,tfogo_checklinkname0"
+          echo "BUILD_TAGS=$TAGS" >> $env:GITHUB_ENV
       - name: Build (musl)
         if: matrix.variant == 'musl'
         run: |
@@ -225,8 +190,8 @@ jobs:
          echo "VERSION_CODE=$(date +%Y%m%d%H)" >> local.properties
          chmod +x ./gradlew
          ./gradlew assembleOtherRelease
-         env:
-         ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
       - name: Sign SFA
         if: matrix.type == 'sfa'
         uses: r0adkll/sign-android-release@v1
@@ -254,12 +219,6 @@ jobs:
           GOOS: windows
           GOARCH: amd64
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Extract libcronet.dll
-        if: matrix.os == 'windows'
-        run: |
-          $CRONET_GO_VERSION = Get-Content .github/CRONET_GO_VERSION
-          $env:CGO_ENABLED = "0"
-          go run -v "github.com/sagernet/cronet-go/cmd/build-naive@$CRONET_GO_VERSION" extract-lib --target windows/${{ matrix.arch }} -o dist
       - name: Set mtime (Linux)
         if: matrix.variant == 'musl'
         run: |-
@@ -324,7 +283,6 @@ jobs:
           mkdir "$env:DIR_NAME"
           Copy-Item ../LICENSE "$env:DIR_NAME"
           Copy-Item sing-box.exe "$env:DIR_NAME"
-          Copy-Item libcronet.dll "$env:DIR_NAME"
           Compress-Archive -Path "$env:DIR_NAME" -DestinationPath "$env:DIR_NAME.zip"
           Remove-Item -Recurse "$env:DIR_NAME"
           
@@ -333,7 +291,6 @@ jobs:
           mkdir "$CLI_DIR_NAME"
           Copy-Item ../LICENSE "$CLI_DIR_NAME"
           Copy-Item sing-box-cli.exe "$CLI_DIR_NAME"
-          Copy-Item libcronet.dll "$CLI_DIR_NAME"
           Compress-Archive -Path "$CLI_DIR_NAME" -DestinationPath "$CLI_DIR_NAME.zip"
           Remove-Item -Recurse "$CLI_DIR_NAME"
       - name: Cleanup (Linux/Android)
@@ -341,7 +298,7 @@ jobs:
         run: rm dist/sing-box
       - name: Cleanup (Windows)
         if: runner.os == 'Windows'
-        run: Remove-Item dist/sing-box.exe, dist/sing-box-cli.exe, dist/libcronet.dll
+        run: Remove-Item dist/sing-box.exe, dist/sing-box-cli.exe
       - name: Upload artifact (Binary/Android core)
         if: (matrix.type == 'binary' || matrix.type == 'android') && matrix.debian == '' && runner.os != 'Windows'
         uses: actions/upload-artifact@v4
