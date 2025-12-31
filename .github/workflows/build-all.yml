@@ -194,7 +194,8 @@ jobs:
          git fetch origin dev
          git checkout dev
          git pull origin dev
-         sed -i '/signingConfigs\.release/d' app/build.gradle
+         sed -i '/signingConfigs {/,/^    }/d' app/build.gradle.kts
+         sed -i '/signingConfig = signingConfigs/d' app/build.gradle.kts
          chmod +x ./gradlew
          ./gradlew :app:clean :app:assembleOtherRelease && ./gradlew --stop
         env:
