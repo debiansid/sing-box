@@ -176,33 +176,30 @@ jobs:
         run: |
          mkdir -p SFA/app/libs/
          make lib_install
-         VERSION=${{ needs.calculate_version.outputs.version }}-${{ needs.calculate_version.outputs.git_hash }}
+         VERSION=$(CGO_ENABLED=0 go run ./cmd/internal/read_tag)
          CC=${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android35-clang
-         CGO_ENABLED=1 gomobile bind -v -a -trimpath -androidapi 23 -javapkg=io.nekohasekai -libname=box -tags "${BUILD_TAGS}" -ldflags "-X=runtime.godebugDefault=asynctimerchan=1 -X github.com/sagernet/sing-box/constant.Version=${VERSION} -s -w -buildid= -checklinkname=0" ./experimental/libbox
-         cp ./libbox.aar SFA/app/libs/
+         CGO_ENABLED=1 CC=${CC} gomobile bind -v \
+         -target android \
+         -androidapi 21 \
+         -javapkg=io.nekohasekai \
+         -libname=box \
+         -trimpath \
+         -buildvcs=false \
+         -ldflags "-X github.com/sagernet/sing-box/constant.Version=${VERSION} -s -w -buildid= -checklinkname=0" \
+         -tags "${BUILD_TAGS}" \
+         ./experimental/libbox
+    
+         cp libbox.aar SFA/app/libs/
          cd SFA
-         # Remove ALL signing configurations from build files to build unsigned APK
-         if [ -f app/build.gradle ]; then
-           # Remove signingConfigs block
-           sed -i '/signingConfigs[[:space:]]*{/,/^[[:space:]]*}[[:space:]]*$/d' app/build.gradle
-           # Remove signingConfig references in buildTypes
-           sed -i '/signingConfig[[:space:]]/d' app/build.gradle
-         elif [ -f app/build.gradle.kts ]; then
-           # Remove signingConfigs block
-           sed -i '/signingConfigs[[:space:]]*{/,/^[[:space:]]*}[[:space:]]*$/d' app/build.gradle.kts
-           # Remove signingConfig references in buildTypes
-           sed -i '/signingConfig[[:space:]]*=/d' app/build.gradle.kts
-         fi
-         echo "" >> gradle.properties
-         echo "org.gradle.jvmargs=-Xmx4096m -Dfile.encoding=UTF-8 -XX:+UseParallelGC" >> gradle.properties
-         echo "org.gradle.caching=true" >> gradle.properties
-         echo "org.gradle.parallel=true" >> gradle.properties
-         echo "VERSION_NAME=${VERSION}" > local.properties
-         echo "VERSION_CODE=$(date +%Y%m%d%H)" >> local.properties
+         git fetch origin dev
+         git checkout dev
+         git pull origin dev
+         sed -i '/signingConfigs\.release/d' app/build.gradle
          chmod +x ./gradlew
-         ./gradlew assembleOtherRelease
+         ./gradlew :app:clean :app:assembleOtherRelease && ./gradlew --stop
         env:
-          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+         ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+         
       - name: Sign SFA
         if: matrix.type == 'sfa'
         uses: r0adkll/sign-android-release@v1
