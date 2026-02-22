@@ -178,7 +178,8 @@ jobs:
          mkdir -p SFA/app/libs/
          make lib_install
          VERSION=$(CGO_ENABLED=0 go run ./cmd/internal/read_tag)
-         CC=${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android35-clang
+         #CC=${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android35-clang
+         CC=${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android35-clang
          CGO_ENABLED=1 CC=${CC} gomobile bind -v \
          -target android \
          -androidapi 21 \
