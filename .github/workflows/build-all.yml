@@ -160,9 +160,8 @@ jobs:
           set -xeuo pipefail
           go install -v ./cmd/internal/build
           NDK_BIN="${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin"
-export CC="${NDK_BIN}/clang --target=aarch64-linux-android35"
-export CXX="${NDK_BIN}/clang++ --target=aarch64-linux-android35"
-          export CXX="${CC}++"
+          export CC="${NDK_BIN}/clang --target=aarch64-linux-android35"
+          export CXX="${NDK_BIN}/clang++ --target=aarch64-linux-android35"
           mkdir -p dist
           GOOS=$BUILD_GOOS GOARCH=$BUILD_GOARCH build go build -v -trimpath -o dist/sing-box -tags "${BUILD_TAGS}" \
           -ldflags '-s -buildid= -X github.com/sagernet/sing-box/constant.Version=${{ needs.calculate_version.outputs.version }}-${{ needs.calculate_version.outputs.git_hash }} -checklinkname=0' \
