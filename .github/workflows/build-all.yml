@@ -208,12 +208,24 @@ jobs:
          git fetch origin stable
          git checkout stable
          git pull origin stable 
-         #git reset --hard 4bdde0ae4db2f0fe041a52520e12315141d0981c
-         sed -i '/signingConfigs {/,/^    }/d' app/build.gradle
-         sed -i '/signingConfig = signingConfigs/d' app/build.gradle
-         chmod +x ./gradlew
-         ./gradlew :app:clean :app:assembleOtherRelease && ./gradlew --stop
-         
+         awk '
+          /signingConfigs \{/ { depth=1; next }
+          depth > 0 {
+          for(i=1; i<=length($0); i++) {
+            c = substr($0, i, 1)
+            if(c == "{") depth++
+            else if(c == "}") depth--
+             }
+             if(depth <= 0) depth=0
+             next
+             }
+            /signingConfig[^s]/ && /signingConfigs/ { next }
+            { print }
+            ' app/build.gradle > app/build.gradle.tmp && mv app/build.gradle.tmp app/build.gradle
+
+            chmod +x ./gradlew
+           ./gradlew :app:clean :app:assembleOtherRelease && ./gradlew --stop
+
         env:
          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
          JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
