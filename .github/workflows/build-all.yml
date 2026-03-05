@@ -194,7 +194,7 @@ jobs:
          CC=${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android35-clang
          CGO_ENABLED=1 CC=${CC} gomobile bind -v \
          -target android \
-         -androidapi 23 \
+         -androidapi 21 \
          -javapkg=io.nekohasekai \
          -libname=box \
          -trimpath  \
