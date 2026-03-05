@@ -209,8 +209,8 @@ jobs:
          git checkout stable
          git pull origin stable 
          #git reset --hard 4bdde0ae4db2f0fe041a52520e12315141d0981c
-         sed -i '/signingConfigs {/,/^    }/d' app/build.gradle.kts
-         sed -i '/signingConfig = signingConfigs/d' app/build.gradle.kts
+         sed -i '/signingConfigs {/,/^    }/d' app/build.gradle
+         sed -i '/signingConfig = signingConfigs/d' app/build.gradle
          chmod +x ./gradlew
          ./gradlew :app:clean :app:assembleOtherRelease && ./gradlew --stop
          
