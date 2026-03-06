@@ -112,7 +112,7 @@ jobs:
         if: matrix.type == 'sfa'
         uses: actions/checkout@v4.1.1
         with:
-          repository: SagerNet/sing-box-for-android
+          repository: yapixel/sing-box-for-android
           ref: stable
           path: SFA
           submodules: recursive
