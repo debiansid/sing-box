@@ -2,13 +2,49 @@
 icon: material/alert-decagram
 ---
 
+#### 1.14.0-alpha.8
+
+* Add BBR profile and hop interval randomization for Hysteria2 **1**
+* Fixes and improvements
+
+**1**:
+
+See [Hysteria2 Inbound](/configuration/inbound/hysteria2/#bbr_profile) and [Hysteria2 Outbound](/configuration/outbound/hysteria2/#bbr_profile).
+
+#### 1.14.0-alpha.8
+
+* Fixes and improvements
+
 #### 1.13.5
+
+* Fixes and improvements
+
+#### 1.14.0-alpha.7
 
 * Fixes and improvements
 
 #### 1.13.4
 
 * Fixes and improvements
+
+#### 1.14.0-alpha.4
+
+* Refactor ACME support to certificate provider system **1**
+* Add Cloudflare Origin CA certificate provider **2**
+* Add Tailscale certificate provider **3**
+* Fixes and improvements
+
+**1**:
+
+See [Certificate Provider](/configuration/shared/certificate-provider/) and [Migration](/migration/#migrate-inline-acme-to-certificate-provider).
+
+**2**:
+
+See [Cloudflare Origin CA](/configuration/shared/certificate-provider/cloudflare-origin-ca).
+
+**3**:
+
+See [Tailscale](/configuration/shared/certificate-provider/tailscale).
 
 #### 1.13.3
 
@@ -33,6 +69,59 @@ from [SagerNet/go](https://github.com/SagerNet/go).
 **3**:
 
 See [OCM](/configuration/service/ocm).
+
+#### 1.12.24
+
+* Fixes and improvements
+
+#### 1.14.0-alpha.2
+
+* Add OpenWrt and Alpine APK packages to release **1**
+* Backport to macOS 10.13 High Sierra **2**
+* OCM service: Add WebSocket support for Responses API **3**
+* Fixes and improvements
+
+**1**:
+
+Alpine APK files use `linux` in the filename to distinguish from OpenWrt APKs which use the `openwrt` prefix:
+
+- OpenWrt: `sing-box_{version}_openwrt_{architecture}.apk`
+- Alpine: `sing-box_{version}_linux_{architecture}.apk`
+
+**2**:
+
+Legacy macOS binaries (with `-legacy-macos-10.13` suffix) now support
+macOS 10.13 High Sierra, built using Go 1.25 with patches
+from [SagerNet/go](https://github.com/SagerNet/go).
+
+**3**:
+
+See [OCM](/configuration/service/ocm).
+
+#### 1.14.0-alpha.1
+
+* Add `source_mac_address` and `source_hostname` rule items **1**
+* Add `include_mac_address` and `exclude_mac_address` TUN options **2**
+* Update NaiveProxy to 145.0.7632.159 **3**
+* Fixes and improvements
+
+**1**:
+
+New rule items for matching LAN devices by MAC address and hostname via neighbor resolution.
+Supported on Linux, macOS, or in graphical clients on Android and macOS.
+
+See [Route Rule](/configuration/route/rule/#source_mac_address), [DNS Rule](/configuration/dns/rule/#source_mac_address) and [Neighbor Resolution](/configuration/shared/neighbor/).
+
+**2**:
+
+Limit or exclude devices from TUN routing by MAC address.
+Only supported on Linux with `auto_route` and `auto_redirect` enabled.
+
+See [TUN](/configuration/inbound/tun/#include_mac_address).
+
+**3**:
+
+This is not an official update from NaiveProxy. Instead, it's a Chromium codebase update maintained by Project S.
 
 #### 1.13.2
 
