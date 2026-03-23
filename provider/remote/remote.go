@@ -346,7 +346,7 @@ func (s *ProviderRemote) loadCacheFile() error {
 			}
 			lastUpdated = fs.ModTime()
 		}
-	} else if saveSub != nil && saveSub.Content != nil {
+	} else if saveSub != nil && len(saveSub.Content) > 0 {
 		content = saveSub.Content
 		lastUpdated = saveSub.LastUpdated
 		lastEtag = saveSub.LastEtag
