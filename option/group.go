@@ -17,6 +17,14 @@ type URLTestOutboundOptions struct {
 	InterruptExistConnections bool               `json:"interrupt_exist_connections,omitempty"`
 }
 
+type FallbackOutboundOptions struct {
+	GroupCommonOption
+	URL                       string             `json:"url,omitempty"`
+	Interval                  badoption.Duration `json:"interval,omitempty"`
+	IdleTimeout               badoption.Duration `json:"idle_timeout,omitempty"`
+	InterruptExistConnections bool               `json:"interrupt_exist_connections,omitempty"`
+}
+
 type GroupCommonOption struct {
 	Outbounds       []string            `json:"outbounds"`
 	Providers       []string            `json:"providers"`
