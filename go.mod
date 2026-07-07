@@ -202,3 +202,5 @@ require (
 replace github.com/sagernet/sing-tun => github.com/reF1nd/sing-tun v0.9.7-0.20261119160845-b2aefbd10edf
 
 replace github.com/sagernet/sing-anytls => github.com/reF1nd/sing-anytls v0.0.0-20261005110320-ca02db16051a
+
+replace github.com/sagernet/sing-snell => github.com/reF1nd/sing-snell v0.0.0-20261111152839-c3d3cba7c508

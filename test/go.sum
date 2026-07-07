@@ -251,6 +251,8 @@ github.com/quic-go/qpack v0.6.0 h1:g7W+BMYynC1LbYLSqRt8PBg5Tgwxn214ZZR34VIOjz8=
 github.com/quic-go/qpack v0.6.0/go.mod h1:lUpLKChi8njB4ty2bFLX2x4gzDqXwUpaO1DP9qMDZII=
 github.com/reF1nd/sing-anytls v0.0.0-20261005110320-ca02db16051a h1:9bnRAsAjqDSQkGLjjd64rvzAir42v5lH16aJDFg8TEU=
 github.com/reF1nd/sing-anytls v0.0.0-20261005110320-ca02db16051a/go.mod h1:VRKLnj0ObEsN228h+zuzf91p+6sjtYE8SBaLPVsBy5o=
+github.com/reF1nd/sing-snell v0.0.0-20261111152839-c3d3cba7c508 h1:zQjnw9m3AuY8dqjeHh1q7BqCzvc22X4YBkiz/nPsgVQ=
+github.com/reF1nd/sing-snell v0.0.0-20261111152839-c3d3cba7c508/go.mod h1:Na4U54WiSQxWD/KEFIIdr+rPE9Qnr/kk8EtKXa18pRk=
 github.com/reF1nd/sing-tun v0.9.7-0.20261119160845-b2aefbd10edf h1:YaoRtw2s3rzoA0GlTGXZKHkcyDs9UPjz85qO/v9HidI=
 github.com/reF1nd/sing-tun v0.9.7-0.20261119160845-b2aefbd10edf/go.mod h1:JxmxIS7tDJmjfsPe+RynTBiNn0pPiEEKuXuH2r7aESw=
 github.com/rogpeppe/go-internal v1.14.1 h1:UQB4HGPB6osV0SQTLymcB4TgvyWu6ZyliaW0tI/otEQ=
@@ -353,8 +355,6 @@ github.com/sagernet/sing-shadowsocks2 v0.2.2-0.20261110092058-52ade8ab7e95 h1:nu
 github.com/sagernet/sing-shadowsocks2 v0.2.2-0.20261110092058-52ade8ab7e95/go.mod h1:RnXS0lExcDAovvDeniJ4IKa2IuChrdipolPYWBv9hWQ=
 github.com/sagernet/sing-shadowtls v0.2.2-0.20261114073233-97863830a3b3 h1:UY+nvcsP3Zg7QXoo7toxiVydQJPQtdHs8bVkpo7AYkI=
 github.com/sagernet/sing-shadowtls v0.2.2-0.20261114073233-97863830a3b3/go.mod h1:sWqKnGlMipCHaGsw1sTTlimyUpgzP4WP3pjhCsYt9oA=
-github.com/sagernet/sing-snell v0.0.0-20261110094602-04667b0a321c h1:OODxu54K5ZvgnS97t8HlN3tily8Oj+s6ygOJ1ZzyfFQ=
-github.com/sagernet/sing-snell v0.0.0-20261110094602-04667b0a321c/go.mod h1:Na4U54WiSQxWD/KEFIIdr+rPE9Qnr/kk8EtKXa18pRk=
 github.com/sagernet/sing-usbip v0.0.0-20260817040617-28bd42667eca h1:5wA+IE0Fq1CGVLOgSpm0gKKZ03HzugcJ2JyhmDqeX6A=
 github.com/sagernet/sing-usbip v0.0.0-20260817040617-28bd42667eca/go.mod h1:ADAZZU85MnM91XNhd2TdZRTaIbA7RjTZuQ1KCHcUbNg=
 github.com/sagernet/sing-vmess v0.2.9-0.20261116164733-ca746ebade33 h1:SLo9u/jPy2d1ylqryqLZv1rGMrwhXVJqlS45NoUEVm8=
