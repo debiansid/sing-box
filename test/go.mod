@@ -4,7 +4,12 @@ go 1.25.5
 
 require github.com/sagernet/sing-box v0.0.0
 
-replace github.com/sagernet/sing-box => ../
+replace (
+	github.com/anytls/sing-anytls => github.com/reF1nd/sing-anytls v0.0.14-0.20260803151749-763fb5bccb9d
+	github.com/sagernet/sing-box => ../
+	github.com/sagernet/sing-snell => github.com/reF1nd/sing-snell v0.0.0-20260808134633-c120d40d0d5b
+	github.com/sagernet/sing-tun => github.com/reF1nd/sing-tun v0.8.12-0.20260810170205-6502608e55c8
+)
 
 require (
 	github.com/docker/docker v27.3.1+incompatible
@@ -17,7 +22,8 @@ require (
 	github.com/sagernet/sing-quic v0.7.0-beta.2
 	github.com/sagernet/sing-shadowsocks v0.2.8
 	github.com/sagernet/sing-shadowsocks2 v0.2.1
-	github.com/sagernet/sing-tun v0.8.12-0.20260810013717-909ab10ad507
+	github.com/sagernet/sing-snell v0.0.0-20260727093646-7cb813e07b73
+	github.com/sagernet/sing-tun v0.8.12-0.20260810140529-d67734281390
 	github.com/spyzhov/ajson v0.9.4
 	github.com/stretchr/testify v1.11.1
 	go.uber.org/goleak v1.3.0
@@ -36,7 +42,7 @@ require (
 	github.com/andybalholm/brotli v1.1.0 // indirect
 	github.com/anmitsu/go-shlex v0.0.0-20200514113438-38f4b401e2be // indirect
 	github.com/anthropics/anthropic-sdk-go v1.26.0 // indirect
-	github.com/anytls/sing-anytls v0.0.11 // indirect
+	github.com/anytls/sing-anytls v0.0.13 // indirect
 	github.com/axiomhq/hyperloglog v0.0.0-20240319100328-84253e514e02 // indirect
 	github.com/caddyserver/certmagic v0.25.3-0.20260421143802-60d9d8b415d6 // indirect
 	github.com/caddyserver/zerossl v0.1.5 // indirect
@@ -48,7 +54,7 @@ require (
 	github.com/creack/pty v1.1.24 // indirect
 	github.com/cretz/bine v0.2.0 // indirect
 	github.com/database64128/netx-go v0.1.1 // indirect
-	github.com/database64128/tfo-go/v2 v2.3.2 // indirect
+	github.com/database64128/tfo-go/v2 v2.3.3 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/dblohm7/wingoes v0.0.0-20240119213807-a09d6be7affa // indirect
 	github.com/dgryski/go-camellia v0.0.0-20191119043421-69a8a13fb23d // indirect
@@ -160,7 +166,6 @@ require (
 	github.com/sagernet/sing-mux v0.3.5 // indirect
 	github.com/sagernet/sing-openconnect v0.0.0-20260810065514-53aa8058f8df // indirect
 	github.com/sagernet/sing-shadowtls v0.2.1 // indirect
-	github.com/sagernet/sing-snell v0.0.0-20260727093646-7cb813e07b73 // indirect
 	github.com/sagernet/sing-usbip v0.0.0-20260616101517-efb91521eddb // indirect
 	github.com/sagernet/sing-vmess v0.2.8-0.20250909125414-3aed155119a1 // indirect
 	github.com/sagernet/smux v1.5.50-sing-box-mod.1 // indirect
