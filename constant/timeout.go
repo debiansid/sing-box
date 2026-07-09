@@ -13,6 +13,7 @@ const (
 	ICMPTimeout                = 10 * time.Second
 	DefaultURLTestInterval     = 3 * time.Minute
 	DefaultURLTestIdleTimeout  = 30 * time.Minute
+	DefaultFallbackRecovery    = 30 * time.Second
 	StartTimeout               = 10 * time.Second
 	StopTimeout                = 5 * time.Second
 	FatalStopTimeout           = 10 * time.Second

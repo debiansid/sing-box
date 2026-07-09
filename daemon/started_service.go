@@ -682,6 +682,10 @@ func (s *StartedService) SetClashMode(ctx context.Context, request *ClashMode) (
 	return &emptypb.Empty{}, nil
 }
 
+type outboundChecker interface {
+	CheckOutbounds()
+}
+
 func (s *StartedService) URLTest(ctx context.Context, request *URLTestRequest) (*emptypb.Empty, error) {
 	s.serviceAccess.RLock()
 	if s.serviceStatus.Status != ServiceStatus_STARTED {
@@ -696,10 +700,10 @@ func (s *StartedService) URLTest(ctx context.Context, request *URLTestRequest) (
 		return nil, status.Error(codes.NotFound, "outbound not found: "+outboundTag)
 	}
 	historyStorage := boxService.urlTestHistoryStorage
-	urlTest, isURLTest := outbound.(*group.URLTest)
+	checker, isChecker := outbound.(outboundChecker)
 	outboundGroup, isOutboundGroup := outbound.(adapter.OutboundGroup)
-	if isURLTest {
-		go urlTest.CheckOutbounds()
+	if isChecker {
+		go checker.CheckOutbounds()
 	} else if isOutboundGroup {
 		outbounds := common.Filter(common.Map(outboundGroup.All(), func(it string) adapter.Outbound {
 			itOutbound, _ := boxService.outboundManager.Outbound(it)
