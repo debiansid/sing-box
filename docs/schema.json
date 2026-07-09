@@ -11020,6 +11020,48 @@
           "type": "object",
           "properties": {
             "type": {
+              "const": "fallback"
+            },
+            "tag": {
+              "type": "string"
+            },
+            "outbounds": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "x-tag-reference": "outbound"
+              }
+            },
+            "url": {
+              "type": "string"
+            },
+            "interval": {
+              "$ref": "#/$defs/Duration"
+            },
+            "recovery_interval": {
+              "$ref": "#/$defs/Duration"
+            },
+            "idle_timeout": {
+              "$ref": "#/$defs/Duration"
+            },
+            "max_attempts": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 65535
+            },
+            "interrupt_exist_connections": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
               "const": "http"
             },
             "tag": {
