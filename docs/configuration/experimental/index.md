@@ -12,15 +12,23 @@
   "experimental": {
     "cache_file": {},
     "clash_api": {},
-    "v2ray_api": {}
+    "v2ray_api": {},
+    "urltest_unified_delay": false
   }
 }
 ```
 
 ### Fields
 
-| Key          | Format                     |
-|--------------|----------------------------|
-| `cache_file` | [Cache File](./cache-file/) |
-| `clash_api`  | [Clash API](./clash-api/)   |
-| `v2ray_api`  | [V2Ray API](./v2ray-api/)   |
+| Key                     | Format                      |
+|-------------------------|-----------------------------|
+| `cache_file`            | [Cache File](./cache-file/) |
+| `clash_api`             | [Clash API](./clash-api/)   |
+| `v2ray_api`             | [V2Ray API](./v2ray-api/)   |
+| `urltest_unified_delay` | Boolean                     |
+
+#### urltest_unified_delay
+
+Perform the URL test request twice over the same connection and use the second measurement, excluding handshake latency from the result.
+
+Disabled by default.

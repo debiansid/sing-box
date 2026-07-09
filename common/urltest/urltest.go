@@ -15,7 +15,10 @@ import (
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/common/ntp"
 	"github.com/sagernet/sing/common/observable"
+	"github.com/sagernet/sing/service"
 )
+
+type UnifiedDelay bool
 
 type HistoryStorage struct {
 	access       sync.RWMutex
@@ -130,6 +133,15 @@ func URLTest(ctx context.Context, link string, detour N.Dialer) (t uint16, err e
 		return
 	}
 	resp.Body.Close()
+	if service.FromContext[UnifiedDelay](ctx) {
+		second := time.Now()
+		resp, err = client.Do(req.WithContext(ctx))
+		if err == nil {
+			resp.Body.Close()
+			start = second
+		}
+		err = nil
+	}
 	t = uint16(time.Since(start) / time.Millisecond)
 	return
 }
