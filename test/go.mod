@@ -5,6 +5,7 @@ go 1.25.5
 require github.com/sagernet/sing-box v0.0.0
 
 replace (
+	github.com/sagernet/sing-anytls => github.com/reF1nd/sing-anytls v0.0.0-20260905062301-7eeaaeb4fb19
 	github.com/sagernet/sing-box => ../
 	github.com/sagernet/sing-snell => github.com/reF1nd/sing-snell v0.0.0-20260905064728-48a266fb2745
 	github.com/sagernet/sing-tun => github.com/reF1nd/sing-tun v0.9.4-0.20260913133025-0af6293f1ef0
@@ -41,7 +42,7 @@ require (
 	github.com/andybalholm/brotli v1.1.0 // indirect
 	github.com/anmitsu/go-shlex v0.0.0-20200514113438-38f4b401e2be // indirect
 	github.com/anthropics/anthropic-sdk-go v1.26.0 // indirect
-	github.com/anytls/sing-anytls v0.0.11 // indirect
+	github.com/anytls/sing-anytls v0.0.13 // indirect
 	github.com/axiomhq/hyperloglog v0.0.0-20240319100328-84253e514e02 // indirect
 	github.com/caddyserver/certmagic v0.25.3-0.20260421143802-60d9d8b415d6 // indirect
 	github.com/caddyserver/zerossl v0.1.5 // indirect

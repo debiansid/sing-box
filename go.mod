@@ -5,7 +5,7 @@ go 1.25.5
 require (
 	filippo.io/age v1.3.1
 	github.com/anthropics/anthropic-sdk-go v1.26.0
-	github.com/anytls/sing-anytls v0.0.11
+	github.com/anytls/sing-anytls v0.0.13
 	github.com/caddyserver/certmagic v0.25.3-0.20260421143802-60d9d8b415d6
 	github.com/caddyserver/zerossl v0.1.5
 	github.com/coder/websocket v1.8.14
@@ -85,6 +85,7 @@ require (
 )
 
 replace (
+	github.com/sagernet/sing-anytls => github.com/reF1nd/sing-anytls v0.0.0-20260905062301-7eeaaeb4fb19
 	github.com/sagernet/sing-snell => github.com/reF1nd/sing-snell v0.0.0-20260905064728-48a266fb2745
 	github.com/sagernet/sing-tun => github.com/reF1nd/sing-tun v0.9.4-0.20260913133025-0af6293f1ef0
 )
