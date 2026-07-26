@@ -10927,6 +10927,9 @@
             },
             "client_metadata": {
               "type": "string"
+            },
+            "disable_reuse": {
+              "type": "boolean"
             }
           },
           "required": [
