@@ -2,9 +2,7 @@ package parser
 
 import (
 	"context"
-	"reflect"
 
-	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/option"
 	E "github.com/sagernet/sing/common/exceptions"
 )
@@ -16,12 +14,12 @@ var subscriptionParsers = []func(ctx context.Context, content string) ([]option.
 	ParseRawSubscription,
 }
 
-func ParseSubscription(ctx context.Context, content string, overrideDialerOptions *option.OverrideDialerOptions) ([]option.Outbound, []option.Endpoint, error) {
+func ParseSubscription(ctx context.Context, content string, overrideDialerOptions *option.OverrideDialerOptions, overrideTLSOptions *option.OverrideTLSOptions, overrideAnyTLSOptions *option.OverrideAnyTLSOptions) ([]option.Outbound, []option.Endpoint, error) {
 	var pErr error
 	for _, parser := range subscriptionParsers {
 		outbounds, endpoints, err := parser(ctx, content)
 		if len(outbounds) > 0 || len(endpoints) > 0 {
-			return overrideOutbounds(outbounds, overrideDialerOptions),
+			return overrideOutbounds(outbounds, overrideDialerOptions, overrideTLSOptions, overrideAnyTLSOptions),
 				overrideEndpoints(endpoints, overrideDialerOptions),
 				nil
 		}
@@ -30,91 +28,35 @@ func ParseSubscription(ctx context.Context, content string, overrideDialerOption
 	return nil, nil, E.Cause(pErr, "no servers found")
 }
 
-func overrideOutbounds(outbounds []option.Outbound, overrideDialerOptions *option.OverrideDialerOptions) []option.Outbound {
-	var parsedOutbounds []option.Outbound
+func overrideOutbounds(outbounds []option.Outbound, dialer *option.OverrideDialerOptions, tls *option.OverrideTLSOptions, anyTLS *option.OverrideAnyTLSOptions) []option.Outbound {
 	for _, outbound := range outbounds {
-		switch outbound.Type {
-		case C.TypeHTTP:
-			options := outbound.Options.(*option.HTTPOutboundOptions)
-			options.DialerOptions = overrideDialerOption(options.DialerOptions, overrideDialerOptions)
-			outbound.Options = options
-		case C.TypeSOCKS:
-			options := outbound.Options.(*option.SOCKSOutboundOptions)
-			options.DialerOptions = overrideDialerOption(options.DialerOptions, overrideDialerOptions)
-			outbound.Options = options
-		case C.TypeTUIC:
-			options := outbound.Options.(*option.TUICOutboundOptions)
-			options.DialerOptions = overrideDialerOption(options.DialerOptions, overrideDialerOptions)
-			outbound.Options = options
-		case C.TypeVMess:
-			options := outbound.Options.(*option.VMessOutboundOptions)
-			options.DialerOptions = overrideDialerOption(options.DialerOptions, overrideDialerOptions)
-			outbound.Options = options
-		case C.TypeVLESS:
-			options := outbound.Options.(*option.VLESSOutboundOptions)
-			options.DialerOptions = overrideDialerOption(options.DialerOptions, overrideDialerOptions)
-			outbound.Options = options
-		case C.TypeTrojan:
-			options := outbound.Options.(*option.TrojanOutboundOptions)
-			options.DialerOptions = overrideDialerOption(options.DialerOptions, overrideDialerOptions)
-			outbound.Options = options
-		case C.TypeHysteria:
-			options := outbound.Options.(*option.HysteriaOutboundOptions)
-			options.DialerOptions = overrideDialerOption(options.DialerOptions, overrideDialerOptions)
-			outbound.Options = options
-		case C.TypeShadowTLS:
-			options := outbound.Options.(*option.ShadowTLSOutboundOptions)
-			options.DialerOptions = overrideDialerOption(options.DialerOptions, overrideDialerOptions)
-			outbound.Options = options
-		case C.TypeHysteria2:
-			options := outbound.Options.(*option.Hysteria2OutboundOptions)
-			options.DialerOptions = overrideDialerOption(options.DialerOptions, overrideDialerOptions)
-			outbound.Options = options
-		case C.TypeAnyTLS:
-			options := outbound.Options.(*option.AnyTLSOutboundOptions)
-			options.DialerOptions = overrideDialerOption(options.DialerOptions, overrideDialerOptions)
-			outbound.Options = options
-		case C.TypeShadowsocks:
-			options := outbound.Options.(*option.ShadowsocksOutboundOptions)
-			options.DialerOptions = overrideDialerOption(options.DialerOptions, overrideDialerOptions)
-			outbound.Options = options
-		case C.TypeSnell:
-			options := outbound.Options.(*option.SnellOutboundOptions)
-			options.DialerOptions = overrideDialerOption(options.DialerOptions, overrideDialerOptions)
-			outbound.Options = options
+		if wrapper, ok := outbound.Options.(option.DialerOptionsWrapper); ok {
+			wrapper.ReplaceDialerOptions(overrideDialerOption(wrapper.TakeDialerOptions(), dialer))
 		}
-		parsedOutbounds = append(parsedOutbounds, outbound)
+		if wrapper, ok := outbound.Options.(option.OutboundTLSOptionsWrapper); ok {
+			wrapper.ReplaceOutboundTLSOptions(overrideTLSOption(wrapper.TakeOutboundTLSOptions(), tls))
+		}
+		if options, ok := outbound.Options.(*option.AnyTLSOutboundOptions); ok && anyTLS != nil && anyTLS.ClientMetadata != nil {
+			options.ClientMetadata = anyTLS.ClientMetadata
+		}
 	}
-	return parsedOutbounds
+	return outbounds
 }
 
-func overrideEndpoints(endpoints []option.Endpoint, overrideDialerOptions *option.OverrideDialerOptions) []option.Endpoint {
-	if len(endpoints) == 0 {
-		return nil
-	}
-	var parsedEndpoints []option.Endpoint
-	for _, ep := range endpoints {
-		switch ep.Type {
-		case C.TypeWireGuard:
-			options := ep.Options.(*option.WireGuardEndpointOptions)
-			options.DialerOptions = overrideDialerOption(options.DialerOptions, overrideDialerOptions)
-			ep.Options = options
-		case C.TypeTailscale:
-			options := ep.Options.(*option.TailscaleEndpointOptions)
-			options.DialerOptions = overrideDialerOption(options.DialerOptions, overrideDialerOptions)
-			ep.Options = options
+func overrideEndpoints(endpoints []option.Endpoint, dialer *option.OverrideDialerOptions) []option.Endpoint {
+	for _, endpoint := range endpoints {
+		if wrapper, ok := endpoint.Options.(option.DialerOptionsWrapper); ok {
+			wrapper.ReplaceDialerOptions(overrideDialerOption(wrapper.TakeDialerOptions(), dialer))
 		}
-		parsedEndpoints = append(parsedEndpoints, ep)
 	}
-	return parsedEndpoints
+	return endpoints
 }
 
 func overrideDialerOption(options option.DialerOptions, overrideDialerOptions *option.OverrideDialerOptions) option.DialerOptions {
-	var defaultOptions option.OverrideDialerOptions
-	if overrideDialerOptions == nil || reflect.DeepEqual(*overrideDialerOptions, defaultOptions) {
+	if overrideDialerOptions == nil {
 		return options
 	}
-	if overrideDialerOptions.Detour != nil && options.Detour == "" {
+	if overrideDialerOptions.Detour != nil {
 		options.Detour = *overrideDialerOptions.Detour
 	}
 	if overrideDialerOptions.BindInterface != nil {
@@ -147,7 +89,9 @@ func overrideDialerOption(options option.DialerOptions, overrideDialerOptions *o
 	if overrideDialerOptions.UDPFragment != nil {
 		options.UDPFragment = overrideDialerOptions.UDPFragment
 	}
-	options.DomainResolver = overrideDialerOptions.DomainResolver
+	if overrideDialerOptions.DomainResolver != nil {
+		options.DomainResolver = overrideDialerOptions.DomainResolver
+	}
 	if overrideDialerOptions.NetworkStrategy != nil {
 		options.NetworkStrategy = overrideDialerOptions.NetworkStrategy
 	}
@@ -166,4 +110,80 @@ func overrideDialerOption(options option.DialerOptions, overrideDialerOptions *o
 		options.DomainStrategy = *overrideDialerOptions.DomainStrategy
 	}
 	return options
+}
+
+func applyOverride[T any](value *T, override *T) {
+	if override != nil {
+		*value = *override
+	}
+}
+
+func overrideTLSOption(options *option.OutboundTLSOptions, override *option.OverrideTLSOptions) *option.OutboundTLSOptions {
+	if override == nil {
+		return options
+	}
+	if override.Enabled != nil && !*override.Enabled {
+		return &option.OutboundTLSOptions{}
+	}
+	if options == nil {
+		if override.Enabled == nil || !*override.Enabled {
+			return nil
+		}
+		options = &option.OutboundTLSOptions{}
+	}
+	result := *options
+	applyOverride(&result.Enabled, override.Enabled)
+	applyOverride(&result.DisableSNI, override.DisableSNI)
+	applyOverride(&result.ServerName, override.ServerName)
+	applyOverride(&result.Insecure, override.Insecure)
+	applyOverride(&result.ALPN, override.ALPN)
+	applyOverride(&result.MinVersion, override.MinVersion)
+	applyOverride(&result.MaxVersion, override.MaxVersion)
+	applyOverride(&result.CipherSuites, override.CipherSuites)
+	applyOverride(&result.CurvePreferences, override.CurvePreferences)
+	applyOverride(&result.Certificate, override.Certificate)
+	applyOverride(&result.CertificatePath, override.CertificatePath)
+	applyOverride(&result.CertificatePublicKeySHA256, override.CertificatePublicKeySHA256)
+	applyOverride(&result.ClientCertificate, override.ClientCertificate)
+	applyOverride(&result.ClientCertificatePath, override.ClientCertificatePath)
+	applyOverride(&result.ClientKey, override.ClientKey)
+	applyOverride(&result.ClientKeyPath, override.ClientKeyPath)
+	applyOverride(&result.CertificatePinSHA256, override.CertificatePinSHA256)
+	applyOverride(&result.Fragment, override.Fragment)
+	applyOverride(&result.FragmentFallbackDelay, override.FragmentFallbackDelay)
+	applyOverride(&result.RecordFragment, override.RecordFragment)
+	applyOverride(&result.KernelTx, override.KernelTx)
+	applyOverride(&result.KernelRx, override.KernelRx)
+	if override.ECH != nil {
+		var nested option.OutboundECHOptions
+		if result.ECH != nil {
+			nested = *result.ECH
+		}
+		applyOverride(&nested.Enabled, override.ECH.Enabled)
+		applyOverride(&nested.Config, override.ECH.Config)
+		applyOverride(&nested.ConfigPath, override.ECH.ConfigPath)
+		applyOverride(&nested.PQSignatureSchemesEnabled, override.ECH.PQSignatureSchemesEnabled)
+		applyOverride(&nested.DynamicRecordSizingDisabled, override.ECH.DynamicRecordSizingDisabled)
+		result.ECH = &nested
+	}
+	if override.UTLS != nil {
+		var nested option.OutboundUTLSOptions
+		if result.UTLS != nil {
+			nested = *result.UTLS
+		}
+		applyOverride(&nested.Enabled, override.UTLS.Enabled)
+		applyOverride(&nested.Fingerprint, override.UTLS.Fingerprint)
+		result.UTLS = &nested
+	}
+	if override.Reality != nil {
+		var nested option.OutboundRealityOptions
+		if result.Reality != nil {
+			nested = *result.Reality
+		}
+		applyOverride(&nested.Enabled, override.Reality.Enabled)
+		applyOverride(&nested.PublicKey, override.Reality.PublicKey)
+		applyOverride(&nested.ShortID, override.Reality.ShortID)
+		result.Reality = &nested
+	}
+	return &result
 }
