@@ -4,23 +4,40 @@ on:
   workflow_dispatch:
 
 jobs:
+  calculate_version:
+    name: Calculate version
+    runs-on: ubuntu-latest
+    outputs:
+      full_version: ${{ steps.outputs.outputs.full_version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Get version
+        id: outputs
+        run: |
+          LATEST_TAG=$(curl -s https://api.github.com/repos/sagernet/sing-box/tags | jq -r '.[0].name')
+          if [ -z "$LATEST_TAG" ] || [ "$LATEST_TAG" = "null" ]; then
+            LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          fi
+          LATEST_TAG=${LATEST_TAG#v}
+          GIT_HASH=$(git rev-parse --short HEAD)
+          FULL_VER="${LATEST_TAG}-${GIT_HASH}"
+          echo "full_version=${FULL_VER}" >> "$GITHUB_OUTPUT"
+
   build:
     runs-on: ubuntu-24.04
+    needs:
+      - calculate_version
     strategy:
       fail-fast: false
       matrix:
         include:
           - goarch: arm64
             compiler: aarch64-linux-android35-clang
-          - goarch: arm
-            goarm: "7"
-            compiler: armv7a-linux-androideabi35-clang
-          - goarch: amd64
-            compiler: x86_64-linux-android35-clang
-          - goarch: "386"
-            compiler: i686-linux-android35-clang
     env:
-      TAGS: with_gvisor,with_quic,with_dhcp,with_utls,with_clash_api,badlinkname,tfogo_checklinkname0,with_provider,with_ebpf
+      TAGS: with_quic,with_utls,with_clash_api,with_provider,with_ebpf,badlinkname,tfogo_checklinkname0
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -43,15 +60,15 @@ jobs:
           CGO_ENABLED: "1"
           GOOS: android
           GOARCH: ${{ matrix.goarch }}
-          GOARM: ${{ matrix.goarm }}
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
           CC: ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/${{ matrix.compiler }}
           BPF_CLANG: ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android35-clang
+          FULL_VER: ${{ needs.calculate_version.outputs.full_version }}
         run: |
-          make build
+          make build VERSION="${FULL_VER}"
 
       - name: Upload
         uses: actions/upload-artifact@v7
         with:
-          name: sing-box-android-${{ matrix.goarch }}-with-ebpf
+          name: sing-box-android-arm64-with-ebpf
           path: sing-box
