@@ -96,6 +96,8 @@ type Inbound struct {
 	bypassCIDR             []netip.Prefix
 	bypassRuleSetCallbacks []*list.Element[adapter.RuleSetUpdateCallback]
 	bypassRuleSetStarted   bool
+	vpnWatchCancel         context.CancelFunc
+	vpnBypassActive        bool
 
 	udpClientTable      udpClientTable
 	udpWarnings         udpWarningLimiters

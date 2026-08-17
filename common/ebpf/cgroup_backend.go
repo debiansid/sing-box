@@ -422,6 +422,15 @@ func socketReleaseUnavailable(err error) bool {
 		errors.Is(err, unix.EOPNOTSUPP) || errors.Is(err, linuxErrnoNotSupported)
 }
 
+func isStaleCgroupProgramName(name string) bool {
+	lowerName := strings.ToLower(name)
+	return strings.HasPrefix(lowerName, "sb_ebpf_") ||
+		strings.HasPrefix(lowerName, "bpf2socks") ||
+		strings.HasPrefix(lowerName, "sing_box_") ||
+		strings.HasPrefix(lowerName, "sb_") ||
+		strings.Contains(lowerName, "redir")
+}
+
 func detachOwnedCgroupPrograms(cgroupFD int) error {
 	for _, definition := range cgroupProgramDefinitions {
 		first, err := queryCgroupProgramIDs(cgroupFD, definition.attachType)
@@ -448,7 +457,7 @@ func detachOwnedCgroupPrograms(cgroupFD int) error {
 				_ = program.Close()
 				return infoErr
 			}
-			if strings.HasPrefix(info.Name, "sb_ebpf_") {
+			if isStaleCgroupProgramName(info.Name) {
 				if detachErr := rawDetachProgram(cgroupFD, program, definition.attachType); detachErr != nil {
 					_ = program.Close()
 					return detachErr

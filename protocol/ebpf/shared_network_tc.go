@@ -33,6 +33,7 @@ type sharedTCManager struct {
 	backend           *ECommon.SharedNetworkBackend
 	logger            sharedNetworkLogger
 	interfaces        []string
+	excludeInterfaces []string
 	enableIPv4        bool
 	priority          uint16
 	access            sync.Mutex
@@ -146,6 +147,9 @@ func (m *sharedTCManager) reconcile() (err error) {
 	}
 	desired := make(map[string]netlink.Link, len(m.interfaces))
 	for _, interfaceName := range m.interfaces {
+		if isInterfaceExcluded(interfaceName, m.excludeInterfaces) {
+			continue
+		}
 		link, linkErr := netlink.LinkByName(interfaceName)
 		if isSharedNetworkLinkNotFound(linkErr) {
 			continue
@@ -468,4 +472,50 @@ func (m *sharedTCManager) closeAttachments() error {
 		delete(m.attachments, name)
 	}
 	return closeErr
+}
+
+func isInterfaceExcluded(interfaceName string, excludePatterns []string) bool {
+	lowerName := strings.ToLower(interfaceName)
+	for _, pattern := range excludePatterns {
+		lowerPattern := strings.ToLower(pattern)
+		if strings.HasSuffix(lowerPattern, "+") {
+			prefix := strings.TrimSuffix(lowerPattern, "+")
+			if strings.HasPrefix(lowerName, prefix) {
+				return true
+			}
+		} else if strings.HasSuffix(lowerPattern, "*") {
+			prefix := strings.TrimSuffix(lowerPattern, "*")
+			if strings.HasPrefix(lowerName, prefix) {
+				return true
+			}
+		} else if lowerPattern == lowerName {
+			return true
+		}
+	}
+	return false
+}
+
+func hasActiveExcludedInterface(excludeInterfaces []string) bool {
+	if len(excludeInterfaces) == 0 {
+		return false
+	}
+	links, err := netlink.LinkList()
+	if err != nil {
+		return false
+	}
+	for _, link := range links {
+		attrs := link.Attrs()
+		if attrs == nil || attrs.Flags&net.FlagUp == 0 {
+			continue
+		}
+		if !isInterfaceExcluded(attrs.Name, excludeInterfaces) {
+			continue
+		}
+		addrs, err := netlink.AddrList(link, netlink.FAMILY_ALL)
+		if err != nil || len(addrs) == 0 {
+			continue
+		}
+		return true
+	}
+	return false
 }
