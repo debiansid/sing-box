@@ -46,6 +46,7 @@ cgroup socket-address 程序拦截本机 socket，`shared` 数据路径使用 TC
   },
   "shared": {
     "interface": [],
+    "exclude_interface": [],
     "ipv6_mode": "always",
     "bypass_private_address": true,
     "include_source_cidr": [],
