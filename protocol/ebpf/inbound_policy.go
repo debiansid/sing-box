@@ -372,7 +372,6 @@ func (i *Inbound) watchExcludedInterfaces(ctx context.Context, generation uint64
 }
 
 func (i *Inbound) InterfaceUpdated() {
-	i.udpNat.Purge()
 	i.bypassRuleSetAccess.Lock()
 
 	var activeInterfaces []string
