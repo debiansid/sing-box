@@ -49,6 +49,7 @@ network administration privileges.
   },
   "shared": {
     "interface": [],
+    "exclude_interface": [],
     "ipv6_mode": "always",
     "bypass_private_address": true,
     "include_source_cidr": [],
@@ -198,6 +199,14 @@ appear or disappear after startup; sing-box attaches and detaches automatically.
 Do not select `lo`, an upstream interface, or a layer-3-only interface. When a
 hotspot and Wi-Fi upstream share an interface name, restrict clients with
 source CIDR or MAC policy.
+
+#### shared.exclude_interface
+
+Interfaces excluded from shared TC interception. An exact name excludes one
+interface; a name ending in `+` or `*` excludes all interfaces with that
+prefix. In `local` or `hybrid` mode, an active excluded interface is treated
+as a VPN uplink and temporarily bypasses all cgroup socket redirection so the
+VPN handshake can complete.
 
 #### shared.ipv6_mode
 

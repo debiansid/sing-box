@@ -177,7 +177,7 @@ func validateSharedOptions(enabled bool, options option.EBPFSharedOptions) error
 	if enabled {
 		return nil
 	}
-	if len(options.Interface) > 0 || options.IPv6Mode != "" || options.BypassPrivateAddress != nil ||
+	if len(options.Interface) > 0 || len(options.ExcludeInterface) > 0 || options.IPv6Mode != "" || options.BypassPrivateAddress != nil ||
 		len(options.IncludeSourceCIDR) > 0 || len(options.ExcludeSourceCIDR) > 0 ||
 		len(options.IncludeMACAddress) > 0 || len(options.ExcludeMACAddress) > 0 ||
 		options.StateCapacity != 0 || options.Advanced.TCPriority != 0 {
@@ -221,6 +221,22 @@ func normalizeSharedNetworkOptions(options option.EBPFSharedOptions) (option.EBP
 		interfaces = append(interfaces, interfaceName)
 	}
 	options.Interface = interfaces
+	if len(options.ExcludeInterface) > 0 {
+		seenEx := make(map[string]struct{}, len(options.ExcludeInterface))
+		excludeInterfaces := make(badoption.Listable[string], 0, len(options.ExcludeInterface))
+		for _, interfaceName := range options.ExcludeInterface {
+			interfaceName = strings.TrimSpace(interfaceName)
+			if interfaceName == "" {
+				return option.EBPFSharedOptions{}, E.New("shared.exclude_interface contains an empty interface name")
+			}
+			if _, loaded := seenEx[interfaceName]; loaded {
+				continue
+			}
+			seenEx[interfaceName] = struct{}{}
+			excludeInterfaces = append(excludeInterfaces, interfaceName)
+		}
+		options.ExcludeInterface = excludeInterfaces
+	}
 	var err error
 	options.IncludeSourceCIDR, err = normalizeSourceCIDR("include_source_cidr", options.IncludeSourceCIDR)
 	if err != nil {
