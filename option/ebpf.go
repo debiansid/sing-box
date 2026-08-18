@@ -28,12 +28,12 @@ type EBPFLocalOptions struct {
 	IncludeAndroidUser   badoption.Listable[int]    `json:"include_android_user,omitempty"`
 	IncludePackage       badoption.Listable[string] `json:"include_package,omitempty"`
 	ExcludePackage       badoption.Listable[string] `json:"exclude_package,omitempty"`
+	ExcludeInterface     badoption.Listable[string] `json:"exclude_interface,omitempty"`
 	StateCapacity        EBPFStateCapacity          `json:"state_capacity,omitempty"`
 }
 
 type EBPFSharedOptions struct {
 	Interface            badoption.Listable[string]       `json:"interface,omitempty"`
-	ExcludeInterface     badoption.Listable[string]       `json:"exclude_interface,omitempty"`
 	IPv6Mode             string                           `json:"ipv6_mode,omitempty" enum:"always,off"`
 	BypassPrivateAddress *bool                            `json:"bypass_private_address,omitempty"`
 	IncludeSourceCIDR    badoption.Listable[netip.Prefix] `json:"include_source_cidr,omitempty"`

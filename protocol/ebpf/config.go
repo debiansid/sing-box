@@ -50,6 +50,9 @@ func validateLocalOptions(enabled bool, options option.EBPFLocalOptions) error {
 	if options.StateCapacity != 0 {
 		return E.New("local.state_capacity requires local or hybrid mode")
 	}
+	if len(options.ExcludeInterface) > 0 {
+		return E.New("local.exclude_interface requires local or hybrid mode")
+	}
 	return nil
 }
 
@@ -177,7 +180,7 @@ func validateSharedOptions(enabled bool, options option.EBPFSharedOptions) error
 	if enabled {
 		return nil
 	}
-	if len(options.Interface) > 0 || len(options.ExcludeInterface) > 0 || options.IPv6Mode != "" || options.BypassPrivateAddress != nil ||
+	if len(options.Interface) > 0 || options.IPv6Mode != "" || options.BypassPrivateAddress != nil ||
 		len(options.IncludeSourceCIDR) > 0 || len(options.ExcludeSourceCIDR) > 0 ||
 		len(options.IncludeMACAddress) > 0 || len(options.ExcludeMACAddress) > 0 ||
 		options.StateCapacity != 0 || options.Advanced.TCPriority != 0 {
@@ -221,29 +224,6 @@ func normalizeSharedNetworkOptions(options option.EBPFSharedOptions) (option.EBP
 		interfaces = append(interfaces, interfaceName)
 	}
 	options.Interface = interfaces
-	if len(options.ExcludeInterface) > 0 {
-		seenEx := make(map[string]struct{}, len(options.ExcludeInterface)+5)
-		excludeInterfaces := make(badoption.Listable[string], 0, len(options.ExcludeInterface)+5)
-		for _, interfaceName := range options.ExcludeInterface {
-			interfaceName = strings.TrimSpace(interfaceName)
-			if interfaceName == "" {
-				return option.EBPFSharedOptions{}, E.New("shared.exclude_interface contains an empty interface name")
-			}
-			if _, loaded := seenEx[interfaceName]; loaded {
-				continue
-			}
-			seenEx[interfaceName] = struct{}{}
-			excludeInterfaces = append(excludeInterfaces, interfaceName)
-		}
-		defaultPatterns := []string{"ipsec+", "tun+", "wg+", "warp+", "CloudflareWARP"}
-		for _, pattern := range defaultPatterns {
-			if _, loaded := seenEx[pattern]; !loaded {
-				seenEx[pattern] = struct{}{}
-				excludeInterfaces = append(excludeInterfaces, pattern)
-			}
-		}
-		options.ExcludeInterface = excludeInterfaces
-	}
 	var err error
 	options.IncludeSourceCIDR, err = normalizeSourceCIDR("include_source_cidr", options.IncludeSourceCIDR)
 	if err != nil {
@@ -303,4 +283,31 @@ func validateSharedNetworkProtocols(enabled bool, enableUDP bool, dnsMode string
 		return E.New("shared mode with DNS interception requires UDP")
 	}
 	return nil
+}
+
+func normalizeExcludeInterfaces(interfaces []string) ([]string, error) {
+	if len(interfaces) == 0 {
+		return nil, nil
+	}
+	seen := make(map[string]struct{}, len(interfaces)+5)
+	excludeInterfaces := make([]string, 0, len(interfaces)+5)
+	for _, raw := range interfaces {
+		interfaceName := strings.TrimSpace(raw)
+		if interfaceName == "" {
+			return nil, E.New("local.exclude_interface contains an empty interface name")
+		}
+		if _, loaded := seen[interfaceName]; loaded {
+			continue
+		}
+		seen[interfaceName] = struct{}{}
+		excludeInterfaces = append(excludeInterfaces, interfaceName)
+	}
+	defaultPatterns := []string{"ipsec+", "tun+", "wg+", "warp+", "CloudflareWARP"}
+	for _, pattern := range defaultPatterns {
+		if _, loaded := seen[pattern]; !loaded {
+			seen[pattern] = struct{}{}
+			excludeInterfaces = append(excludeInterfaces, pattern)
+		}
+	}
+	return excludeInterfaces, nil
 }

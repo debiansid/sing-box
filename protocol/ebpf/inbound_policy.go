@@ -375,8 +375,8 @@ func (i *Inbound) InterfaceUpdated() {
 	i.bypassRuleSetAccess.Lock()
 
 	var activeInterfaces []string
-	if len(i.sharedNetworkOptions.ExcludeInterface) > 0 {
-		activeInterfaces = findActiveExcludedInterfaceNames(i.sharedNetworkOptions.ExcludeInterface)
+	if len(i.excludeInterface) > 0 {
+		activeInterfaces = findActiveExcludedInterfaceNames(i.excludeInterface)
 	}
 
 	if len(activeInterfaces) > 0 {

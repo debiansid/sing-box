@@ -45,11 +45,11 @@ network administration privileges.
     "include_android_user": [],
     "include_package": [],
     "exclude_package": [],
+    "exclude_interface": [],
     "state_capacity": 0
   },
   "shared": {
     "interface": [],
-    "exclude_interface": [],
     "ipv6_mode": "always",
     "bypass_private_address": true,
     "include_source_cidr": [],
