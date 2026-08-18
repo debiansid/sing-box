@@ -25,22 +25,23 @@ const (
 )
 
 type sharedNetwork struct {
-	inbound         *Inbound
-	interfaces      []string
-	sharedBackend   *ECommon.SharedNetworkBackend
-	tcManager       *sharedTCManager
-	listeners       internalListenerSet
-	udpNat          *udpnat.Service
-	udpClientTable  udpClientTable
-	udpWarnings     udpWarningLimiters
-	tcpWarnings     warningLimiter
-	mapCapacity     ECommon.SharedNetworkMapCapacities
-	janitorWarnings warningLimiter
-	janitorCancel   context.CancelFunc
-	janitorDone     chan struct{}
-	tcPriority      uint16
-	lifecycleAccess sync.RWMutex
-	backendAccess   sync.RWMutex
+	inbound           *Inbound
+	interfaces        []string
+	excludeInterfaces []string
+	sharedBackend     *ECommon.SharedNetworkBackend
+	tcManager         *sharedTCManager
+	listeners         internalListenerSet
+	udpNat            *udpnat.Service
+	udpClientTable    udpClientTable
+	udpWarnings       udpWarningLimiters
+	tcpWarnings       warningLimiter
+	mapCapacity       ECommon.SharedNetworkMapCapacities
+	janitorWarnings   warningLimiter
+	janitorCancel     context.CancelFunc
+	janitorDone       chan struct{}
+	tcPriority        uint16
+	lifecycleAccess   sync.RWMutex
+	backendAccess     sync.RWMutex
 }
 
 func newSharedNetwork(inbound *Inbound, options option.EBPFSharedOptions) *sharedNetwork {
@@ -49,10 +50,11 @@ func newSharedNetwork(inbound *Inbound, options option.EBPFSharedOptions) *share
 		tcPriority = defaultSharedNetworkTCPriority
 	}
 	shared := &sharedNetwork{
-		inbound:     inbound,
-		interfaces:  append([]string(nil), options.Interface...),
-		mapCapacity: inbound.sharedNetworkMapCapacity,
-		tcPriority:  tcPriority,
+		inbound:           inbound,
+		interfaces:        append([]string(nil), options.Interface...),
+		excludeInterfaces: append([]string(nil), options.ExcludeInterface...),
+		mapCapacity:       inbound.sharedNetworkMapCapacity,
+		tcPriority:        tcPriority,
 	}
 	shared.udpNat = udpnat.New(shared, shared.preparePacketConnection, inbound.udpTimeout, false)
 	return shared
@@ -92,14 +94,15 @@ func (s *sharedNetwork) Start(cgroupBackend *ECommon.CgroupBackend) error {
 		return E.Errors(err, s.Close())
 	}
 	s.tcManager = &sharedTCManager{
-		backend:        backend,
-		logger:         s.inbound.logger,
-		interfaces:     s.interfaces,
-		enableIPv4:     s.inbound.redirectIPv4Prefix.IsValid(),
-		priority:       s.tcPriority,
-		networkMonitor: s.inbound.networkManager.NetworkMonitor(),
-		attachments:    make(map[string]*sharedTCAttachment),
-		debug:          &s.inbound.debug,
+		backend:           backend,
+		logger:            s.inbound.logger,
+		interfaces:        s.interfaces,
+		excludeInterfaces: s.excludeInterfaces,
+		enableIPv4:        s.inbound.redirectIPv4Prefix.IsValid(),
+		priority:          s.tcPriority,
+		networkMonitor:   s.inbound.networkManager.NetworkMonitor(),
+		attachments:       make(map[string]*sharedTCAttachment),
+		debug:             &s.inbound.debug,
 	}
 	if err = s.tcManager.Start(); err != nil {
 		return E.Errors(err, s.Close())

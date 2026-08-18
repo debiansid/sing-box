@@ -49,6 +49,7 @@ network administration privileges.
   },
   "shared": {
     "interface": [],
+    "exclude_interface": [],
     "ipv6_mode": "always",
     "bypass_private_address": true,
     "include_source_cidr": [],

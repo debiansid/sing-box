@@ -201,16 +201,32 @@ func (i *Inbound) logBypassCIDRUpdate() {
 	i.logger.Debug("refreshed eBPF bypass CIDR policy: ipv4=", ipv4Count, ", ipv6=", ipv6Count)
 }
 
+var fullBypassPrefixes = []netip.Prefix{
+	netip.MustParsePrefix("0.0.0.0/0"),
+	netip.MustParsePrefix("::/0"),
+}
+
 func (i *Inbound) InterfaceUpdated() {
 	i.udpNat.Purge()
 	i.bypassRuleSetAccess.Lock()
-	if i.bypassRuleSetStarted {
+	var excludedActive bool
+	if len(i.sharedNetworkOptions.ExcludeInterface) > 0 {
+		excludedActive = hasActiveExcludedInterface(i.sharedNetworkOptions.ExcludeInterface)
+	}
+	if excludedActive {
+		if backend := i.cgroupBackendInstance(); backend != nil {
+			_, _ = backend.UpdateBypassCIDR(fullBypassPrefixes)
+			i.logger.Info("eBPF cgroup socket redirection bypassed: active VPN interface detected")
+		}
+	} else if i.bypassRuleSetStarted {
 		updated, err := i.refreshBypassRuleSetsLocked(false, false)
 		if err != nil {
 			i.logger.Error("refresh eBPF local interface bypass: ", err)
 		} else if updated {
 			i.logBypassCIDRUpdate()
 		}
+	} else {
+		_, _ = i.refreshBypassRuleSetsLocked(false, false)
 	}
 	i.bypassRuleSetAccess.Unlock()
 	i.lifecycleAccess.Lock()
