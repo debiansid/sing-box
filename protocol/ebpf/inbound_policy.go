@@ -3,7 +3,6 @@
 package ebpf
 
 import (
-	"context"
 	"net"
 	"net/netip"
 	"os"
@@ -11,7 +10,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/sagernet/netlink"
 	"github.com/sagernet/sing-box/adapter"
