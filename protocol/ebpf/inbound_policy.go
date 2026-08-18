@@ -23,9 +23,6 @@ func isGlobalUnicastIP(ip net.IP) bool {
 	if ip == nil || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
 		return false
 	}
-	if ip4 := ip.To4(); ip4 != nil {
-		return true
-	}
 	return ip.IsGlobalUnicast()
 }
 
@@ -43,10 +40,12 @@ func getInterfacePacketCount(interfaceName string) (rx uint64, tx uint64, err er
 	return rx, tx, nil
 }
 
-func findActiveExcludedInterfaceName(excludeInterfaces []string) (string, bool) {
+func findActiveExcludedInterfaceNames(excludeInterfaces []string) []string {
 	if len(excludeInterfaces) == 0 {
-		return "", false
+		return nil
 	}
+	seen := make(map[string]struct{})
+	var activeInterfaces []string
 	links, err := netlink.LinkList()
 	if err == nil && len(links) > 0 {
 		for _, link := range links {
@@ -61,7 +60,11 @@ func findActiveExcludedInterfaceName(excludeInterfaces []string) (string, bool) 
 			if err == nil {
 				for _, addr := range addrs {
 					if addr.IP != nil && isGlobalUnicastIP(addr.IP) {
-						return attrs.Name, true
+						if _, loaded := seen[attrs.Name]; !loaded {
+							seen[attrs.Name] = struct{}{}
+							activeInterfaces = append(activeInterfaces, attrs.Name)
+						}
+						break
 					}
 				}
 			}
@@ -69,7 +72,7 @@ func findActiveExcludedInterfaceName(excludeInterfaces []string) (string, bool) 
 	}
 	interfaces, err := net.Interfaces()
 	if err != nil {
-		return "", false
+		return activeInterfaces
 	}
 	for _, iface := range interfaces {
 		if iface.Flags&net.FlagUp == 0 {
@@ -89,9 +92,23 @@ func findActiveExcludedInterfaceName(excludeInterfaces []string) (string, bool) 
 					ip = v.IP
 				}
 				if ip != nil && isGlobalUnicastIP(ip) {
-					return iface.Name, true
+					if _, loaded := seen[iface.Name]; !loaded {
+						seen[iface.Name] = struct{}{}
+						activeInterfaces = append(activeInterfaces, iface.Name)
+					}
+					break
 				}
 			}
+		}
+	}
+	return activeInterfaces
+}
+
+func excludedInterfaceWithTraffic(interfaceNames []string) (string, bool) {
+	for _, interfaceName := range interfaceNames {
+		rx, tx, err := getInterfacePacketCount(interfaceName)
+		if err == nil && (rx > 0 || tx > 1) {
+			return interfaceName, true
 		}
 	}
 	return "", false
@@ -130,10 +147,7 @@ func (i *Inbound) stopBypassRuleSets() {
 }
 
 func (i *Inbound) stopBypassRuleSetsLocked() {
-	if i.vpnWatchCancel != nil {
-		i.vpnWatchCancel()
-		i.vpnWatchCancel = nil
-	}
+	i.cancelVPNWatchLocked()
 	i.vpnBypassActive = false
 	if !i.bypassRuleSetStarted {
 		return
@@ -189,6 +203,9 @@ func (i *Inbound) refreshBypassRuleSetsLocked(warnEmpty bool, logRuleSetCount bo
 			"eBPF FakeIP force interception overrides bypass_rule_set CIDRs: overlaps=",
 			conflicts,
 		)
+	}
+	if i.vpnBypassActive {
+		prefixes = slices.Clone(fullBypassPrefixes)
 	}
 	backend := i.cgroupBackendInstance()
 	if backend != nil {
@@ -297,80 +314,110 @@ var fullBypassPrefixes = []netip.Prefix{
 	netip.MustParsePrefix("::/0"),
 }
 
+func (i *Inbound) cancelVPNWatchLocked() {
+	i.vpnWatchGeneration++
+	if i.vpnWatchCancel != nil {
+		i.vpnWatchCancel()
+		i.vpnWatchCancel = nil
+	}
+}
+
+func (i *Inbound) enableVPNBypassLocked(interfaceName string) error {
+	if i.vpnBypassActive {
+		return nil
+	}
+	i.vpnBypassActive = true
+	if _, err := i.refreshBypassRuleSetsLocked(false, false); err != nil {
+		i.vpnBypassActive = false
+		return err
+	}
+	i.logger.Info("eBPF cgroup socket redirection bypassed: active VPN traffic confirmed on ", interfaceName)
+	return nil
+}
+
+func (i *Inbound) watchExcludedInterfaces(ctx context.Context, generation uint64, interfaceNames []string) {
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			i.bypassRuleSetAccess.Lock()
+			if i.vpnWatchGeneration == generation && i.vpnWatchCancel != nil {
+				i.vpnWatchCancel = nil
+				i.vpnWatchGeneration++
+			}
+			i.bypassRuleSetAccess.Unlock()
+			return
+		case <-ticker.C:
+			interfaceName, active := excludedInterfaceWithTraffic(interfaceNames)
+			if !active {
+				continue
+			}
+			i.bypassRuleSetAccess.Lock()
+			if i.vpnWatchGeneration != generation || i.vpnWatchCancel == nil {
+				i.bypassRuleSetAccess.Unlock()
+				return
+			}
+			err := i.enableVPNBypassLocked(interfaceName)
+			i.bypassRuleSetAccess.Unlock()
+			if err != nil {
+				i.logger.Error("enable eBPF VPN bypass on ", interfaceName, ": ", err)
+				continue
+			}
+			i.bypassRuleSetAccess.Lock()
+			if i.vpnWatchGeneration == generation {
+				i.vpnWatchCancel = nil
+				i.vpnWatchGeneration++
+			}
+			i.bypassRuleSetAccess.Unlock()
+			return
+		}
+	}
+}
+
 func (i *Inbound) InterfaceUpdated() {
 	i.udpNat.Purge()
 	i.bypassRuleSetAccess.Lock()
 
-	var activeIface string
-	var excludedActive bool
+	var activeInterfaces []string
 	if len(i.sharedNetworkOptions.ExcludeInterface) > 0 {
-		activeIface, excludedActive = findActiveExcludedInterfaceName(i.sharedNetworkOptions.ExcludeInterface)
+		activeInterfaces = findActiveExcludedInterfaceNames(i.sharedNetworkOptions.ExcludeInterface)
 	}
 
-	if excludedActive {
-		rx, tx, _ := getInterfacePacketCount(activeIface)
-		// If the interface already received packets from remote VPN server:
-		if rx > 0 || tx > 1 {
-			if i.vpnWatchCancel != nil {
-				i.vpnWatchCancel()
-				i.vpnWatchCancel = nil
-			}
+	if len(activeInterfaces) > 0 {
+		activeIface, trafficActive := excludedInterfaceWithTraffic(activeInterfaces)
+		// If the interface is already receiving/sending packets (VPN tunnel established):
+		if trafficActive {
+			i.cancelVPNWatchLocked()
 			if !i.vpnBypassActive {
-				if backend := i.cgroupBackendInstance(); backend != nil {
-					_, _ = backend.UpdateBypassCIDR(fullBypassPrefixes)
-					i.logger.Info("eBPF cgroup socket redirection bypassed: active VPN traffic confirmed on ", activeIface)
+				if err := i.enableVPNBypassLocked(activeIface); err != nil {
+					i.logger.Error("enable eBPF VPN bypass on ", activeIface, ": ", err)
 				}
-				if i.sharedNetwork != nil {
-					if sharedBackend := i.sharedNetwork.sharedBackendInstance(); sharedBackend != nil {
-						_ = sharedBackend.SetBypassCIDRState(fullBypassPrefixes)
-					}
-				}
-				i.vpnBypassActive = true
 			}
-		} else {
-			// Fresh interface with rx == 0 (Handshake in progress):
-			// Keep eBPF proxying the handshake and poll rx_packets every 200ms.
-			if !i.vpnBypassActive && i.vpnWatchCancel == nil {
-				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-				i.vpnWatchCancel = cancel
-				go func(iface string) {
-					ticker := time.NewTicker(200 * time.Millisecond)
-					defer ticker.Stop()
-					for {
-						select {
-						case <-ctx.Done():
-							return
-						case <-ticker.C:
-							r, t, err := getInterfacePacketCount(iface)
-							if err == nil && (r > 0 || t > 1) {
-								i.bypassRuleSetAccess.Lock()
-								if i.vpnWatchCancel != nil {
-									i.vpnWatchCancel = nil
-									if backend := i.cgroupBackendInstance(); backend != nil {
-										_, _ = backend.UpdateBypassCIDR(fullBypassPrefixes)
-										i.logger.Info("eBPF cgroup socket redirection bypassed: VPN tunnel established on ", iface)
-									}
-									if i.sharedNetwork != nil {
-										if sharedBackend := i.sharedNetwork.sharedBackendInstance(); sharedBackend != nil {
-											_ = sharedBackend.SetBypassCIDRState(fullBypassPrefixes)
-										}
-									}
-									i.vpnBypassActive = true
-								}
-								i.bypassRuleSetAccess.Unlock()
-								return
-							}
-						}
-					}
-				}(activeIface)
+			i.bypassRuleSetAccess.Unlock()
+			i.lifecycleAccess.Lock()
+			defer i.lifecycleAccess.Unlock()
+			if err := i.refreshCgroupIPv6Availability(false); err != nil {
+				i.logger.Warn("refresh eBPF local cgroup IPv6 availability: ", err)
 			}
+			if i.sharedNetwork != nil {
+				i.sharedNetwork.InterfaceUpdated()
+			}
+			return
+		}
+
+		// Fresh interface with rx_packets == 0 (Handshake in progress):
+		// Keep proxying the handshake and poll rx_packets every 200ms until the first packet arrives.
+		if !i.vpnBypassActive && i.vpnWatchCancel == nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			i.vpnWatchGeneration++
+			generation := i.vpnWatchGeneration
+			i.vpnWatchCancel = cancel
+			go i.watchExcludedInterfaces(ctx, generation, activeInterfaces)
 		}
 	} else {
 		// VPN interface disconnected:
-		if i.vpnWatchCancel != nil {
-			i.vpnWatchCancel()
-			i.vpnWatchCancel = nil
-		}
+		i.cancelVPNWatchLocked()
 		if i.vpnBypassActive {
 			i.vpnBypassActive = false
 			i.logger.Info("eBPF cgroup socket redirection resumed: VPN interface disconnected")
@@ -383,7 +430,9 @@ func (i *Inbound) InterfaceUpdated() {
 				i.logBypassCIDRUpdate()
 			}
 		} else {
-			_, _ = i.refreshBypassRuleSetsLocked(false, false)
+			if _, err := i.refreshBypassRuleSetsLocked(false, false); err != nil {
+				i.logger.Error("restore eBPF bypass policy after VPN disconnect: ", err)
+			}
 		}
 	}
 

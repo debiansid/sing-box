@@ -427,8 +427,7 @@ func isStaleCgroupProgramName(name string) bool {
 	return strings.HasPrefix(lowerName, "sb_ebpf_") ||
 		strings.HasPrefix(lowerName, "bpf2socks") ||
 		strings.HasPrefix(lowerName, "sing_box_") ||
-		strings.HasPrefix(lowerName, "sb_") ||
-		strings.Contains(lowerName, "redir")
+		strings.HasPrefix(lowerName, "sb_")
 }
 
 func detachOwnedCgroupPrograms(cgroupFD int) error {
