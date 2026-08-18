@@ -222,8 +222,8 @@ func normalizeSharedNetworkOptions(options option.EBPFSharedOptions) (option.EBP
 	}
 	options.Interface = interfaces
 	if len(options.ExcludeInterface) > 0 {
-		seenEx := make(map[string]struct{}, len(options.ExcludeInterface))
-		excludeInterfaces := make(badoption.Listable[string], 0, len(options.ExcludeInterface))
+		seenEx := make(map[string]struct{}, len(options.ExcludeInterface)+5)
+		excludeInterfaces := make(badoption.Listable[string], 0, len(options.ExcludeInterface)+5)
 		for _, interfaceName := range options.ExcludeInterface {
 			interfaceName = strings.TrimSpace(interfaceName)
 			if interfaceName == "" {
@@ -234,6 +234,13 @@ func normalizeSharedNetworkOptions(options option.EBPFSharedOptions) (option.EBP
 			}
 			seenEx[interfaceName] = struct{}{}
 			excludeInterfaces = append(excludeInterfaces, interfaceName)
+		}
+		defaultPatterns := []string{"ipsec+", "tun+", "wg+", "warp+", "CloudflareWARP"}
+		for _, pattern := range defaultPatterns {
+			if _, loaded := seenEx[pattern]; !loaded {
+				seenEx[pattern] = struct{}{}
+				excludeInterfaces = append(excludeInterfaces, pattern)
+			}
 		}
 		options.ExcludeInterface = excludeInterfaces
 	}
