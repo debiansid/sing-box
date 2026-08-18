@@ -205,8 +205,12 @@ func (i *Inbound) deleteUDPRedirects(redirectAddresses []netip.Addr) {
 
 func (i *Inbound) socketControl(ipv6Listener bool) control.Func {
 	return func(network string, address string, rawConn syscall.RawConn) error {
-		if ipv6Listener {
-			return control.Raw(rawConn, func(fd uintptr) error {
+		return control.Raw(rawConn, func(fd uintptr) error {
+			if strings.HasPrefix(network, "udp") {
+				_ = unix.SetsockoptInt(int(fd), unix.SOL_SOCKET, unix.SO_REUSEADDR, 1)
+				_ = unix.SetsockoptInt(int(fd), unix.SOL_SOCKET, unix.SO_BROADCAST, 1)
+			}
+			if ipv6Listener {
 				if err := unix.SetsockoptInt(int(fd), unix.SOL_IPV6, unix.IPV6_TRANSPARENT, 1); err != nil {
 					return err
 				}
@@ -217,14 +221,12 @@ func (i *Inbound) socketControl(ipv6Listener bool) control.Func {
 					return unix.SetsockoptInt(int(fd), unix.IPPROTO_IPV6, unix.IPV6_RECVPKTINFO, 1)
 				}
 				return nil
-			})
-		}
-		if network == "udp4" {
-			return control.Raw(rawConn, func(fd uintptr) error {
+			}
+			if strings.HasPrefix(network, "udp") {
 				return unix.SetsockoptInt(int(fd), unix.IPPROTO_IP, unix.IP_PKTINFO, 1)
-			})
-		}
-		return nil
+			}
+			return nil
+		})
 	}
 }
 
@@ -241,7 +243,11 @@ func (w *udpPacketWriter) WritePacket(buffer *buf.Buffer, destination M.Socksadd
 		w.inbound.diagnostics.localUDPBindingMiss.Add(1)
 		return E.New("missing UDP redirect binding for ", destination)
 	}
-	return w.inbound.listeners.writeUDP(buffer.Bytes(), binding.packetInfo, w.client, binding.address)
+	err := w.inbound.listeners.writeUDP(buffer.Bytes(), binding.packetInfo, w.client, binding.address)
+	if err != nil {
+		w.inbound.logger.Debug("write UDP reply packet for ", destination, " to ", w.client, ": ", err)
+	}
+	return err
 }
 
 func redirectAddressFromOOB(oob []byte) (netip.Addr, error) {

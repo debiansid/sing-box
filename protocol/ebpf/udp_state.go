@@ -336,9 +336,15 @@ func (s *udpClientState) sourceMACAddress() net.HardwareAddr {
 
 func sourcePacketInfo(address netip.Addr) []byte {
 	if address.Is4() {
-		return (&ipv4.ControlMessage{Src: net.IP(address.AsSlice())}).Marshal()
+		return (&ipv4.ControlMessage{
+			Src:     net.IP(address.AsSlice()),
+			IfIndex: 0,
+		}).Marshal()
 	}
-	return (&ipv6.ControlMessage{Src: net.IP(address.AsSlice())}).Marshal()
+	return (&ipv6.ControlMessage{
+		Src:     net.IP(address.AsSlice()),
+		IfIndex: 0,
+	}).Marshal()
 }
 
 func (s *udpClientState) setConnected(connected bool, destination netip.AddrPort) {
