@@ -3603,6 +3603,19 @@
             }
           ]
         },
+        "exclude_interface": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
+        },
         "ipv6_mode": {
           "type": "string",
           "enum": [

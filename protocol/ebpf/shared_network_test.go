@@ -92,6 +92,20 @@ func TestNormalizeSharedNetworkOptions(t *testing.T) {
 	}
 }
 
+func TestNormalizeExcludeInterfaces(t *testing.T) {
+	excluded, err := normalizeExcludeInterfaces([]string{" tun0 ", "tun+", "tun+"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(excluded) < 2 || excluded[0] != "tun0" || excluded[1] != "tun+" {
+		t.Fatalf("unexpected excluded interfaces: %v", excluded)
+	}
+	_, err = normalizeExcludeInterfaces([]string{" "})
+	if err == nil {
+		t.Fatal("expected an empty excluded interface to be rejected")
+	}
+}
+
 func TestNormalizeSharedNetworkOptionsKeepsTCPriority(t *testing.T) {
 	options, err := normalizeSharedNetworkOptions(option.EBPFSharedOptions{
 		Interface: []string{"ap0"},
@@ -127,6 +141,24 @@ func TestNormalizeSharedNetworkOptionsRejectsInvalid(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected an invalid source CIDR to be rejected")
+	}
+}
+
+func TestIsInterfaceExcluded(t *testing.T) {
+	patterns := []string{"tun0", "wg+"}
+	for _, test := range []struct {
+		name     string
+		excluded bool
+	}{
+		{"tun0", true},
+		{"Tun0", true},
+		{"wg0", true},
+		{"WG-office", true},
+		{"wlan0", false},
+	} {
+		if excluded := isInterfaceExcluded(test.name, patterns); excluded != test.excluded {
+			t.Fatalf("isInterfaceExcluded(%q) = %v, want %v", test.name, excluded, test.excluded)
+		}
 	}
 }
 

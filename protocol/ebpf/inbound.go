@@ -77,7 +77,8 @@ type Inbound struct {
 	cgroupPolicy               ECommon.CgroupPolicy
 	androidUIDOptions          *androidUIDOptions
 	localRoutes                []*localRoute
-	sharedNetworkOptions       option.EBPFSharedOptions
+	excludeInterface       []string
+	sharedNetworkOptions   option.EBPFSharedOptions
 	sharedNetworkEnabled       bool
 	sharedIPv6Mode             string
 	sharedNetworkMapCapacity   ECommon.SharedNetworkMapCapacities
@@ -96,6 +97,9 @@ type Inbound struct {
 	bypassCIDR             []netip.Prefix
 	bypassRuleSetCallbacks []*list.Element[adapter.RuleSetUpdateCallback]
 	bypassRuleSetStarted   bool
+	vpnWatchCancel         context.CancelFunc
+	vpnWatchGeneration     uint64
+	vpnBypassActive        bool
 
 	udpClientTable      udpClientTable
 	udpWarnings         udpWarningLimiters
@@ -160,6 +164,10 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 			return nil, err
 		}
 	}
+	excludeInterfaces, err := normalizeExcludeInterfaces(options.Local.ExcludeInterface)
+	if err != nil {
+		return nil, err
+	}
 	sharedNetworkIncludeMAC, err := parseSharedNetworkMACAddresses(
 		"include_mac_address",
 		sharedNetworkOptions.IncludeMACAddress,
@@ -204,6 +212,7 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 		redirectIPv4Prefix:         redirectIPv4Candidates[0],
 		redirectIPv6Prefix:         redirectIPv6Candidates[0],
 		cgroupMapCapacity:          cgroupMapCapacity,
+		excludeInterface:           excludeInterfaces,
 		sharedNetworkOptions:       sharedNetworkOptions,
 		sharedNetworkEnabled:       sharedNetworkEnabled,
 		sharedIPv6Mode:             sharedIPv6Mode,
