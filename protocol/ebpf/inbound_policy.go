@@ -3,6 +3,7 @@
 package ebpf
 
 import (
+	"context"
 	"net"
 	"net/netip"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/sagernet/netlink"
 	"github.com/sagernet/sing-box/adapter"
@@ -306,21 +308,62 @@ func (i *Inbound) InterfaceUpdated() {
 	}
 
 	if excludedActive {
-		if i.vpnWatchCancel != nil {
-			i.vpnWatchCancel()
-			i.vpnWatchCancel = nil
-		}
-		if !i.vpnBypassActive {
-			if backend := i.cgroupBackendInstance(); backend != nil {
-				_, _ = backend.UpdateBypassCIDR(fullBypassPrefixes)
-				i.logger.Info("eBPF cgroup socket redirection bypassed: active VPN interface detected on ", activeIface)
+		rx, tx, _ := getInterfacePacketCount(activeIface)
+		// If the interface already received packets from remote VPN server:
+		if rx > 0 || tx > 1 {
+			if i.vpnWatchCancel != nil {
+				i.vpnWatchCancel()
+				i.vpnWatchCancel = nil
 			}
-			if i.sharedNetwork != nil {
-				if sharedBackend := i.sharedNetwork.sharedBackendInstance(); sharedBackend != nil {
-					_ = sharedBackend.SetBypassCIDRState(fullBypassPrefixes)
+			if !i.vpnBypassActive {
+				if backend := i.cgroupBackendInstance(); backend != nil {
+					_, _ = backend.UpdateBypassCIDR(fullBypassPrefixes)
+					i.logger.Info("eBPF cgroup socket redirection bypassed: active VPN traffic confirmed on ", activeIface)
 				}
+				if i.sharedNetwork != nil {
+					if sharedBackend := i.sharedNetwork.sharedBackendInstance(); sharedBackend != nil {
+						_ = sharedBackend.SetBypassCIDRState(fullBypassPrefixes)
+					}
+				}
+				i.vpnBypassActive = true
 			}
-			i.vpnBypassActive = true
+		} else {
+			// Fresh interface with rx == 0 (Handshake in progress):
+			// Keep eBPF proxying the handshake and poll rx_packets every 200ms.
+			if !i.vpnBypassActive && i.vpnWatchCancel == nil {
+				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+				i.vpnWatchCancel = cancel
+				go func(iface string) {
+					ticker := time.NewTicker(200 * time.Millisecond)
+					defer ticker.Stop()
+					for {
+						select {
+						case <-ctx.Done():
+							return
+						case <-ticker.C:
+							r, t, err := getInterfacePacketCount(iface)
+							if err == nil && (r > 0 || t > 1) {
+								i.bypassRuleSetAccess.Lock()
+								if i.vpnWatchCancel != nil {
+									i.vpnWatchCancel = nil
+									if backend := i.cgroupBackendInstance(); backend != nil {
+										_, _ = backend.UpdateBypassCIDR(fullBypassPrefixes)
+										i.logger.Info("eBPF cgroup socket redirection bypassed: VPN tunnel established on ", iface)
+									}
+									if i.sharedNetwork != nil {
+										if sharedBackend := i.sharedNetwork.sharedBackendInstance(); sharedBackend != nil {
+											_ = sharedBackend.SetBypassCIDRState(fullBypassPrefixes)
+										}
+									}
+									i.vpnBypassActive = true
+								}
+								i.bypassRuleSetAccess.Unlock()
+								return
+							}
+						}
+					}
+				}(activeIface)
+			}
 		}
 	} else {
 		// VPN interface disconnected:
