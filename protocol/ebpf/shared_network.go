@@ -59,7 +59,7 @@ func newSharedNetwork(inbound *Inbound, options option.EBPFSharedOptions) *share
 	shared := &sharedNetwork{
 		inbound:           inbound,
 		interfaces:        append([]string(nil), options.Interface...),
-		excludeInterfaces: append([]string(nil), options.ExcludeInterface...),
+		excludeInterfaces: append([]string(nil), inbound.excludeInterface...),
 		mapCapacity:       mapCapacity,
 		tcPriority:        tcPriority,
 	}

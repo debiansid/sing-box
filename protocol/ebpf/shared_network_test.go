@@ -62,8 +62,7 @@ func TestSharedFlowSweepRequired(t *testing.T) {
 
 func TestNormalizeSharedNetworkOptions(t *testing.T) {
 	options, err := normalizeSharedNetworkOptions(option.EBPFSharedOptions{
-		Interface:        badoption.Listable[string]{"ap0", " ap0 ", "wlan1"},
-		ExcludeInterface: badoption.Listable[string]{" tun0 ", "tun+", "tun+"},
+		Interface: badoption.Listable[string]{"ap0", " ap0 ", "wlan1"},
 		IncludeSourceCIDR: badoption.Listable[netip.Prefix]{
 			netip.MustParsePrefix("192.168.43.9/24"),
 			netip.MustParsePrefix("192.168.43.0/24"),
@@ -75,9 +74,6 @@ func TestNormalizeSharedNetworkOptions(t *testing.T) {
 	}
 	if len(options.Interface) != 2 || options.Interface[0] != "ap0" || options.Interface[1] != "wlan1" {
 		t.Fatalf("unexpected interfaces: %v", options.Interface)
-	}
-	if len(options.ExcludeInterface) != 2 || options.ExcludeInterface[0] != "tun0" || options.ExcludeInterface[1] != "tun+" {
-		t.Fatalf("unexpected excluded interfaces: %v", options.ExcludeInterface)
 	}
 	if options.Advanced.TCPriority != defaultSharedNetworkTCPriority {
 		t.Fatalf("unexpected default TC priority: %d", options.Advanced.TCPriority)
@@ -93,6 +89,20 @@ func TestNormalizeSharedNetworkOptions(t *testing.T) {
 		if options.IncludeSourceCIDR[index] != wantSourceCIDR[index] {
 			t.Fatalf("unexpected include source CIDRs: %v", options.IncludeSourceCIDR)
 		}
+	}
+}
+
+func TestNormalizeExcludeInterfaces(t *testing.T) {
+	excluded, err := normalizeExcludeInterfaces([]string{" tun0 ", "tun+", "tun+"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(excluded) < 2 || excluded[0] != "tun0" || excluded[1] != "tun+" {
+		t.Fatalf("unexpected excluded interfaces: %v", excluded)
+	}
+	_, err = normalizeExcludeInterfaces([]string{" "})
+	if err == nil {
+		t.Fatal("expected an empty excluded interface to be rejected")
 	}
 }
 
@@ -131,13 +141,6 @@ func TestNormalizeSharedNetworkOptionsRejectsInvalid(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected an invalid source CIDR to be rejected")
-	}
-	_, err = normalizeSharedNetworkOptions(option.EBPFSharedOptions{
-		Interface:        []string{"ap0"},
-		ExcludeInterface: []string{" "},
-	})
-	if err == nil {
-		t.Fatal("expected an empty excluded interface to be rejected")
 	}
 }
 
