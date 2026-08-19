@@ -6,17 +6,14 @@ import (
 	"context"
 	"net"
 	"net/netip"
-	"os"
-	"path/filepath"
 	"slices"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/sagernet/netlink"
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing/common/control"
 	"github.com/sagernet/sing/common/x/list"
+	"golang.org/x/sys/unix"
 )
 
 func isGlobalUnicastIP(ip net.IP) bool {
@@ -24,41 +21,6 @@ func isGlobalUnicastIP(ip net.IP) bool {
 		return false
 	}
 	return ip.IsGlobalUnicast()
-}
-
-func getInterfacePacketCount(interfaceName string) (rx uint64, tx uint64, err error) {
-	rxData, err := os.ReadFile(filepath.Join("/sys/class/net", interfaceName, "statistics", "rx_packets"))
-	if err != nil {
-		return 0, 0, err
-	}
-	txData, err := os.ReadFile(filepath.Join("/sys/class/net", interfaceName, "statistics", "tx_packets"))
-	if err != nil {
-		return 0, 0, err
-	}
-	rx, _ = strconv.ParseUint(strings.TrimSpace(string(rxData)), 10, 64)
-	tx, _ = strconv.ParseUint(strings.TrimSpace(string(txData)), 10, 64)
-	return rx, tx, nil
-}
-
-type interfacePacketCount struct {
-	rx uint64
-	tx uint64
-}
-
-func packetCountIncreased(previous, current interfacePacketCount) bool {
-	return current.rx > previous.rx || current.tx > previous.tx ||
-		(current.rx != 0 && current.rx < previous.rx) || (current.tx != 0 && current.tx < previous.tx)
-}
-
-func snapshotInterfacePacketCounts(interfaceNames []string) map[string]interfacePacketCount {
-	counts := make(map[string]interfacePacketCount, len(interfaceNames))
-	for _, interfaceName := range interfaceNames {
-		rx, tx, err := getInterfacePacketCount(interfaceName)
-		if err == nil {
-			counts[interfaceName] = interfacePacketCount{rx: rx, tx: tx}
-		}
-	}
-	return counts
 }
 
 func findActiveExcludedInterfaceNames(excludeInterfaces []string) []string {
@@ -121,18 +83,43 @@ func findActiveExcludedInterfaceNames(excludeInterfaces []string) []string {
 	return activeInterfaces
 }
 
-func excludedInterfaceWithTraffic(interfaceNames []string, baseline map[string]interfacePacketCount) (string, bool) {
+func isDefaultRoute(route netlink.Route) bool {
+	if route.Table == unix.RT_TABLE_LOCAL || route.Type != unix.RTN_UNICAST {
+		return false
+	}
+	if route.Dst == nil {
+		return true
+	}
+	ones, bits := route.Dst.Mask.Size()
+	return ones == 0 && (bits == net.IPv4len*8 || bits == net.IPv6len*8)
+}
+
+func interfaceHasDefaultRoute(interfaceName string) bool {
+	link, err := netlink.LinkByName(interfaceName)
+	if err != nil || link.Attrs() == nil {
+		return false
+	}
+	for _, family := range []int{netlink.FAMILY_V4, netlink.FAMILY_V6} {
+		routes, routeErr := netlink.RouteListFiltered(
+			family,
+			&netlink.Route{LinkIndex: link.Attrs().Index, Table: unix.RT_TABLE_UNSPEC},
+			netlink.RT_FILTER_OIF|netlink.RT_FILTER_TABLE,
+		)
+		if routeErr != nil {
+			continue
+		}
+		for _, route := range routes {
+			if isDefaultRoute(route) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func excludedInterfaceWithDefaultRoute(interfaceNames []string) (string, bool) {
 	for _, interfaceName := range interfaceNames {
-		rx, tx, err := getInterfacePacketCount(interfaceName)
-		if err != nil {
-			continue
-		}
-		previous, loaded := baseline[interfaceName]
-		if !loaded {
-			baseline[interfaceName] = interfacePacketCount{rx: rx, tx: tx}
-			continue
-		}
-		if packetCountIncreased(previous, interfacePacketCount{rx: rx, tx: tx}) {
+		if interfaceHasDefaultRoute(interfaceName) {
 			return interfaceName, true
 		}
 	}
@@ -356,12 +343,11 @@ func (i *Inbound) enableVPNBypassLocked(interfaceName string) error {
 		i.vpnBypassActive = false
 		return err
 	}
-	i.logger.Info("eBPF cgroup socket redirection bypassed: active VPN traffic confirmed on ", interfaceName)
+	i.logger.Info("eBPF cgroup socket redirection bypassed: excluded interface has a default route: ", interfaceName)
 	return nil
 }
 
-func (i *Inbound) watchExcludedInterfaces(ctx context.Context, generation uint64, interfaceNames []string) {
-	baseline := snapshotInterfacePacketCounts(interfaceNames)
+func (i *Inbound) watchExcludedInterfaces(ctx context.Context, generation uint64, excludeInterfaces []string) {
 	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()
 	for {
@@ -375,7 +361,8 @@ func (i *Inbound) watchExcludedInterfaces(ctx context.Context, generation uint64
 			i.bypassRuleSetAccess.Unlock()
 			return
 		case <-ticker.C:
-			interfaceName, active := excludedInterfaceWithTraffic(interfaceNames, baseline)
+			interfaceNames := findActiveExcludedInterfaceNames(excludeInterfaces)
+			interfaceName, active := excludedInterfaceWithDefaultRoute(interfaceNames)
 			if !active {
 				continue
 			}
@@ -410,16 +397,24 @@ func (i *Inbound) InterfaceUpdated() {
 		activeInterfaces = findActiveExcludedInterfaceNames(i.excludeInterface)
 	}
 
-	if len(activeInterfaces) > 0 {
-		if !i.vpnBypassActive && i.vpnWatchCancel == nil {
+	interfaceName, vpnRouteActive := excludedInterfaceWithDefaultRoute(activeInterfaces)
+	if vpnRouteActive {
+		i.cancelVPNWatchLocked()
+		if !i.vpnBypassActive {
+			if err := i.enableVPNBypassLocked(interfaceName); err != nil {
+				i.logger.Error("enable eBPF VPN bypass on ", interfaceName, ": ", err)
+			}
+		}
+	} else {
+		if len(activeInterfaces) > 0 && i.vpnWatchCancel == nil {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			i.vpnWatchGeneration++
 			generation := i.vpnWatchGeneration
 			i.vpnWatchCancel = cancel
-			go i.watchExcludedInterfaces(ctx, generation, activeInterfaces)
+			go i.watchExcludedInterfaces(ctx, generation, slices.Clone(i.excludeInterface))
+		} else if len(activeInterfaces) == 0 {
+			i.cancelVPNWatchLocked()
 		}
-	} else {
-		i.cancelVPNWatchLocked()
 		if i.vpnBypassActive {
 			i.vpnBypassActive = false
 			i.logger.Info("eBPF cgroup socket redirection resumed: VPN interface disconnected")

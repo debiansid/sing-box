@@ -112,20 +112,59 @@ func TestNormalizeExcludeInterfaces(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an empty excluded interface to be rejected")
 	}
+}
 
+func TestIsDefaultRoute(t *testing.T) {
 	for _, test := range []struct {
-		previous interfacePacketCount
-		current  interfacePacketCount
-		want     bool
+		name  string
+		route netlink.Route
+		want  bool
 	}{
-		{interfacePacketCount{rx: 10, tx: 20}, interfacePacketCount{rx: 10, tx: 20}, false},
-		{interfacePacketCount{rx: 10, tx: 20}, interfacePacketCount{rx: 11, tx: 20}, true},
-		{interfacePacketCount{rx: 10, tx: 20}, interfacePacketCount{rx: 10, tx: 21}, true},
-		{interfacePacketCount{rx: 10, tx: 20}, interfacePacketCount{rx: 1, tx: 2}, true},
+		{
+			name:  "implicit IPv4 default",
+			route: netlink.Route{Table: 1088, Type: unix.RTN_UNICAST},
+			want:  true,
+		},
+		{
+			name: "explicit IPv4 default",
+			route: netlink.Route{
+				Table: 1088,
+				Type:  unix.RTN_UNICAST,
+				Dst:   &net.IPNet{IP: net.IPv4zero, Mask: net.CIDRMask(0, 32)},
+			},
+			want: true,
+		},
+		{
+			name: "explicit IPv6 default",
+			route: netlink.Route{
+				Table: 1088,
+				Type:  unix.RTN_UNICAST,
+				Dst:   &net.IPNet{IP: net.IPv6zero, Mask: net.CIDRMask(0, 128)},
+			},
+			want: true,
+		},
+		{
+			name: "non-default route",
+			route: netlink.Route{
+				Table: 1088,
+				Type:  unix.RTN_UNICAST,
+				Dst:   &net.IPNet{IP: net.IPv4(10, 0, 0, 0), Mask: net.CIDRMask(8, 32)},
+			},
+		},
+		{
+			name:  "local table",
+			route: netlink.Route{Table: unix.RT_TABLE_LOCAL, Type: unix.RTN_UNICAST},
+		},
+		{
+			name:  "unreachable default",
+			route: netlink.Route{Table: 1088, Type: unix.RTN_UNREACHABLE},
+		},
 	} {
-		if got := packetCountIncreased(test.previous, test.current); got != test.want {
-			t.Fatalf("packetCountIncreased(%+v, %+v) = %v, want %v", test.previous, test.current, got, test.want)
-		}
+		t.Run(test.name, func(t *testing.T) {
+			if got := isDefaultRoute(test.route); got != test.want {
+				t.Fatalf("isDefaultRoute(%+v) = %v, want %v", test.route, got, test.want)
+			}
+		})
 	}
 }
 
