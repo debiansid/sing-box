@@ -365,6 +365,8 @@ func TestNormalizeMapCapacity(t *testing.T) {
 	}
 	if capacity.TCPRedirect != uint32(stateCapacity) ||
 		capacity.UDPRedirect != uint32(stateCapacity) ||
+		capacity.UDPPeer != uint32(stateCapacity) ||
+		capacity.UDPFlow != uint32(stateCapacity) ||
 		capacity.SocketBypass != uint32(stateCapacity) {
 		t.Fatalf("unexpected custom map capacity: %+v", capacity)
 	}

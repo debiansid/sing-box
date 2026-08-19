@@ -261,8 +261,13 @@ func TestSharedTCLifecycleSnapshot(t *testing.T) {
 }
 
 func TestSharedTCWaitingSkipsBackendRefresh(t *testing.T) {
+	prepareCalls := 0
 	manager := &sharedTCManager{
-		interfaces:  []string{"sbe-missing"},
+		interfaces: []string{"sbe-missing"},
+		prepareBackend: func() (*ECommon.SharedNetworkBackend, error) {
+			prepareCalls++
+			return nil, nil
+		},
 		attachments: make(map[string]*sharedTCAttachment),
 	}
 	if err := manager.reconcile(); err != nil {
@@ -270,6 +275,9 @@ func TestSharedTCWaitingSkipsBackendRefresh(t *testing.T) {
 	}
 	if manager.isEnabled() {
 		t.Fatal("waiting shared-network manager is enabled")
+	}
+	if prepareCalls != 0 {
+		t.Fatalf("shared-network backend initialized while interface was absent: %d", prepareCalls)
 	}
 }
 

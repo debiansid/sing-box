@@ -206,21 +206,27 @@ func (w *sharedPacketWriter) WritePacket(buffer *buf.Buffer, destination M.Socks
 	destinationAddress := destination.AddrPort()
 	binding, loaded := w.clientState.redirectBinding(destinationAddress)
 	if !loaded {
-		w.sharedNetwork.inbound.diagnostics.sharedUDPBindingMiss.Add(1)
 		var err error
 		binding, err = w.reserveReplyBinding(destinationAddress)
 		if err != nil {
-			w.sharedNetwork.inbound.debug.observeUDPBindingMiss(
+			lateReply := !w.sharedNetwork.udpClientTable.current(w.client, w.clientState)
+			if lateReply {
+				w.sharedNetwork.inbound.diagnostics.sharedUDPLateReply.Add(1)
+			} else {
+				w.sharedNetwork.inbound.diagnostics.sharedUDPBindingMiss.Add(1)
+			}
+			w.sharedNetwork.inbound.debug.observeUDPBindingFailure(
 				&w.debug,
 				true,
+				lateReply,
 				w.sharedNetwork.inbound.logger,
-				&w.sharedNetwork.udpClientTable,
 				w.client,
 				destinationAddress,
 				w.clientState,
 			)
 			return E.Cause(err, "recover missing shared-network UDP token for ", destination)
 		}
+		w.sharedNetwork.inbound.diagnostics.sharedUDPBindingMiss.Add(1)
 		w.sharedNetwork.inbound.diagnostics.sharedUDPBindingRecovery.Add(1)
 	}
 	return w.sharedNetwork.listeners.writeUDP(buffer.Bytes(), binding.packetInfo, w.client, binding.address)

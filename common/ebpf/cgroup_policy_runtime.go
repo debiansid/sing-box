@@ -27,6 +27,8 @@ func validateCgroupMapCapacity(capacity CgroupMapCapacity) error {
 	}{
 		{"tcp_redirect", capacity.TCPRedirect},
 		{"udp_redirect", capacity.UDPRedirect},
+		{"udp_peer", capacity.UDPPeer},
+		{"udp_flow", capacity.UDPFlow},
 		{"socket_bypass", capacity.SocketBypass},
 	} {
 		if err := validateMapCapacity("eBPF "+entry.name, entry.value); err != nil {
@@ -124,7 +126,7 @@ func (b *CgroupBackend) UpdateHostAddresses(addresses []netip.Addr) error {
 		return errBackendClosed
 	}
 	ipv4, ipv6 := compileHostPrefixes(addresses)
-	if len(ipv4) > 256 || len(ipv6) > 256 {
+	if len(ipv4) > maxHostAddressPolicyEntries || len(ipv6) > maxHostAddressPolicyEntries {
 		return E.New("local cgroup host address policy exceeds eBPF map capacity")
 	}
 	b.access.Lock()

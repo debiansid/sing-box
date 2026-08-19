@@ -57,4 +57,11 @@ func TestEBPFDebugStateSnapshot(t *testing.T) {
 		snapshot.UDPBindingMiss.Shared.ConnectedSessions != 1 {
 		t.Fatalf("unexpected UDP binding miss snapshot: %+v", snapshot.UDPBindingMiss)
 	}
+	var lateWriter eBPFDebugUDPWriterState
+	state.localUDPLateReply.observe(&lateWriter, true)
+	snapshot = state.snapshot()
+	if snapshot.UDPLateReply.Local.ConnectedPackets != 1 ||
+		snapshot.UDPLateReply.Local.ConnectedSessions != 1 {
+		t.Fatalf("unexpected UDP late reply snapshot: %+v", snapshot.UDPLateReply)
+	}
 }

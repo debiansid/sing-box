@@ -73,6 +73,11 @@ func (t *udpClientTable) load(client netip.AddrPort) (*udpClientState, bool) {
 	return clientState, loaded
 }
 
+func (t *udpClientTable) current(client netip.AddrPort, expectedState *udpClientState) bool {
+	clientState, loaded := t.load(client)
+	return loaded && clientState == expectedState
+}
+
 func (t *udpClientTable) loadOrCreate(client netip.AddrPort) *udpClientState {
 	if clientState, loaded := t.load(client); loaded {
 		return clientState

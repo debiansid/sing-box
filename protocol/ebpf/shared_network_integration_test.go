@@ -12,7 +12,9 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -28,7 +30,212 @@ const (
 	sharedNetworkUDPClientHelperEnv     = "SING_BOX_EBPF_SHARED_UDP_CLIENT_HELPER"
 	sharedNetworkUDPFragmentHelperMode  = "fragment"
 	sharedNetworkUDPFragmentPayloadSize = 4096
+	sharedNetworkTCPStressHelperEnv     = "SING_BOX_EBPF_SHARED_TCP_STRESS_HELPER"
+	sharedNetworkTCPStressCountEnv      = "SING_BOX_EBPF_SHARED_TCP_STRESS_COUNT"
+	sharedNetworkTCPStressWorkersEnv    = "SING_BOX_EBPF_SHARED_TCP_STRESS_WORKERS"
 )
+
+func TestSharedNetworkTCPStressClientHelper(t *testing.T) {
+	destination := os.Getenv(sharedNetworkTCPStressHelperEnv)
+	if destination == "" {
+		t.Skip("shared-network TCP stress helper")
+	}
+	count, err := strconv.Atoi(os.Getenv(sharedNetworkTCPStressCountEnv))
+	if err != nil || count <= 0 {
+		t.Fatal("invalid shared-network TCP stress count")
+	}
+	workers, err := strconv.Atoi(os.Getenv(sharedNetworkTCPStressWorkersEnv))
+	if err != nil || workers <= 0 {
+		t.Fatal("invalid shared-network TCP stress workers")
+	}
+	jobs := make(chan int)
+	errors := make(chan error, count)
+	var waitGroup sync.WaitGroup
+	for worker := 0; worker < workers; worker++ {
+		waitGroup.Add(1)
+		go func() {
+			defer waitGroup.Done()
+			for range jobs {
+				conn, dialErr := net.DialTimeout("tcp4", destination, 3*time.Second)
+				if dialErr != nil {
+					errors <- dialErr
+					continue
+				}
+				_ = conn.SetDeadline(time.Now().Add(3 * time.Second))
+				if _, dialErr = conn.Write([]byte{1}); dialErr == nil {
+					var response [1]byte
+					_, dialErr = io.ReadFull(conn, response[:])
+				}
+				_ = conn.Close()
+				if dialErr != nil {
+					errors <- dialErr
+				}
+			}
+		}()
+	}
+	for index := 0; index < count; index++ {
+		jobs <- index
+	}
+	close(jobs)
+	waitGroup.Wait()
+	close(errors)
+	for stressErr := range errors {
+		t.Error(stressErr)
+	}
+}
+
+func TestSharedNetworkTCPChurnIntegration(t *testing.T) {
+	if os.Getenv("SING_BOX_EBPF_SHARED_INTEGRATION") != "1" {
+		t.Skip("set SING_BOX_EBPF_SHARED_INTEGRATION=1 to run the root TC integration test")
+	}
+	if os.Geteuid() != 0 {
+		t.Fatal("shared-network integration test requires root")
+	}
+	const (
+		namespace         = "sb-ebpf-churn"
+		hostLink          = "sbe-churn-h"
+		peerLink          = "sbe-churn-p"
+		stressConnections = 5000
+		stressWorkers     = 128
+	)
+	runIP := func(arguments ...string) {
+		t.Helper()
+		command := exec.Command("ip", arguments...)
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("ip %s: %v: %s", strings.Join(arguments, " "), err, output)
+		}
+	}
+	_ = exec.Command("ip", "netns", "del", namespace).Run()
+	_ = exec.Command("ip", "link", "del", hostLink).Run()
+	t.Cleanup(func() {
+		_ = exec.Command("ip", "netns", "del", namespace).Run()
+		_ = exec.Command("ip", "link", "del", hostLink).Run()
+	})
+	runIP("netns", "add", namespace)
+	runIP("link", "add", hostLink, "type", "veth", "peer", "name", peerLink)
+	runIP("link", "set", peerLink, "netns", namespace)
+	runIP("address", "add", "192.0.2.1/24", "dev", hostLink)
+	runIP("link", "set", hostLink, "up")
+	runIP("netns", "exec", namespace, "ip", "link", "set", "lo", "up")
+	runIP("netns", "exec", namespace, "ip", "address", "add", "192.0.2.2/24", "dev", peerLink)
+	runIP("netns", "exec", namespace, "ip", "link", "set", peerLink, "up")
+	runIP("netns", "exec", namespace, "ip", "route", "add", "default", "via", "192.0.2.1")
+
+	listener, err := net.ListenTCP("tcp4", &net.TCPAddr{IP: net.IPv4zero})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	listenerPort := uint16(listener.Addr().(*net.TCPAddr).Port)
+	redirectPrefix := netip.MustParsePrefix("127.128.0.0/9")
+	routeOwner := &Inbound{}
+	routeOwner.localRoutes, err = addLocalRoutes([]netip.Prefix{redirectPrefix})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = routeOwner.removeLocalRoutes() })
+	backend, err := ECommon.PrepareSharedNetwork(nil, ECommon.SharedNetworkConfig{
+		ListenerPort: listenerPort,
+		EnableTCP:    true,
+		RedirectIPv4: redirectPrefix,
+		MapCapacity: ECommon.SharedNetworkMapCapacities{
+			Proxy:    8192,
+			Bypass:   1,
+			Fragment: 1,
+		},
+		UDPTimeout: 5 * time.Minute,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = backend.Close() })
+	if err = backend.UpdateHostAddresses([]netip.Addr{netip.MustParseAddr("192.0.2.1")}); err != nil {
+		t.Fatal(err)
+	}
+	manager := &sharedTCManager{
+		backend:     backend,
+		logger:      discardInterfaceLogger{},
+		interfaces:  []string{hostLink},
+		enableIPv4:  true,
+		priority:    defaultSharedNetworkTCPriority,
+		attachments: make(map[string]*sharedTCAttachment),
+	}
+	if err = manager.reconcile(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = manager.closeAttachments() })
+
+	serverErrors := make(chan error, stressConnections)
+	serverDone := make(chan struct{})
+	go func() {
+		defer close(serverDone)
+		_ = listener.SetDeadline(time.Now().Add(45 * time.Second))
+		var waitGroup sync.WaitGroup
+		for index := 0; index < stressConnections; index++ {
+			conn, acceptErr := listener.AcceptTCP()
+			if acceptErr != nil {
+				serverErrors <- acceptErr
+				break
+			}
+			waitGroup.Add(1)
+			go func() {
+				defer waitGroup.Done()
+				defer conn.Close()
+				client := conn.RemoteAddr().(*net.TCPAddr).AddrPort()
+				tokenDestination := conn.LocalAddr().(*net.TCPAddr).AddrPort()
+				original, flow, lookupErr := backend.LookupFlow(ECommon.ProtocolTCP, client, tokenDestination)
+				if lookupErr != nil {
+					serverErrors <- lookupErr
+					return
+				}
+				defer func() {
+					if releaseErr := backend.ReleaseFlow(flow); releaseErr != nil {
+						serverErrors <- releaseErr
+					}
+				}()
+				if original.Destination != netip.MustParseAddrPort("10.0.0.1:18082") {
+					serverErrors <- &unexpectedDestinationError{original.Destination}
+					return
+				}
+				_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+				var payload [1]byte
+				if _, readErr := io.ReadFull(conn, payload[:]); readErr != nil {
+					serverErrors <- readErr
+					return
+				}
+				if _, writeErr := conn.Write(payload[:]); writeErr != nil {
+					serverErrors <- writeErr
+				}
+			}()
+		}
+		waitGroup.Wait()
+	}()
+
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stressContext, stressCancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer stressCancel()
+	command := exec.CommandContext(
+		stressContext,
+		"ip", "netns", "exec", namespace,
+		executable, "-test.run", "^TestSharedNetworkTCPStressClientHelper$",
+	)
+	command.Env = append(os.Environ(),
+		sharedNetworkTCPStressHelperEnv+"=10.0.0.1:18082",
+		fmt.Sprintf("%s=%d", sharedNetworkTCPStressCountEnv, stressConnections),
+		fmt.Sprintf("%s=%d", sharedNetworkTCPStressWorkersEnv, stressWorkers),
+	)
+	if output, commandErr := command.CombinedOutput(); commandErr != nil {
+		t.Fatalf("shared-network TCP stress client: %v: %s", commandErr, output)
+	}
+	<-serverDone
+	close(serverErrors)
+	for serverErr := range serverErrors {
+		t.Error(serverErr)
+	}
+}
 
 func TestSharedNetworkUDPClientHelper(t *testing.T) {
 	helperMode := os.Getenv(sharedNetworkUDPClientHelperEnv)

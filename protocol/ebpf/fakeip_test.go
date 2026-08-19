@@ -69,39 +69,3 @@ func TestFakeIPBypassConflictCount(t *testing.T) {
 		t.Fatalf("unexpected FakeIP bypass conflict count: %d", conflicts)
 	}
 }
-
-func TestPartitionLocalHostPrefixes(t *testing.T) {
-	prefixes := []netip.Prefix{
-		netip.MustParsePrefix("192.0.2.1/32"),
-		netip.MustParsePrefix("2001:db8::1/128"),
-	}
-	for _, test := range []struct {
-		name        string
-		inbound     Inbound
-		exactCount  int
-		bypassCount int
-	}{
-		{name: "no FakeIP", bypassCount: 2},
-		{
-			name:        "IPv4 FakeIP",
-			inbound:     Inbound{fakeIPIPv4Prefix: netip.MustParsePrefix("198.18.0.0/15")},
-			exactCount:  1,
-			bypassCount: 1,
-		},
-		{
-			name: "dual-stack FakeIP",
-			inbound: Inbound{
-				fakeIPIPv4Prefix: netip.MustParsePrefix("198.18.0.0/15"),
-				fakeIPIPv6Prefix: netip.MustParsePrefix("fc00::/18"),
-			},
-			exactCount: 2,
-		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			exact, bypass := test.inbound.partitionLocalHostPrefixes(prefixes)
-			if len(exact) != test.exactCount || len(bypass) != test.bypassCount {
-				t.Fatalf("unexpected host policy partition: exact=%v bypass=%v", exact, bypass)
-			}
-		})
-	}
-}

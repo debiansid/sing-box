@@ -161,11 +161,20 @@ func TestUDPClientTableDeleteChecksGeneration(t *testing.T) {
 	var table udpClientTable
 	client := netip.MustParseAddrPort("[::1]:1234")
 	oldState := table.loadOrCreate(client)
+	if !table.current(client, oldState) {
+		t.Fatal("new UDP client state is not current")
+	}
 	table.delete(client, oldState)
+	if table.current(client, oldState) {
+		t.Fatal("deleted UDP client state is still current")
+	}
 	newState := table.loadOrCreate(client)
 	table.delete(client, oldState)
 	if actual, loaded := table.load(client); !loaded || actual != newState {
 		t.Fatal("an old session removed the current UDP client state")
+	}
+	if table.current(client, oldState) || !table.current(client, newState) {
+		t.Fatal("UDP client generation classification is incorrect")
 	}
 }
 

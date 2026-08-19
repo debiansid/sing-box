@@ -4,6 +4,7 @@ package ebpf
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"time"
 
@@ -38,6 +39,7 @@ type sharedNetwork struct {
 	unexpectedTCPWarn warningLimiter
 	mapCapacity       ECommon.SharedNetworkMapCapacities
 	janitorWarnings   warningLimiter
+	janitorAccess     sync.Mutex
 	janitorCancel     context.CancelFunc
 	janitorDone       chan struct{}
 	tcPriority        uint16
@@ -80,6 +82,32 @@ func (s *sharedNetwork) Start(cgroupBackend *ECommon.CgroupBackend) error {
 	if err := s.startListeners(); err != nil {
 		return E.Errors(err, s.closeListeners())
 	}
+	s.tcManager = &sharedTCManager{
+		prepareBackend: func() (*ECommon.SharedNetworkBackend, error) {
+			return s.prepareBackend(cgroupBackend)
+		},
+		onReady:        s.sharedNetworkReady,
+		logger:         s.inbound.logger,
+		interfaces:     s.interfaces,
+		enableIPv4:     s.inbound.redirectIPv4Prefix.IsValid(),
+		priority:       s.tcPriority,
+		networkMonitor: s.inbound.networkManager.NetworkMonitor(),
+		attachments:    make(map[string]*sharedTCAttachment),
+		debug:          &s.inbound.debug,
+	}
+	if err := s.tcManager.Start(); err != nil {
+		return E.Errors(err, s.Close())
+	}
+	if s.sharedBackendInstance() == nil {
+		s.inbound.logger.Info(
+			"eBPF shared-network waiting for downstream interfaces before loading programs: interfaces=[",
+			strings.Join(s.interfaces, ", "), "]",
+		)
+	}
+	return nil
+}
+
+func (s *sharedNetwork) prepareBackend(cgroupBackend *ECommon.CgroupBackend) (*ECommon.SharedNetworkBackend, error) {
 	backend, err := ECommon.PrepareSharedNetwork(cgroupBackend, ECommon.SharedNetworkConfig{
 		ListenerPort:         s.listeners.selectedPort(),
 		EnableTCP:            s.inbound.enableTCP,
@@ -99,42 +127,37 @@ func (s *sharedNetwork) Start(cgroupBackend *ECommon.CgroupBackend) error {
 		UDPTimeout:           s.inbound.udpTimeout,
 	})
 	if err != nil {
-		return E.Errors(err, s.closeListeners())
+		return nil, err
 	}
-	s.setSharedBackend(backend)
 	if cgroupBackend == nil {
-		policy, compileErr := s.inbound.compileBypassCIDRPolicy(s.inbound.currentBypassCIDR())
-		if compileErr != nil {
-			return E.Errors(compileErr, s.Close())
-		}
+		s.inbound.bypassRuleSetAccess.Lock()
+		policy := s.inbound.bypassRuleSetPolicy
 		updateStarted := s.inbound.debug.bypassPolicyOperationStarted()
 		_, err = backend.UpdateCompiledBypassCIDR(policy)
 		s.inbound.debug.observeBypassPolicyUpdate(updateStarted, err)
 		if err != nil {
-			return E.Errors(err, s.Close())
+			s.inbound.bypassRuleSetAccess.Unlock()
+			closeErr := backend.Close()
+			return nil, E.Errors(err, closeErr)
 		}
+		s.inbound.bypassRuleSetDirty = false
+		s.setSharedBackend(backend)
+		s.inbound.bypassRuleSetAccess.Unlock()
 	} else {
 		ipv4Count, ipv6Count := cgroupBackend.BypassCIDRCount()
 		if err = backend.SetBypassCIDRState(ipv4Count, ipv6Count); err != nil {
-			return E.Errors(err, s.Close())
+			closeErr := backend.Close()
+			return nil, E.Errors(err, closeErr)
 		}
+		s.setSharedBackend(backend)
 	}
-	s.tcManager = &sharedTCManager{
-		backend:        backend,
-		logger:         s.inbound.logger,
-		interfaces:     s.interfaces,
-		enableIPv4:     s.inbound.redirectIPv4Prefix.IsValid(),
-		priority:       s.tcPriority,
-		networkMonitor: s.inbound.networkManager.NetworkMonitor(),
-		attachments:    make(map[string]*sharedTCAttachment),
-		debug:          &s.inbound.debug,
-	}
-	if err = s.tcManager.Start(); err != nil {
-		return E.Errors(err, s.Close())
-	}
+	return backend, nil
+}
+
+func (s *sharedNetwork) sharedNetworkReady() {
 	s.startFlowJanitor()
 	bypassMapSource := "local_cgroup"
-	if cgroupBackend == nil {
+	if s.inbound.cgroupBackendInstance() == nil {
 		bypassMapSource = "standalone"
 	}
 	s.inbound.logger.Info(
@@ -158,7 +181,6 @@ func (s *sharedNetwork) Start(cgroupBackend *ECommon.CgroupBackend) error {
 		", fragment:", s.mapCapacity.Fragment, "}",
 		", programs=[tc/ingress, tc/egress]",
 	)
-	return nil
 }
 
 func (s *sharedNetwork) startListeners() error {
@@ -190,15 +212,14 @@ func (s *sharedNetwork) Close() error {
 	}
 	s.lifecycleAccess.Lock()
 	defer s.lifecycleAccess.Unlock()
-	s.stopFlowJanitor()
-	backend := s.takeSharedBackend()
 	if s.tcManager != nil {
 		if err := s.tcManager.Close(); err != nil {
-			s.setSharedBackend(backend)
 			return err
 		}
 		s.tcManager = nil
 	}
+	s.stopFlowJanitor()
+	backend := s.takeSharedBackend()
 	var backendErr error
 	if backend != nil {
 		backendErr = backend.Close()
@@ -249,6 +270,11 @@ func (s *sharedNetwork) setSharedBackend(backend *ECommon.SharedNetworkBackend) 
 }
 
 func (s *sharedNetwork) startFlowJanitor() {
+	s.janitorAccess.Lock()
+	defer s.janitorAccess.Unlock()
+	if s.janitorCancel != nil {
+		return
+	}
 	ctx, cancel := context.WithCancel(s.inbound.ctx)
 	done := make(chan struct{})
 	s.janitorCancel = cancel
@@ -257,13 +283,18 @@ func (s *sharedNetwork) startFlowJanitor() {
 }
 
 func (s *sharedNetwork) stopFlowJanitor() {
+	s.janitorAccess.Lock()
 	if s.janitorCancel == nil {
+		s.janitorAccess.Unlock()
 		return
 	}
-	s.janitorCancel()
-	<-s.janitorDone
+	cancel := s.janitorCancel
+	done := s.janitorDone
 	s.janitorCancel = nil
 	s.janitorDone = nil
+	s.janitorAccess.Unlock()
+	cancel()
+	<-done
 }
 
 func (s *sharedNetwork) runFlowJanitor(ctx context.Context, done chan<- struct{}) {

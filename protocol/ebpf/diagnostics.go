@@ -14,6 +14,7 @@ type eBPFDiagnostics struct {
 	localUDPLookupError       atomic.Uint64
 	localUDPBindingMiss       atomic.Uint64
 	localUDPBindingRecovery   atomic.Uint64
+	localUDPLateReply         atomic.Uint64
 	localUDPCleanupError      atomic.Uint64
 	sharedTCPRedirectMiss     atomic.Uint64
 	sharedTCPLookupError      atomic.Uint64
@@ -22,6 +23,7 @@ type eBPFDiagnostics struct {
 	sharedUDPLookupError      atomic.Uint64
 	sharedUDPBindingMiss      atomic.Uint64
 	sharedUDPBindingRecovery  atomic.Uint64
+	sharedUDPLateReply        atomic.Uint64
 	sharedFlowReleaseError    atomic.Uint64
 }
 
@@ -35,6 +37,7 @@ type eBPFDiagnosticPathSnapshot struct {
 	UDPLookupError       uint64 `json:"udp_lookup_error"`
 	UDPBindingMiss       uint64 `json:"udp_binding_miss"`
 	UDPBindingRecovery   uint64 `json:"udp_binding_recovery"`
+	UDPLateReply         uint64 `json:"udp_late_reply"`
 	CleanupError         uint64 `json:"cleanup_error"`
 }
 
@@ -55,6 +58,7 @@ func (d *eBPFDiagnostics) snapshot() eBPFDiagnosticSnapshot {
 			UDPLookupError:       d.localUDPLookupError.Load(),
 			UDPBindingMiss:       d.localUDPBindingMiss.Load(),
 			UDPBindingRecovery:   d.localUDPBindingRecovery.Load(),
+			UDPLateReply:         d.localUDPLateReply.Load(),
 			CleanupError:         d.localUDPCleanupError.Load(),
 		},
 		Shared: eBPFDiagnosticPathSnapshot{
@@ -65,6 +69,7 @@ func (d *eBPFDiagnostics) snapshot() eBPFDiagnosticSnapshot {
 			UDPLookupError:     d.sharedUDPLookupError.Load(),
 			UDPBindingMiss:     d.sharedUDPBindingMiss.Load(),
 			UDPBindingRecovery: d.sharedUDPBindingRecovery.Load(),
+			UDPLateReply:       d.sharedUDPLateReply.Load(),
 			CleanupError:       d.sharedFlowReleaseError.Load(),
 		},
 	}
@@ -73,7 +78,7 @@ func (d *eBPFDiagnostics) snapshot() eBPFDiagnosticSnapshot {
 func (s eBPFDiagnosticPathSnapshot) total() uint64 {
 	return s.TCPRedirectMiss + s.TCPLookupError + s.UDPPacketInfoError +
 		s.UDPRedirectMiss + s.UDPRedirectRecovery + s.UDPConnectedRecovery + s.UDPLookupError +
-		s.UDPBindingMiss + s.UDPBindingRecovery + s.CleanupError
+		s.UDPBindingMiss + s.UDPBindingRecovery + s.UDPLateReply + s.CleanupError
 }
 
 func (s eBPFDiagnosticPathSnapshot) failures() uint64 {
@@ -100,6 +105,7 @@ func (i *Inbound) logDiagnosticSummary() {
 		", udp_lookup_error:", snapshot.Local.UDPLookupError,
 		", udp_binding_miss:", snapshot.Local.UDPBindingMiss,
 		", udp_binding_recovery:", snapshot.Local.UDPBindingRecovery,
+		", udp_late_reply:", snapshot.Local.UDPLateReply,
 		", cleanup_error:", snapshot.Local.CleanupError,
 		"}, shared={tcp_redirect_miss:", snapshot.Shared.TCPRedirectMiss,
 		", tcp_lookup_error:", snapshot.Shared.TCPLookupError,
@@ -108,6 +114,7 @@ func (i *Inbound) logDiagnosticSummary() {
 		", udp_lookup_error:", snapshot.Shared.UDPLookupError,
 		", udp_binding_miss:", snapshot.Shared.UDPBindingMiss,
 		", udp_binding_recovery:", snapshot.Shared.UDPBindingRecovery,
+		", udp_late_reply:", snapshot.Shared.UDPLateReply,
 		", cleanup_error:", snapshot.Shared.CleanupError,
 		"}",
 	}

@@ -34,11 +34,11 @@ func (d *eBPFDebugState) observeBypassPolicyUpdate(started time.Time, err error)
 
 func (d *eBPFDebugState) snapshot() *eBPFDebugSnapshot { return nil }
 
-func (d *eBPFDebugState) observeUDPBindingMiss(
+func (d *eBPFDebugState) observeUDPBindingFailure(
 	writer *eBPFDebugUDPWriterState,
 	shared bool,
+	lateReply bool,
 	logger log.ContextLogger,
-	table *udpClientTable,
 	client netip.AddrPort,
 	destination netip.AddrPort,
 	state *udpClientState,

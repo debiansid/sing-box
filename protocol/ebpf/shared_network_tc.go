@@ -31,6 +31,8 @@ const (
 
 type sharedTCManager struct {
 	backend           *ECommon.SharedNetworkBackend
+	prepareBackend    func() (*ECommon.SharedNetworkBackend, error)
+	onReady           func()
 	logger            sharedNetworkLogger
 	interfaces        []string
 	enableIPv4        bool
@@ -38,6 +40,7 @@ type sharedTCManager struct {
 	access            sync.Mutex
 	attachments       map[string]*sharedTCAttachment
 	enabled           bool
+	readyNotified     bool
 	cancel            context.CancelFunc
 	done              chan struct{}
 	wake              chan struct{}
@@ -160,6 +163,18 @@ func (m *sharedTCManager) reconcile() (err error) {
 		}
 		m.access.Unlock()
 	}
+	if m.backend == nil {
+		if m.prepareBackend == nil {
+			return E.New("missing shared-network eBPF backend initializer")
+		}
+		m.backend, err = m.prepareBackend()
+		if err != nil {
+			return E.Cause(err, "initialize shared-network eBPF backend")
+		}
+		if m.backend == nil {
+			return E.New("shared-network eBPF backend initializer returned nil")
+		}
+	}
 
 	hostAddresses, err := sharedHostAddresses()
 	if err != nil {
@@ -170,7 +185,13 @@ func (m *sharedTCManager) reconcile() (err error) {
 	}
 
 	m.access.Lock()
-	defer m.access.Unlock()
+	var readyCallback func()
+	defer func() {
+		m.access.Unlock()
+		if err == nil && readyCallback != nil {
+			readyCallback()
+		}
+	}()
 	for interfaceName, attachment := range m.attachments {
 		link, loaded := desired[interfaceName]
 		if loaded && link.Attrs().Index == attachment.interfaceIndex {
@@ -212,7 +233,12 @@ func (m *sharedTCManager) reconcile() (err error) {
 		m.attachmentAdds.Add(1)
 		m.logger.Debug("eBPF shared-network attached to ", interfaceName, " (ifindex=", link.Attrs().Index, ")")
 	}
-	return m.updateEnabledLocked(len(m.attachments) > 0)
+	err = m.updateEnabledLocked(len(m.attachments) > 0)
+	if err == nil && len(m.attachments) > 0 && !m.readyNotified {
+		m.readyNotified = true
+		readyCallback = m.onReady
+	}
+	return err
 }
 
 func (m *sharedTCManager) isEnabled() bool {

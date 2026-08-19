@@ -38,6 +38,8 @@ type RuntimeProgramStatus struct {
 	Attached        bool   `json:"attached"`
 	StatsKnown      bool   `json:"stats_known,omitempty"`
 	AttachType      string `json:"attach_type,omitempty"`
+	AttachmentMode  string `json:"attachment_mode,omitempty"`
+	LinkID          uint32 `json:"link_id,omitempty"`
 	Error           string `json:"error,omitempty"`
 	StatsError      string `json:"stats_error,omitempty"`
 }

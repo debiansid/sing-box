@@ -259,21 +259,27 @@ func (w *udpPacketWriter) WritePacket(buffer *buf.Buffer, destination M.Socksadd
 	destinationAddress := destination.AddrPort()
 	binding, loaded := w.clientState.redirectBinding(destinationAddress)
 	if !loaded {
-		w.inbound.diagnostics.localUDPBindingMiss.Add(1)
 		var err error
 		binding, err = w.reserveReplyBinding(destinationAddress)
 		if err != nil {
-			w.inbound.debug.observeUDPBindingMiss(
+			lateReply := !w.inbound.udpClientTable.current(w.client, w.clientState)
+			if lateReply {
+				w.inbound.diagnostics.localUDPLateReply.Add(1)
+			} else {
+				w.inbound.diagnostics.localUDPBindingMiss.Add(1)
+			}
+			w.inbound.debug.observeUDPBindingFailure(
 				&w.debug,
 				false,
+				lateReply,
 				w.inbound.logger,
-				&w.inbound.udpClientTable,
 				w.client,
 				destinationAddress,
 				w.clientState,
 			)
 			return E.Cause(err, "recover missing UDP redirect binding for ", destination)
 		}
+		w.inbound.diagnostics.localUDPBindingMiss.Add(1)
 		w.inbound.diagnostics.localUDPBindingRecovery.Add(1)
 	}
 	return w.inbound.listeners.writeUDP(buffer.Bytes(), binding.packetInfo, w.client, binding.address)

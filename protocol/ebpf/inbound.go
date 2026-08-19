@@ -93,8 +93,8 @@ type Inbound struct {
 
 	bypassRuleSetAccess    sync.Mutex
 	bypassRuleSet          []adapter.RuleSet
-	bypassRuleSetCIDR      []netip.Prefix
-	bypassCIDR             []netip.Prefix
+	bypassRuleSetPolicy    ECommon.BypassCIDRPolicy
+	bypassRuleSetDirty     bool
 	bypassRuleSetCallbacks []*list.Element[adapter.RuleSetUpdateCallback]
 	bypassRuleSetStarted   bool
 

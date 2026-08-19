@@ -31,6 +31,8 @@ type eBPFDebugState struct {
 	bypassPolicyIPv6Prefixes  atomic.Uint64
 	localUDPBindingMiss       eBPFDebugUDPBindingMissMetric
 	sharedUDPBindingMiss      eBPFDebugUDPBindingMissMetric
+	localUDPLateReply         eBPFDebugUDPBindingMissMetric
+	sharedUDPLateReply        eBPFDebugUDPBindingMissMetric
 }
 
 type eBPFDebugUDPWriterState struct {
@@ -92,6 +94,7 @@ type eBPFDebugSnapshot struct {
 	Maintenance    map[string]eBPFDebugTaskSnapshot `json:"maintenance"`
 	BypassPolicy   eBPFDebugBypassPolicySnapshot    `json:"bypass_policy"`
 	UDPBindingMiss eBPFDebugUDPBindingMissSnapshot  `json:"udp_binding_miss"`
+	UDPLateReply   eBPFDebugUDPBindingMissSnapshot  `json:"udp_late_reply"`
 }
 
 type eBPFDebugBypassPolicySnapshot struct {
@@ -201,11 +204,11 @@ func (m *eBPFDebugUDPBindingMissMetric) snapshot() eBPFDebugUDPBindingMissPathSn
 	}
 }
 
-func (d *eBPFDebugState) observeUDPBindingMiss(
+func (d *eBPFDebugState) observeUDPBindingFailure(
 	writer *eBPFDebugUDPWriterState,
 	shared bool,
+	lateReply bool,
 	logger log.ContextLogger,
-	table *udpClientTable,
 	client netip.AddrPort,
 	destination netip.AddrPort,
 	state *udpClientState,
@@ -216,6 +219,14 @@ func (d *eBPFDebugState) observeUDPBindingMiss(
 		metric = &d.sharedUDPBindingMiss
 		path = "shared"
 	}
+	kind := "binding miss"
+	if lateReply {
+		metric = &d.localUDPLateReply
+		if shared {
+			metric = &d.sharedUDPLateReply
+		}
+		kind = "late reply"
+	}
 	state.access.RLock()
 	connected := state.connected
 	connectedDestination := state.connectedDestination
@@ -225,20 +236,19 @@ func (d *eBPFDebugState) observeUDPBindingMiss(
 	if !metric.observe(writer, connected) || logger == nil {
 		return
 	}
-	currentState, loaded := table.load(client)
 	allowed, suppressed := metric.warnings.allow(time.Now())
 	if !allowed {
 		return
 	}
 	args := []any{
-		"eBPF debug UDP binding miss: path=", path,
+		"eBPF debug UDP ", kind, ": path=", path,
 		" client=", client,
 		" requested_destination=", destination,
 		" connected=", connected,
 		" connected_destination=", connectedDestination,
 		" bindings=", bindingCount,
 		" originals=", originalCount,
-		" state_current=", loaded && currentState == state,
+		" state_current=", !lateReply,
 	}
 	if suppressed > 0 {
 		args = append(args, " (", suppressed, " unique sessions suppressed)")
@@ -282,6 +292,10 @@ func (d *eBPFDebugState) snapshot() *eBPFDebugSnapshot {
 		UDPBindingMiss: eBPFDebugUDPBindingMissSnapshot{
 			Local:  d.localUDPBindingMiss.snapshot(),
 			Shared: d.sharedUDPBindingMiss.snapshot(),
+		},
+		UDPLateReply: eBPFDebugUDPBindingMissSnapshot{
+			Local:  d.localUDPLateReply.snapshot(),
+			Shared: d.sharedUDPLateReply.snapshot(),
 		},
 	}
 }

@@ -109,6 +109,8 @@ func normalizeCgroupMapCapacity(configured option.EBPFStateCapacity) (ECommon.Cg
 	}
 	capacity.TCPRedirect = value
 	capacity.UDPRedirect = value
+	capacity.UDPPeer = value
+	capacity.UDPFlow = value
 	capacity.SocketBypass = value
 	return capacity, nil
 }
