@@ -44,12 +44,9 @@ func TestMapBatchIntegration(t *testing.T) {
 				deleteSupport.mode.Store(mapBatchUnsupported)
 			}
 			processed, err := updateMapBatch(
-				mapFD,
-				unsafe.Pointer(&keys[0]),
-				unsafe.Pointer(&values[0]),
-				uint32(len(keys)),
-				unsafe.Sizeof(keys[0]),
-				unsafe.Sizeof(values[0]),
+				mapInstance,
+				keys,
+				values,
 				0,
 				&updateSupport,
 			)
@@ -82,7 +79,7 @@ func TestMapBatchIntegration(t *testing.T) {
 			var scan mapScanResult
 			for !scan.Complete {
 				scan, err = scanScratch.scan(
-					mapFD,
+					mapInstance,
 					maxEntries,
 					2,
 					func(key uint32, value uint64) {
@@ -106,10 +103,8 @@ func TestMapBatchIntegration(t *testing.T) {
 			}
 
 			processed, err = deleteMapBatch(
-				mapFD,
-				unsafe.Pointer(&keys[0]),
-				uint32(len(keys)),
-				unsafe.Sizeof(keys[0]),
+				mapInstance,
+				keys,
 				&deleteSupport,
 			)
 			runtime.KeepAlive(keys)
@@ -128,6 +123,10 @@ func TestMapBatchIntegration(t *testing.T) {
 			}
 			if entries != 0 {
 				t.Fatalf("unexpected map entry count after delete: %d", entries)
+			}
+			processed, err = deleteMapBatchIfExists(mapInstance, keys, &deleteSupport)
+			if err != nil || processed != 0 {
+				t.Fatalf("delete missing keys: processed=%d err=%v", processed, err)
 			}
 		})
 	}
@@ -183,12 +182,9 @@ func BenchmarkMapScanMaintenance(b *testing.B) {
 	}
 	var updateSupport mapBatchSupport
 	if _, err = updateMapBatch(
-		mapInstance.FD(),
-		unsafe.Pointer(&keys[0]),
-		unsafe.Pointer(&values[0]),
-		maxEntries,
-		unsafe.Sizeof(keys[0]),
-		unsafe.Sizeof(values[0]),
+		mapInstance,
+		keys,
+		values,
 		0,
 		&updateSupport,
 	); err != nil {
@@ -214,7 +210,7 @@ func BenchmarkMapScanMaintenance(b *testing.B) {
 			b.ResetTimer()
 			for range b.N {
 				result, scanErr := scratch.scan(
-					mapInstance.FD(),
+					mapInstance,
 					maxEntries,
 					mapBatchMaxEntries,
 					func(_ uint32, value uint64) {

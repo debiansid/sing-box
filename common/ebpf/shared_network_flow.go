@@ -335,7 +335,7 @@ func (b *SharedNetworkBackend) SweepOrphanedFlows(
 	mapFD := int(b.runtime.original_to_token_map_fd)
 	b.flowSweepCandidates = b.flowSweepCandidates[:0]
 	scan, err := b.flowSweepScratch.scan(
-		mapFD,
+		b.runtime.maps["shared_original_to_token"],
 		b.mapCapacity.Proxy,
 		fallbackBudget,
 		func(key sharedNetworkOriginalKey, value sharedNetworkTokenValue) {

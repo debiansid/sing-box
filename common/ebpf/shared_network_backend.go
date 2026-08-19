@@ -65,6 +65,8 @@ type SharedNetworkBackend struct {
 	control             sharedNetworkControl
 	hostIPv4            []netip.Prefix
 	hostIPv6            []netip.Prefix
+	bypassIPv4Map       *CiliumEBPF.Map
+	bypassIPv6Map       *CiliumEBPF.Map
 	bypassIPv4MapFD     int
 	bypassIPv6MapFD     int
 	bypassIPv4CIDR      []netip.Prefix
@@ -189,6 +191,8 @@ func PrepareSharedNetwork(cgroupBackend *CgroupBackend, config SharedNetworkConf
 		mapCapacity:     config.MapCapacity,
 		runtime:         runtimeState,
 		statsMapFD:      runtimeState.stats_map_fd,
+		bypassIPv4Map:   bypassIPv4Map,
+		bypassIPv6Map:   bypassIPv6Map,
 		bypassIPv4MapFD: bypassIPv4MapFD,
 		bypassIPv6MapFD: bypassIPv6MapFD,
 	}
@@ -471,6 +475,8 @@ func (b *SharedNetworkBackend) Close() error {
 	b.runtime = nil
 	b.hostIPv4 = nil
 	b.hostIPv6 = nil
+	b.bypassIPv4Map = nil
+	b.bypassIPv6Map = nil
 	b.bypassIPv4MapFD = -1
 	b.bypassIPv6MapFD = -1
 	b.bypassIPv4CIDR = nil

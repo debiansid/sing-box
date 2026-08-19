@@ -5,15 +5,18 @@ package ebpf
 import (
 	"net/netip"
 	"slices"
-	"unsafe"
 
 	E "github.com/sagernet/sing/common/exceptions"
+
+	CiliumEBPF "github.com/cilium/ebpf"
 )
 
 const (
 	maxSharedSourceCIDRPolicyEntries = 4096
 	maxSharedSourceMACPolicyEntries  = 1024
 )
+
+var sourceMACUpdateBatchSupport mapBatchSupport
 
 func (b *SharedNetworkBackend) initializeSourceCIDRPolicy(include, exclude []netip.Prefix) error {
 	includeIPv4, includeIPv6, err := compileBypassCIDRPolicy(include)
@@ -40,8 +43,8 @@ func (b *SharedNetworkBackend) initializeSourceCIDRPolicy(include, exclude []net
 		return errBackendClosed
 	}
 	if _, err = replaceDualStackCIDRPolicy(
-		int(b.runtime.include_source_ipv4_map_fd),
-		int(b.runtime.include_source_ipv6_map_fd),
+		b.runtime.maps["shared_include_source_ipv4"],
+		b.runtime.maps["shared_include_source_ipv6"],
 		dualStackCIDRPrefixes{},
 		dualStackCIDRPrefixes{includeIPv4, includeIPv6},
 		"shared-network ",
@@ -50,8 +53,8 @@ func (b *SharedNetworkBackend) initializeSourceCIDRPolicy(include, exclude []net
 		return err
 	}
 	if _, err = replaceDualStackCIDRPolicy(
-		int(b.runtime.exclude_source_ipv4_map_fd),
-		int(b.runtime.exclude_source_ipv6_map_fd),
+		b.runtime.maps["shared_exclude_source_ipv4"],
+		b.runtime.maps["shared_exclude_source_ipv6"],
 		dualStackCIDRPrefixes{},
 		dualStackCIDRPrefixes{excludeIPv4, excludeIPv6},
 		"shared-network ",
@@ -74,13 +77,13 @@ func (b *SharedNetworkBackend) initializeSourceMACPolicy(include, exclude []MACA
 		return errBackendClosed
 	}
 	if err := populateSharedNetworkMACPolicy(
-		int(b.runtime.include_source_mac_map_fd),
+		b.runtime.maps["shared_include_source_mac"],
 		include,
 	); err != nil {
 		return E.Cause(err, "populate shared-network include source MAC policy")
 	}
 	if err := populateSharedNetworkMACPolicy(
-		int(b.runtime.exclude_source_mac_map_fd),
+		b.runtime.maps["shared_exclude_source_mac"],
 		exclude,
 	); err != nil {
 		return E.Cause(err, "populate shared-network exclude source MAC policy")
@@ -90,15 +93,18 @@ func (b *SharedNetworkBackend) initializeSourceMACPolicy(include, exclude []MACA
 	return b.updatePolicyFlagsLocked()
 }
 
-func populateSharedNetworkMACPolicy(mapFD int, addresses []MACAddress) error {
-	value := uint8(1)
-	for _, address := range addresses {
-		key := sharedNetworkMACKey{Address: address}
-		if err := updateMap(mapFD, unsafe.Pointer(&key), unsafe.Pointer(&value)); err != nil {
-			return err
-		}
+func populateSharedNetworkMACPolicy(mapInstance *CiliumEBPF.Map, addresses []MACAddress) error {
+	if len(addresses) == 0 {
+		return nil
 	}
-	return nil
+	keys := make([]sharedNetworkMACKey, len(addresses))
+	values := make([]uint8, len(addresses))
+	for index, address := range addresses {
+		keys[index] = sharedNetworkMACKey{Address: address}
+		values[index] = 1
+	}
+	_, err := updateMapBatch(mapInstance, keys, values, 0, &sourceMACUpdateBatchSupport)
+	return err
 }
 
 func (b *SharedNetworkBackend) UpdateBypassCIDR(prefixes []netip.Prefix) (bool, error) {
@@ -133,8 +139,8 @@ func (b *SharedNetworkBackend) UpdateCompiledBypassCIDR(policy BypassCIDRPolicy)
 	oldPrefixes := dualStackCIDRPrefixes{b.bypassIPv4CIDR, b.bypassIPv6CIDR}
 	newPrefixes := dualStackCIDRPrefixes{ipv4, ipv6}
 	changed, err := replaceDualStackCIDRPolicy(
-		b.bypassIPv4MapFD,
-		b.bypassIPv6MapFD,
+		b.bypassIPv4Map,
+		b.bypassIPv6Map,
 		oldPrefixes,
 		newPrefixes,
 		"shared-network ",
@@ -162,8 +168,8 @@ func (b *SharedNetworkBackend) UpdateCompiledBypassCIDR(policy BypassCIDRPolicy)
 		b.bypassIPv6Count = oldIPv6Count
 		b.control.Flags = oldFlags
 		rollbackErr := rollbackSharedNetworkPolicyMaps(
-			b.bypassIPv4MapFD,
-			b.bypassIPv6MapFD,
+			b.bypassIPv4Map,
+			b.bypassIPv6Map,
 			newPrefixes,
 			oldPrefixes,
 			"bypass CIDR",
@@ -204,8 +210,8 @@ func (b *SharedNetworkBackend) UpdateHostAddresses(addresses []netip.Addr) error
 	oldPrefixes := dualStackCIDRPrefixes{b.hostIPv4, b.hostIPv6}
 	newPrefixes := dualStackCIDRPrefixes{ipv4, ipv6}
 	_, err := replaceDualStackCIDRPolicy(
-		int(b.runtime.host_ipv4_map_fd),
-		int(b.runtime.host_ipv6_map_fd),
+		b.runtime.maps["shared_host_ipv4"],
+		b.runtime.maps["shared_host_ipv6"],
 		oldPrefixes,
 		newPrefixes,
 		"shared-network ",
@@ -227,8 +233,8 @@ func (b *SharedNetworkBackend) UpdateHostAddresses(addresses []netip.Addr) error
 		b.hostIPv6 = oldIPv6
 		b.control.Flags = oldFlags
 		rollbackErr := rollbackSharedNetworkPolicyMaps(
-			int(b.runtime.host_ipv4_map_fd),
-			int(b.runtime.host_ipv6_map_fd),
+			b.runtime.maps["shared_host_ipv4"],
+			b.runtime.maps["shared_host_ipv6"],
 			newPrefixes,
 			oldPrefixes,
 			"host address",
@@ -274,15 +280,15 @@ func (b *SharedNetworkBackend) SetBypassCIDRState(ipv4Count, ipv6Count int) erro
 }
 
 func rollbackSharedNetworkPolicyMaps(
-	ipv4MapFD int,
-	ipv6MapFD int,
+	ipv4Map *CiliumEBPF.Map,
+	ipv6Map *CiliumEBPF.Map,
 	current dualStackCIDRPrefixes,
 	previous dualStackCIDRPrefixes,
 	policyName string,
 ) error {
 	_, err := replaceDualStackCIDRPolicy(
-		ipv4MapFD,
-		ipv6MapFD,
+		ipv4Map,
+		ipv6Map,
 		current,
 		previous,
 		"shared-network ",
