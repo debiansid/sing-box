@@ -111,6 +111,13 @@ INLINE bool service_port(__u8 protocol, __u16 port) {
     return port == 67U || port == 68U || port == 546U || port == 547U;
 }
 
+// IKEv2 control traffic must reach the kernel IPsec stack directly. If these
+// packets are redirected into sing-box, Android reports the underlying IKE
+// network as lost and repeatedly tears down the ipsec interface.
+INLINE bool vpn_control_port(__u8 protocol, __u16 port) {
+    return protocol == UDP_VALUE && (port == 500U || port == 4500U);
+}
+
 INLINE bool ipv4_mapped(const __u32 address[4]) {
     return address[0] == 0U && address[1] == 0U && swap32(address[2]) == 0xffffU;
 }
@@ -160,6 +167,7 @@ INLINE bool base_bypass(void *ctx, const struct sb_ebpf_cgroup_control *config, 
     if (tgid_mode ? is_tgid_self(config) : is_cookie_bypassed(ctx)) return true;
     if (!protocol_selected(config, protocol)) return true;
     if (service_port(protocol, port)) return true;
+    if (vpn_control_port(protocol, port)) return true;
     if ((config->flags & SB_EBPF_CGROUP_FLAG_HIJACK_DNS) == 0U && port == 53U) return true;
     if (uid_bypassed(config)) return true;
     return false;
