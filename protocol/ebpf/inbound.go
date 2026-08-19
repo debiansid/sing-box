@@ -77,8 +77,8 @@ type Inbound struct {
 	cgroupPolicy               ECommon.CgroupPolicy
 	androidUIDOptions          *androidUIDOptions
 	localRoutes                []*localRoute
-	excludeInterface       []string
-	sharedNetworkOptions   option.EBPFSharedOptions
+	excludeInterface           []string
+	sharedNetworkOptions       option.EBPFSharedOptions
 	sharedNetworkEnabled       bool
 	sharedIPv6Mode             string
 	sharedNetworkMapCapacity   ECommon.SharedNetworkMapCapacities
@@ -164,9 +164,12 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 			return nil, err
 		}
 	}
-	excludeInterfaces, err := normalizeExcludeInterfaces(options.Local.ExcludeInterface)
-	if err != nil {
-		return nil, err
+	var excludeInterfaces []string
+	if cgroupEnabled {
+		excludeInterfaces, err = normalizeExcludeInterfaces(options.Local.ExcludeInterface)
+		if err != nil {
+			return nil, err
+		}
 	}
 	sharedNetworkIncludeMAC, err := parseSharedNetworkMACAddresses(
 		"include_mac_address",

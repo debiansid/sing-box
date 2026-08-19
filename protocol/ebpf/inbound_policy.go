@@ -40,6 +40,27 @@ func getInterfacePacketCount(interfaceName string) (rx uint64, tx uint64, err er
 	return rx, tx, nil
 }
 
+type interfacePacketCount struct {
+	rx uint64
+	tx uint64
+}
+
+func packetCountIncreased(previous, current interfacePacketCount) bool {
+	return current.rx > previous.rx || current.tx > previous.tx ||
+		(current.rx != 0 && current.rx < previous.rx) || (current.tx != 0 && current.tx < previous.tx)
+}
+
+func snapshotInterfacePacketCounts(interfaceNames []string) map[string]interfacePacketCount {
+	counts := make(map[string]interfacePacketCount, len(interfaceNames))
+	for _, interfaceName := range interfaceNames {
+		rx, tx, err := getInterfacePacketCount(interfaceName)
+		if err == nil {
+			counts[interfaceName] = interfacePacketCount{rx: rx, tx: tx}
+		}
+	}
+	return counts
+}
+
 func findActiveExcludedInterfaceNames(excludeInterfaces []string) []string {
 	if len(excludeInterfaces) == 0 {
 		return nil
@@ -100,10 +121,18 @@ func findActiveExcludedInterfaceNames(excludeInterfaces []string) []string {
 	return activeInterfaces
 }
 
-func excludedInterfaceWithTraffic(interfaceNames []string) (string, bool) {
+func excludedInterfaceWithTraffic(interfaceNames []string, baseline map[string]interfacePacketCount) (string, bool) {
 	for _, interfaceName := range interfaceNames {
 		rx, tx, err := getInterfacePacketCount(interfaceName)
-		if err == nil && (rx > 0 || tx > 1) {
+		if err != nil {
+			continue
+		}
+		previous, loaded := baseline[interfaceName]
+		if !loaded {
+			baseline[interfaceName] = interfacePacketCount{rx: rx, tx: tx}
+			continue
+		}
+		if packetCountIncreased(previous, interfacePacketCount{rx: rx, tx: tx}) {
 			return interfaceName, true
 		}
 	}
@@ -332,6 +361,7 @@ func (i *Inbound) enableVPNBypassLocked(interfaceName string) error {
 }
 
 func (i *Inbound) watchExcludedInterfaces(ctx context.Context, generation uint64, interfaceNames []string) {
+	baseline := snapshotInterfacePacketCounts(interfaceNames)
 	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()
 	for {
@@ -345,7 +375,7 @@ func (i *Inbound) watchExcludedInterfaces(ctx context.Context, generation uint64
 			i.bypassRuleSetAccess.Unlock()
 			return
 		case <-ticker.C:
-			interfaceName, active := excludedInterfaceWithTraffic(interfaceNames)
+			interfaceName, active := excludedInterfaceWithTraffic(interfaceNames, baseline)
 			if !active {
 				continue
 			}
@@ -372,6 +402,7 @@ func (i *Inbound) watchExcludedInterfaces(ctx context.Context, generation uint64
 }
 
 func (i *Inbound) InterfaceUpdated() {
+	i.udpNat.Purge()
 	i.bypassRuleSetAccess.Lock()
 
 	var activeInterfaces []string
@@ -380,26 +411,6 @@ func (i *Inbound) InterfaceUpdated() {
 	}
 
 	if len(activeInterfaces) > 0 {
-		activeIface, trafficActive := excludedInterfaceWithTraffic(activeInterfaces)
-		if trafficActive {
-			i.cancelVPNWatchLocked()
-			if !i.vpnBypassActive {
-				if err := i.enableVPNBypassLocked(activeIface); err != nil {
-					i.logger.Error("enable eBPF VPN bypass on ", activeIface, ": ", err)
-				}
-			}
-			i.bypassRuleSetAccess.Unlock()
-			i.lifecycleAccess.Lock()
-			defer i.lifecycleAccess.Unlock()
-			if err := i.refreshCgroupIPv6Availability(false); err != nil {
-				i.logger.Warn("refresh eBPF local cgroup IPv6 availability: ", err)
-			}
-			if i.sharedNetwork != nil {
-				i.sharedNetwork.InterfaceUpdated()
-			}
-			return
-		}
-
 		if !i.vpnBypassActive && i.vpnWatchCancel == nil {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			i.vpnWatchGeneration++

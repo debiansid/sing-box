@@ -286,9 +286,6 @@ func validateSharedNetworkProtocols(enabled bool, enableUDP bool, dnsMode string
 }
 
 func normalizeExcludeInterfaces(interfaces []string) ([]string, error) {
-	if len(interfaces) == 0 {
-		return nil, nil
-	}
 	seen := make(map[string]struct{}, len(interfaces)+5)
 	excludeInterfaces := make([]string, 0, len(interfaces)+5)
 	for _, raw := range interfaces {

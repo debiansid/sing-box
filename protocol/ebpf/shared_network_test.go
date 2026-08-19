@@ -93,6 +93,14 @@ func TestNormalizeSharedNetworkOptions(t *testing.T) {
 }
 
 func TestNormalizeExcludeInterfaces(t *testing.T) {
+	defaults, err := normalizeExcludeInterfaces(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(defaults) != 5 {
+		t.Fatalf("unexpected default excluded interfaces: %v", defaults)
+	}
+
 	excluded, err := normalizeExcludeInterfaces([]string{" tun0 ", "tun+", "tun+"})
 	if err != nil {
 		t.Fatal(err)
@@ -103,6 +111,21 @@ func TestNormalizeExcludeInterfaces(t *testing.T) {
 	_, err = normalizeExcludeInterfaces([]string{" "})
 	if err == nil {
 		t.Fatal("expected an empty excluded interface to be rejected")
+	}
+
+	for _, test := range []struct {
+		previous interfacePacketCount
+		current  interfacePacketCount
+		want     bool
+	}{
+		{interfacePacketCount{rx: 10, tx: 20}, interfacePacketCount{rx: 10, tx: 20}, false},
+		{interfacePacketCount{rx: 10, tx: 20}, interfacePacketCount{rx: 11, tx: 20}, true},
+		{interfacePacketCount{rx: 10, tx: 20}, interfacePacketCount{rx: 10, tx: 21}, true},
+		{interfacePacketCount{rx: 10, tx: 20}, interfacePacketCount{rx: 1, tx: 2}, true},
+	} {
+		if got := packetCountIncreased(test.previous, test.current); got != test.want {
+			t.Fatalf("packetCountIncreased(%+v, %+v) = %v, want %v", test.previous, test.current, got, test.want)
+		}
 	}
 }
 

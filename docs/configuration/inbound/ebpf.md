@@ -185,6 +185,17 @@ Capacity for local redirect, UDP flow, and socket-cookie fallback state. `0`
 uses the implementation default (currently 65536). Valid range is 0 through
 1048576. Larger values consume more locked kernel memory.
 
+#### local.exclude_interface
+
+Interfaces excluded from local cgroup socket interception. An exact name
+excludes one interface; a name ending in `+` or `*` excludes all interfaces
+with that prefix. Built-in defaults cover common VPN interfaces (`ipsec+`,
+`tun+`, `wg+`, `warp+`, and `CloudflareWARP`). An active excluded interface
+temporarily bypasses cgroup socket redirection so the VPN handshake can
+complete. This option is available in `local` and `hybrid` modes.
+In `hybrid` mode, matching interfaces are also omitted from shared TC
+attachments.
+
 ### shared
 
 Shared mode does not create a hotspot, DHCP, NAT, IPv6 RA, or IP forwarding.
@@ -199,14 +210,6 @@ appear or disappear after startup; sing-box attaches and detaches automatically.
 Do not select `lo`, an upstream interface, or a layer-3-only interface. When a
 hotspot and Wi-Fi upstream share an interface name, restrict clients with
 source CIDR or MAC policy.
-
-#### shared.exclude_interface
-
-Interfaces excluded from shared TC interception. An exact name excludes one
-interface; a name ending in `+` or `*` excludes all interfaces with that
-prefix. In `local` or `hybrid` mode, an active excluded interface is treated
-as a VPN uplink and temporarily bypasses all cgroup socket redirection so the
-VPN handshake can complete.
 
 #### shared.ipv6_mode
 

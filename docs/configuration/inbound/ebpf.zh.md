@@ -172,6 +172,14 @@ shared 数据路径的 IPv6；shared 使用独立的 `shared.ipv6_mode`。
 本机重定向、UDP flow 和 socket-cookie 回退状态的容量。`0` 使用实现默认值
 （当前为 65536）；允许范围为 `0` 到 `1048576`。增大会占用更多锁定内核内存。
 
+#### local.exclude_interface
+
+不参与本机 cgroup socket 拦截的接口。填写完整名称时排除单个接口；名称以 `+` 或
+`*` 结尾时，排除所有此前缀开头的接口。内置默认值覆盖常见 VPN 接口
+（`ipsec+`、`tun+`、`wg+`、`warp+` 和 `CloudflareWARP`）。有活动流量的排除接口会
+暂时绕过 cgroup socket 重定向，以便 VPN 握手完成。该选项可用于 `local` 和
+`hybrid` 模式；在 `hybrid` 模式下，匹配的接口也不会挂载 shared TC 程序。
+
 ### shared
 
 shared 模式不会创建热点、DHCP、NAT、IPv6 RA 或 IP 转发，这些仍由系统负责。
@@ -183,13 +191,6 @@ shared 模式不会创建热点、DHCP、NAT、IPv6 RA 或 IP 转发，这些仍
 客户端报文进入 TC ingress 的下游接口。接口可在启动后出现或消失，sing-box
 会自动挂载和卸载。不要选择 `lo`、上游接口或仅支持三层报文的接口。热点与
 Wi-Fi 上游共用接口名时，应使用源 CIDR 或 MAC 筛选客户端流量。
-
-#### shared.exclude_interface
-
-不参与 shared TC 拦截的接口。填写完整名称时排除单个接口；名称以 `+` 或 `*`
-结尾时，排除所有此前缀开头的接口。在 `local` 或 `hybrid` 模式下，有活动流量的
-排除接口会被视为 VPN 上行接口，并暂时绕过所有 cgroup socket 重定向，以便 VPN
-握手完成。
 
 #### shared.ipv6_mode
 
