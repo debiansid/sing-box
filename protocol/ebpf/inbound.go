@@ -98,7 +98,7 @@ type Inbound struct {
 	bypassRuleSetCallbacks []*list.Element[adapter.RuleSetUpdateCallback]
 	bypassRuleSetStarted   bool
 	vpnWatchCancel         context.CancelFunc
-	vpnWatchGeneration     uint64
+	vpnWatchDone           chan struct{}
 	vpnBypassActive        bool
 
 	udpClientTable      udpClientTable
