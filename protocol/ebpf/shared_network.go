@@ -102,11 +102,21 @@ func (s *sharedNetwork) Start(cgroupBackend *ECommon.CgroupBackend) error {
 	}
 	s.setSharedBackend(backend)
 	if cgroupBackend == nil {
-		if _, err = backend.UpdateBypassCIDR(s.inbound.currentBypassCIDR()); err != nil {
+		policy, compileErr := s.inbound.compileBypassCIDRPolicy(s.inbound.currentBypassCIDR())
+		if compileErr != nil {
+			return E.Errors(compileErr, s.Close())
+		}
+		updateStarted := s.inbound.debug.bypassPolicyOperationStarted()
+		_, err = backend.UpdateCompiledBypassCIDR(policy)
+		s.inbound.debug.observeBypassPolicyUpdate(updateStarted, err)
+		if err != nil {
 			return E.Errors(err, s.Close())
 		}
-	} else if err = backend.SetBypassCIDRState(s.inbound.currentBypassCIDR()); err != nil {
-		return E.Errors(err, s.Close())
+	} else {
+		ipv4Count, ipv6Count := cgroupBackend.BypassCIDRCount()
+		if err = backend.SetBypassCIDRState(ipv4Count, ipv6Count); err != nil {
+			return E.Errors(err, s.Close())
+		}
 	}
 	s.tcManager = &sharedTCManager{
 		backend:        backend,
@@ -167,9 +177,9 @@ func (s *sharedNetwork) newListener(network string, ipv6Listener bool, port uint
 }
 
 func (s *sharedNetwork) InterfaceUpdated() {
-	s.udpNat.Purge()
 	s.lifecycleAccess.RLock()
 	defer s.lifecycleAccess.RUnlock()
+	s.udpNat.Purge()
 	if manager := s.tcManager; manager != nil {
 		manager.Wake()
 	}
@@ -182,21 +192,28 @@ func (s *sharedNetwork) Close() error {
 	s.lifecycleAccess.Lock()
 	defer s.lifecycleAccess.Unlock()
 	s.stopFlowJanitor()
-	s.udpNat.Purge()
+	backend := s.takeSharedBackend()
 	if s.tcManager != nil {
 		if err := s.tcManager.Close(); err != nil {
+			s.setSharedBackend(backend)
 			return err
 		}
 		s.tcManager = nil
 	}
 	var backendErr error
-	if backend := s.sharedBackendInstance(); backend != nil {
+	if backend != nil {
 		backendErr = backend.Close()
-		if backend.IsClosed() {
-			s.setSharedBackend(nil)
+		if !backend.IsClosed() {
+			s.setSharedBackend(backend)
+			if backendErr == nil {
+				backendErr = E.New("shared-network eBPF backend remained open after close")
+			}
+			return backendErr
 		}
 	}
-	return E.Errors(backendErr, s.closeListeners())
+	listenerErr := s.closeListeners()
+	s.udpNat.Purge()
+	return E.Errors(backendErr, listenerErr)
 }
 
 func (s *sharedNetwork) closeListeners() error {
@@ -216,6 +233,14 @@ func (s *sharedNetwork) sharedBackendInstance() *ECommon.SharedNetworkBackend {
 	s.backendAccess.RLock()
 	defer s.backendAccess.RUnlock()
 	return s.sharedBackend
+}
+
+func (s *sharedNetwork) takeSharedBackend() *ECommon.SharedNetworkBackend {
+	s.backendAccess.Lock()
+	backend := s.sharedBackend
+	s.sharedBackend = nil
+	s.backendAccess.Unlock()
+	return backend
 }
 
 func (s *sharedNetwork) setSharedBackend(backend *ECommon.SharedNetworkBackend) {
@@ -251,6 +276,7 @@ func (s *sharedNetwork) runFlowJanitor(ctx context.Context, done chan<- struct{}
 	lastSweep := time.Now()
 	var lastReservationFailures uint64
 	scanInProgress := false
+	attachmentActive := s.tcManager != nil && s.tcManager.isEnabled()
 	for {
 		select {
 		case <-ctx.Done():
@@ -261,6 +287,17 @@ func (s *sharedNetwork) runFlowJanitor(ctx context.Context, done chan<- struct{}
 		backend := s.sharedBackendInstance()
 		if backend == nil {
 			return
+		}
+		if s.tcManager == nil || !s.tcManager.isEnabled() {
+			attachmentActive = false
+			pressure = false
+			belowExitRounds = 0
+			scanInProgress = false
+			continue
+		}
+		if !attachmentActive {
+			attachmentActive = true
+			lastSweep = time.Time{}
 		}
 		reservationPressure := false
 		pollStarted := time.Now()

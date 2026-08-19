@@ -102,11 +102,18 @@ func populateSharedNetworkMACPolicy(mapFD int, addresses []MACAddress) error {
 }
 
 func (b *SharedNetworkBackend) UpdateBypassCIDR(prefixes []netip.Prefix) (bool, error) {
-	ipv4, ipv6, err := compileBypassCIDRPolicy(prefixes)
+	policy, err := CompileBypassCIDRPolicy(prefixes)
 	if err != nil {
 		return false, E.Cause(err, "compile shared-network bypass CIDR policy")
 	}
-	if err = checkLPMTriePolicyCompatibility("shared-network bypass CIDR", len(ipv4)+len(ipv6)); err != nil {
+	return b.UpdateCompiledBypassCIDR(policy)
+}
+
+func (b *SharedNetworkBackend) UpdateCompiledBypassCIDR(policy BypassCIDRPolicy) (bool, error) {
+	ipv4 := policy.ipv4
+	ipv6 := policy.ipv6
+	err := checkLPMTriePolicyCompatibility("shared-network bypass CIDR", len(ipv4)+len(ipv6))
+	if err != nil {
 		return false, err
 	}
 	if len(ipv4) > maxBypassCIDRPolicyEntries || len(ipv6) > maxBypassCIDRPolicyEntries {
@@ -141,12 +148,18 @@ func (b *SharedNetworkBackend) UpdateBypassCIDR(prefixes []netip.Prefix) (bool, 
 	}
 	oldIPv4 := b.bypassIPv4CIDR
 	oldIPv6 := b.bypassIPv6CIDR
+	oldIPv4Count := b.bypassIPv4Count
+	oldIPv6Count := b.bypassIPv6Count
 	oldFlags := b.control.Flags
 	b.bypassIPv4CIDR = slices.Clone(ipv4)
 	b.bypassIPv6CIDR = slices.Clone(ipv6)
+	b.bypassIPv4Count = len(ipv4)
+	b.bypassIPv6Count = len(ipv6)
 	if err = b.updatePolicyFlagsLocked(); err != nil {
 		b.bypassIPv4CIDR = oldIPv4
 		b.bypassIPv6CIDR = oldIPv6
+		b.bypassIPv4Count = oldIPv4Count
+		b.bypassIPv6Count = oldIPv6Count
 		b.control.Flags = oldFlags
 		rollbackErr := rollbackSharedNetworkPolicyMaps(
 			b.bypassIPv4MapFD,
@@ -172,7 +185,7 @@ func (b *SharedNetworkBackend) BypassCIDRCount() (int, int) {
 	}
 	b.access.RLock()
 	defer b.access.RUnlock()
-	return len(b.bypassIPv4CIDR), len(b.bypassIPv6CIDR)
+	return b.bypassIPv4Count, b.bypassIPv6Count
 }
 
 func (b *SharedNetworkBackend) UpdateHostAddresses(addresses []netip.Addr) error {
@@ -233,30 +246,31 @@ func (b *SharedNetworkBackend) UpdateHostAddresses(addresses []netip.Addr) error
 
 // SetBypassCIDRState updates only policy presence flags when the maps are
 // owned by a cgroup backend and shared-network reuses those descriptors.
-func (b *SharedNetworkBackend) SetBypassCIDRState(prefixes []netip.Prefix) error {
+func (b *SharedNetworkBackend) SetBypassCIDRState(ipv4Count, ipv6Count int) error {
 	if b == nil {
 		return errBackendClosed
 	}
-	ipv4, ipv6, err := compileBypassCIDRPolicy(prefixes)
-	if err != nil {
-		return E.Cause(err, "compile shared-network bypass CIDR state")
+	if ipv4Count < 0 || ipv4Count > maxBypassCIDRPolicyEntries ||
+		ipv6Count < 0 || ipv6Count > maxBypassCIDRPolicyEntries {
+		return E.New("invalid shared-network bypass CIDR state")
 	}
 	b.access.Lock()
 	defer b.access.Unlock()
-	if err = b.requireUsableLocked(); err != nil {
+	if err := b.requireUsableLocked(); err != nil {
 		return err
 	}
-	oldIPv4 := b.bypassIPv4CIDR
-	oldIPv6 := b.bypassIPv6CIDR
+	oldIPv4Count := b.bypassIPv4Count
+	oldIPv6Count := b.bypassIPv6Count
 	oldFlags := b.control.Flags
-	b.bypassIPv4CIDR = slices.Clone(ipv4)
-	b.bypassIPv6CIDR = slices.Clone(ipv6)
-	if err = b.updatePolicyFlagsLocked(); err != nil {
-		b.bypassIPv4CIDR = oldIPv4
-		b.bypassIPv6CIDR = oldIPv6
+	b.bypassIPv4Count = ipv4Count
+	b.bypassIPv6Count = ipv6Count
+	if err := b.updatePolicyFlagsLocked(); err != nil {
+		b.bypassIPv4Count = oldIPv4Count
+		b.bypassIPv6Count = oldIPv6Count
 		b.control.Flags = oldFlags
+		return err
 	}
-	return err
+	return nil
 }
 
 func rollbackSharedNetworkPolicyMaps(
@@ -289,10 +303,10 @@ func (b *SharedNetworkBackend) updatePolicyFlagsLocked() error {
 	if len(b.hostIPv6) != 0 {
 		b.control.Flags |= sharedNetworkFlagHostIPv6
 	}
-	if len(b.bypassIPv4CIDR) != 0 {
+	if b.bypassIPv4Count != 0 {
 		b.control.Flags |= sharedNetworkFlagBypassIPv4
 	}
-	if len(b.bypassIPv6CIDR) != 0 {
+	if b.bypassIPv6Count != 0 {
 		b.control.Flags |= sharedNetworkFlagBypassIPv6
 	}
 	if len(b.includeSourceIPv4) != 0 || len(b.includeSourceIPv6) != 0 {

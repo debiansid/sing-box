@@ -89,6 +89,7 @@ type CgroupBackend struct {
 	health                backendHealth
 	tcpSweepAccess        sync.Mutex
 	udpRecoveryAccess     sync.Mutex
+	udpReplyTokenSequence atomic.Uint64
 	tcpSweepScratch       mapScanScratch[listenerLookupKey, originalDestinationValue]
 	tcpSweepCandidates    []tcpRedirectEntry
 	tcpSweepRemoved       uint32

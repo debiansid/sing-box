@@ -260,6 +260,19 @@ func TestSharedTCLifecycleSnapshot(t *testing.T) {
 	}
 }
 
+func TestSharedTCWaitingSkipsBackendRefresh(t *testing.T) {
+	manager := &sharedTCManager{
+		interfaces:  []string{"sbe-missing"},
+		attachments: make(map[string]*sharedTCAttachment),
+	}
+	if err := manager.reconcile(); err != nil {
+		t.Fatal(err)
+	}
+	if manager.isEnabled() {
+		t.Fatal("waiting shared-network manager is enabled")
+	}
+}
+
 func TestSharedTCAttachmentMode(t *testing.T) {
 	manager := &sharedTCManager{attachments: map[string]*sharedTCAttachment{
 		"tcx0": {tcx: &ECommon.SharedNetworkTCXAttachment{}},

@@ -183,12 +183,13 @@ func (i *Inbound) closeResources() error {
 	i.logRuntimeStatus("shutdown")
 	i.stopTCPRedirectJanitor()
 	i.resetCgroupIPv6ProbeLocked()
-	i.udpNat.Purge()
 	i.stopBypassRuleSets()
+	backend := i.takeCgroupBackend()
 	var sharedErr error
 	if i.sharedNetwork != nil {
 		sharedErr = i.sharedNetwork.Close()
 		if !i.sharedNetwork.IsClosed() {
+			i.setCgroupBackend(backend)
 			if sharedErr == nil {
 				sharedErr = E.New("shared-network eBPF backend remained open after close")
 			}
@@ -196,20 +197,21 @@ func (i *Inbound) closeResources() error {
 		}
 		i.sharedNetwork = nil
 	}
-	backend := i.cgroupBackendInstance()
 	var backendErr error
 	if backend != nil {
 		backendErr = backend.Close()
 		if !backend.IsClosed() {
+			i.setCgroupBackend(backend)
 			if backendErr == nil {
 				backendErr = E.New("eBPF backend remained open after close")
 			}
 			return backendErr
 		}
-		i.setCgroupBackend(nil)
 	}
 	i.unregisterSocketProtector()
-	return E.Errors(sharedErr, backendErr, i.closeListeners(), i.removeLocalRoutes())
+	listenerErr := i.closeListeners()
+	i.udpNat.Purge()
+	return E.Errors(sharedErr, backendErr, listenerErr, i.removeLocalRoutes())
 }
 
 func (i *Inbound) closeDebugPProf() {
@@ -230,6 +232,14 @@ func (i *Inbound) setCgroupBackend(backend *ECommon.CgroupBackend) {
 	i.cgroupBackendAccess.Lock()
 	i.cgroupBackend = backend
 	i.cgroupBackendAccess.Unlock()
+}
+
+func (i *Inbound) takeCgroupBackend() *ECommon.CgroupBackend {
+	i.cgroupBackendAccess.Lock()
+	backend := i.cgroupBackend
+	i.cgroupBackend = nil
+	i.cgroupBackendAccess.Unlock()
+	return backend
 }
 
 func (i *Inbound) redirectAddressStrings() []string {

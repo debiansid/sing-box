@@ -169,6 +169,48 @@ func TestUDPClientTableDeleteChecksGeneration(t *testing.T) {
 	}
 }
 
+func TestUDPClientTableReplyBindingChecksGeneration(t *testing.T) {
+	var table udpClientTable
+	client := netip.MustParseAddrPort("127.0.0.1:1234")
+	destination := netip.MustParseAddrPort("192.0.2.1:5000")
+	redirectAddress := netip.MustParseAddr("127.128.0.9")
+	state := table.loadOrCreate(client)
+	if _, installed := table.setReplyBinding(client, state, destination, redirectAddress); !installed {
+		t.Fatal("reply binding was not installed for the current session")
+	}
+	if binding, loaded := state.redirectBinding(destination); !loaded || binding.address != redirectAddress {
+		t.Fatalf("unexpected reply binding: %+v, loaded=%v", binding, loaded)
+	}
+	table.delete(client, state)
+	if _, installed := table.setReplyBinding(client, state, destination, redirectAddress); installed {
+		t.Fatal("reply binding resurrected a closed UDP session")
+	}
+}
+
+func TestUDPClientTableLimitsReplyAliases(t *testing.T) {
+	var table udpClientTable
+	client := netip.MustParseAddrPort("127.0.0.1:1234")
+	state := table.loadOrCreate(client)
+	for index := 0; index < udpReplyAliasLimit; index++ {
+		destination := netip.AddrPortFrom(netip.AddrFrom4([4]byte{192, 0, 2, byte(index + 1)}), 5000)
+		redirectAddress := netip.AddrFrom4([4]byte{127, 128, 0, byte(index + 1)})
+		if _, installed := table.setReplyBinding(client, state, destination, redirectAddress); !installed {
+			t.Fatalf("reply alias %d was not installed", index)
+		}
+	}
+	if _, available := state.replyTemplate(netip.MustParseAddrPort("192.0.2.100:5000"), false); available {
+		t.Fatal("reply alias limit was not enforced before reservation")
+	}
+	if _, installed := table.setReplyBinding(
+		client,
+		state,
+		netip.MustParseAddrPort("192.0.2.100:5000"),
+		netip.MustParseAddr("127.128.1.1"),
+	); installed {
+		t.Fatal("reply alias limit was not enforced during installation")
+	}
+}
+
 func TestUDPClientTableConcurrentBindings(t *testing.T) {
 	var table udpClientTable
 	client := netip.MustParseAddrPort("127.0.0.1:4321")

@@ -48,6 +48,20 @@ type ipv6CIDRLPMKey struct {
 	Address      [16]byte
 }
 
+type BypassCIDRPolicy struct {
+	ipv4 []netip.Prefix
+	ipv6 []netip.Prefix
+}
+
+func (p BypassCIDRPolicy) Count() (int, int) {
+	return len(p.ipv4), len(p.ipv6)
+}
+
+func CompileBypassCIDRPolicy(prefixes []netip.Prefix) (BypassCIDRPolicy, error) {
+	ipv4, ipv6, err := compileBypassCIDRPolicy(prefixes)
+	return BypassCIDRPolicy{ipv4: ipv4, ipv6: ipv6}, err
+}
+
 func compileUIDPolicy(policy CgroupPolicy) ([]uidLPMKey, bool, error) {
 	for name, uidRanges := range map[string][]UIDRange{
 		"include_uid": policy.IncludeUID,

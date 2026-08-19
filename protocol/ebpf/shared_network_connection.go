@@ -183,6 +183,7 @@ func (s *sharedNetwork) releaseFlow(flow *ECommon.SharedNetworkFlowHandle) {
 }
 
 type sharedPacketWriter struct {
+	debug         eBPFDebugUDPWriterState
 	sharedNetwork *sharedNetwork
 	client        netip.AddrPort
 	clientState   *udpClientState
@@ -192,10 +193,56 @@ func (w *sharedPacketWriter) WritePacket(buffer *buf.Buffer, destination M.Socks
 	defer buffer.Release()
 	w.sharedNetwork.lifecycleAccess.RLock()
 	defer w.sharedNetwork.lifecycleAccess.RUnlock()
-	binding, loaded := w.clientState.redirectBinding(destination.AddrPort())
+	destinationAddress := destination.AddrPort()
+	binding, loaded := w.clientState.redirectBinding(destinationAddress)
 	if !loaded {
 		w.sharedNetwork.inbound.diagnostics.sharedUDPBindingMiss.Add(1)
-		return E.New("missing shared-network UDP token for ", destination)
+		var err error
+		binding, err = w.reserveReplyBinding(destinationAddress)
+		if err != nil {
+			w.sharedNetwork.inbound.debug.observeUDPBindingMiss(
+				&w.debug,
+				true,
+				w.sharedNetwork.inbound.logger,
+				&w.sharedNetwork.udpClientTable,
+				w.client,
+				destinationAddress,
+				w.clientState,
+			)
+			return E.Cause(err, "recover missing shared-network UDP token for ", destination)
+		}
+		w.sharedNetwork.inbound.diagnostics.sharedUDPBindingRecovery.Add(1)
 	}
 	return w.sharedNetwork.listeners.writeUDP(buffer.Bytes(), binding.packetInfo, w.client, binding.address)
+}
+
+func (w *sharedPacketWriter) reserveReplyBinding(destination netip.AddrPort) (udpRedirectBinding, error) {
+	template, loaded := w.clientState.replyTemplate(destination, true)
+	if !loaded {
+		return udpRedirectBinding{}, E.New("shared-network UDP reply alias limit reached or base flow unavailable")
+	}
+	backend := w.sharedNetwork.sharedBackendInstance()
+	if backend == nil {
+		return udpRedirectBinding{}, E.New("shared-network eBPF backend is closed")
+	}
+	sourceMAC := w.clientState.sourceMACAddress()
+	redirectAddress, flow, err := backend.ReserveUDPReplyFlow(template.sharedFlow, destination, sourceMAC)
+	if err != nil {
+		return udpRedirectBinding{}, err
+	}
+	released, installed := w.sharedNetwork.udpClientTable.setSharedReplyBinding(
+		w.client,
+		w.clientState,
+		ECommon.OriginalDestination{Destination: destination, SourceMAC: sourceMAC},
+		redirectAddress,
+		flow,
+	)
+	if !installed {
+		released = append(released, udpRedirectRelease{sharedFlow: flow})
+	}
+	w.sharedNetwork.releaseFlows(released)
+	if binding, loaded := w.clientState.redirectBinding(destination); loaded {
+		return binding, nil
+	}
+	return udpRedirectBinding{}, E.New("shared-network UDP session closed or reply alias was rejected")
 }

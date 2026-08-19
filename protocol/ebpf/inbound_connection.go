@@ -200,9 +200,19 @@ func (i *Inbound) deleteUDPRedirects(redirectAddresses []netip.Addr) {
 	if backend == nil {
 		return
 	}
+	i.deleteUDPRedirectsWithBackend(backend, redirectAddresses)
+}
+
+func (i *Inbound) deleteUDPRedirectsWithBackend(
+	backend *ECommon.CgroupBackend,
+	redirectAddresses []netip.Addr,
+) {
 	for _, redirectAddress := range redirectAddresses {
 		redirectDestination := netip.AddrPortFrom(redirectAddress, i.listeners.selectedPort())
 		if err := backend.DeleteRedirect(ECommon.ProtocolUDP, redirectDestination); err != nil {
+			if errors.Is(err, unix.EBADF) && i.cgroupBackendInstance() != backend {
+				continue
+			}
 			i.diagnostics.localUDPCleanupError.Add(1)
 			i.udpWarnings.cleanup.warn(i.logger, "delete UDP redirect mapping for ", redirectDestination, ": ", err)
 		}
@@ -235,6 +245,7 @@ func (i *Inbound) socketControl(ipv6Listener bool) control.Func {
 }
 
 type udpPacketWriter struct {
+	debug       eBPFDebugUDPWriterState
 	inbound     *Inbound
 	client      netip.AddrPort
 	clientState *udpClientState
@@ -242,12 +253,55 @@ type udpPacketWriter struct {
 
 func (w *udpPacketWriter) WritePacket(buffer *buf.Buffer, destination M.Socksaddr) error {
 	defer buffer.Release()
-	binding, loaded := w.clientState.redirectBinding(destination.AddrPort())
+	destinationAddress := destination.AddrPort()
+	binding, loaded := w.clientState.redirectBinding(destinationAddress)
 	if !loaded {
 		w.inbound.diagnostics.localUDPBindingMiss.Add(1)
-		return E.New("missing UDP redirect binding for ", destination)
+		var err error
+		binding, err = w.reserveReplyBinding(destinationAddress)
+		if err != nil {
+			w.inbound.debug.observeUDPBindingMiss(
+				&w.debug,
+				false,
+				w.inbound.logger,
+				&w.inbound.udpClientTable,
+				w.client,
+				destinationAddress,
+				w.clientState,
+			)
+			return E.Cause(err, "recover missing UDP redirect binding for ", destination)
+		}
+		w.inbound.diagnostics.localUDPBindingRecovery.Add(1)
 	}
 	return w.inbound.listeners.writeUDP(buffer.Bytes(), binding.packetInfo, w.client, binding.address)
+}
+
+func (w *udpPacketWriter) reserveReplyBinding(destination netip.AddrPort) (udpRedirectBinding, error) {
+	if _, available := w.clientState.replyTemplate(destination, false); !available {
+		return udpRedirectBinding{}, E.New("UDP reply alias limit reached or address family unavailable")
+	}
+	backend := w.inbound.cgroupBackendInstance()
+	if backend == nil {
+		return udpRedirectBinding{}, E.New("eBPF backend is closed")
+	}
+	redirectAddress, err := backend.ReserveUDPReplyRedirect(destination, w.inbound.listeners.selectedPort())
+	if err != nil {
+		return udpRedirectBinding{}, err
+	}
+	released, installed := w.inbound.udpClientTable.setReplyBinding(
+		w.client,
+		w.clientState,
+		destination,
+		redirectAddress,
+	)
+	if !installed {
+		released = append(released, redirectAddress)
+	}
+	w.inbound.deleteUDPRedirects(released)
+	if binding, loaded := w.clientState.redirectBinding(destination); loaded {
+		return binding, nil
+	}
+	return udpRedirectBinding{}, E.New("UDP session closed or reply alias was rejected")
 }
 
 func redirectAddressFromOOB(oob []byte) (netip.Addr, error) {

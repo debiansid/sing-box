@@ -137,13 +137,6 @@ func (m *sharedTCManager) reconcile() (err error) {
 			err = E.Errors(err, E.Cause(disableErr, "disable shared-network after reconciliation failure"))
 		}
 	}()
-	hostAddresses, err := sharedHostAddresses()
-	if err != nil {
-		return err
-	}
-	if err = m.backend.UpdateHostAddresses(hostAddresses); err != nil {
-		return err
-	}
 	desired := make(map[string]netlink.Link, len(m.interfaces))
 	for _, interfaceName := range m.interfaces {
 		link, linkErr := netlink.LinkByName(interfaceName)
@@ -157,6 +150,23 @@ func (m *sharedTCManager) reconcile() (err error) {
 			return linkErr
 		}
 		desired[interfaceName] = link
+	}
+	if len(desired) == 0 {
+		m.access.Lock()
+		if len(m.attachments) == 0 {
+			err = m.updateEnabledLocked(false)
+			m.access.Unlock()
+			return err
+		}
+		m.access.Unlock()
+	}
+
+	hostAddresses, err := sharedHostAddresses()
+	if err != nil {
+		return err
+	}
+	if err = m.backend.UpdateHostAddresses(hostAddresses); err != nil {
+		return err
 	}
 
 	m.access.Lock()
@@ -203,6 +213,16 @@ func (m *sharedTCManager) reconcile() (err error) {
 		m.logger.Debug("eBPF shared-network attached to ", interfaceName, " (ifindex=", link.Attrs().Index, ")")
 	}
 	return m.updateEnabledLocked(len(m.attachments) > 0)
+}
+
+func (m *sharedTCManager) isEnabled() bool {
+	if m == nil {
+		return false
+	}
+	m.access.Lock()
+	enabled := m.enabled
+	m.access.Unlock()
+	return enabled
 }
 
 func isSharedNetworkLinkNotFound(err error) bool {

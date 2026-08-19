@@ -16,6 +16,7 @@ func TestEBPFRuntimeStatusJSON(t *testing.T) {
 	}
 	inbound.diagnostics.localUDPRedirectRecovery.Add(2)
 	inbound.diagnostics.localUDPConnectedRecovery.Add(3)
+	inbound.diagnostics.localUDPBindingRecovery.Add(4)
 	encoded, err := json.Marshal(inbound.runtimeStatus("test"))
 	if err != nil {
 		t.Fatal(err)
@@ -27,6 +28,7 @@ func TestEBPFRuntimeStatusJSON(t *testing.T) {
 			Local struct {
 				UDPRedirectRecovery  uint64 `json:"udp_redirect_recovery"`
 				UDPConnectedRecovery uint64 `json:"udp_connected_recovery"`
+				UDPBindingRecovery   uint64 `json:"udp_binding_recovery"`
 			} `json:"local"`
 		} `json:"diagnostics"`
 	}
@@ -35,7 +37,8 @@ func TestEBPFRuntimeStatusJSON(t *testing.T) {
 	}
 	if decoded.Mode != ebpfModeHybrid || decoded.Phase != "test" ||
 		decoded.Diagnostics.Local.UDPRedirectRecovery != 2 ||
-		decoded.Diagnostics.Local.UDPConnectedRecovery != 3 {
+		decoded.Diagnostics.Local.UDPConnectedRecovery != 3 ||
+		decoded.Diagnostics.Local.UDPBindingRecovery != 4 {
 		t.Fatalf("unexpected runtime status: %+v", decoded)
 	}
 }

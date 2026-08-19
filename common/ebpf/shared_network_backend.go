@@ -50,6 +50,7 @@ type SharedNetworkBackend struct {
 	access              sync.RWMutex
 	health              backendHealth
 	flowAccess          sync.Mutex
+	replyTokenSequence  atomic.Uint64
 	flowReferences      map[SharedNetworkFlowHandle]uint32
 	flowSweepAccess     sync.Mutex
 	flowSweepScratch    mapScanScratch[sharedNetworkOriginalKey, sharedNetworkTokenValue]
@@ -68,6 +69,8 @@ type SharedNetworkBackend struct {
 	bypassIPv6MapFD     int
 	bypassIPv4CIDR      []netip.Prefix
 	bypassIPv6CIDR      []netip.Prefix
+	bypassIPv4Count     int
+	bypassIPv6Count     int
 	includeSourceIPv4   []netip.Prefix
 	includeSourceIPv6   []netip.Prefix
 	excludeSourceIPv4   []netip.Prefix
@@ -95,6 +98,10 @@ func PrepareSharedNetwork(cgroupBackend *CgroupBackend, config SharedNetworkConf
 		if err := validateMapCapacity(name, capacity); err != nil {
 			return nil, err
 		}
+	}
+	if len(config.IncludeSourceMAC) > maxSharedSourceMACPolicyEntries ||
+		len(config.ExcludeSourceMAC) > maxSharedSourceMACPolicyEntries {
+		return nil, E.New("shared-network source MAC policy exceeds eBPF map capacity")
 	}
 	if config.ListenerPort == 0 {
 		return nil, E.New("missing shared-network listener port")
@@ -145,7 +152,14 @@ func PrepareSharedNetwork(cgroupBackend *CgroupBackend, config SharedNetworkConf
 		bypassIPv4Map = cgroupBackend.runtime.maps["cgroup_bypass_ipv4"]
 		bypassIPv6Map = cgroupBackend.runtime.maps["cgroup_bypass_ipv6"]
 	}
-	err = prepareSharedNetworkRuntime(runtimeState, config.MapCapacity, bypassIPv4Map, bypassIPv6Map)
+	err = prepareSharedNetworkRuntime(
+		runtimeState,
+		config.MapCapacity,
+		len(config.IncludeSourceMAC),
+		len(config.ExcludeSourceMAC),
+		bypassIPv4Map,
+		bypassIPv6Map,
+	)
 	if cgroupBackend != nil {
 		cgroupBackend.access.RUnlock()
 	}
@@ -233,6 +247,8 @@ func PrepareSharedNetwork(cgroupBackend *CgroupBackend, config SharedNetworkConf
 func prepareSharedNetworkRuntime(
 	runtimeState *sharedNetworkRuntime,
 	capacity SharedNetworkMapCapacities,
+	includeSourceMACEntries int,
+	excludeSourceMACEntries int,
 	bypassIPv4Map *CiliumEBPF.Map,
 	bypassIPv6Map *CiliumEBPF.Map,
 ) error {
@@ -251,8 +267,8 @@ func prepareSharedNetworkRuntime(
 		"shared_include_source_ipv6": {name: "sb_sh_inc6", mapType: CiliumEBPF.LPMTrie, maxEntries: maxSharedSourceCIDRPolicyEntries, flags: bpfFlagNoPrealloc},
 		"shared_exclude_source_ipv4": {name: "sb_sh_exc4", mapType: CiliumEBPF.LPMTrie, maxEntries: maxSharedSourceCIDRPolicyEntries, flags: bpfFlagNoPrealloc},
 		"shared_exclude_source_ipv6": {name: "sb_sh_exc6", mapType: CiliumEBPF.LPMTrie, maxEntries: maxSharedSourceCIDRPolicyEntries, flags: bpfFlagNoPrealloc},
-		"shared_include_source_mac":  {name: "sb_sh_inmac", mapType: CiliumEBPF.Hash, maxEntries: maxSharedSourceMACPolicyEntries},
-		"shared_exclude_source_mac":  {name: "sb_sh_exmac", mapType: CiliumEBPF.Hash, maxEntries: maxSharedSourceMACPolicyEntries},
+		"shared_include_source_mac":  {name: "sb_sh_inmac", mapType: CiliumEBPF.Hash, maxEntries: sharedSourceMACMapCapacity(includeSourceMACEntries)},
+		"shared_exclude_source_mac":  {name: "sb_sh_exmac", mapType: CiliumEBPF.Hash, maxEntries: sharedSourceMACMapCapacity(excludeSourceMACEntries)},
 		"shared_scratch":             {name: "sb_sh_scratch", mapType: CiliumEBPF.PerCPUArray, maxEntries: 1},
 	})
 	if err != nil {
@@ -305,6 +321,13 @@ func prepareSharedNetworkRuntime(
 	runtimeState.ingress_prog_fd = programs[sharedNetworkProgramIngress].FD()
 	runtimeState.egress_prog_fd = programs[sharedNetworkProgramEgress].FD()
 	return nil
+}
+
+func sharedSourceMACMapCapacity(entries int) uint32 {
+	if entries <= 0 {
+		return 1
+	}
+	return uint32(entries)
 }
 
 func createSharedBypassMap(runtimeState *sharedNetworkRuntime, objectName string, kernelName string) error {

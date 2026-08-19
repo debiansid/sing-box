@@ -7,7 +7,9 @@ import (
 	"slices"
 
 	"github.com/sagernet/sing-box/adapter"
+	ECommon "github.com/sagernet/sing-box/common/ebpf"
 	"github.com/sagernet/sing/common/control"
+	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/x/list"
 )
 
@@ -26,7 +28,7 @@ func (i *Inbound) startBypassRuleSets() error {
 		)
 	}
 	i.bypassRuleSetStarted = true
-	updated, err := i.refreshBypassRuleSetsLocked(true, true)
+	updated, err := i.refreshBypassRuleSetsLocked(true, true, true)
 	if err != nil {
 		i.stopBypassRuleSetsLocked()
 		return err
@@ -54,6 +56,7 @@ func (i *Inbound) stopBypassRuleSetsLocked() {
 		ruleSet.DecRef()
 	}
 	i.bypassRuleSetCallbacks = nil
+	i.bypassRuleSetCIDR = nil
 	i.bypassRuleSetStarted = false
 }
 
@@ -63,7 +66,7 @@ func (i *Inbound) updateBypassRuleSet(adapter.RuleSet) {
 	if !i.bypassRuleSetStarted {
 		return
 	}
-	updated, err := i.refreshBypassRuleSetsLocked(false, true)
+	updated, err := i.refreshBypassRuleSetsLocked(true, false, true)
 	if err != nil {
 		i.logger.Error("refresh eBPF bypass_rule_set: ", err)
 		return
@@ -73,32 +76,40 @@ func (i *Inbound) updateBypassRuleSet(adapter.RuleSet) {
 	}
 }
 
-func (i *Inbound) refreshBypassRuleSetsLocked(warnEmpty bool, logRuleSetCount bool) (bool, error) {
-	var prefixes []netip.Prefix
-	for _, ruleSet := range i.bypassRuleSet {
-		ipSets := ruleSet.ExtractIPSet()
-		if warnEmpty && len(ipSets) == 0 {
-			i.logger.Warn("bypass_rule_set: no destination IP CIDR rules found in rule-set: ", ruleSet.Name())
+func (i *Inbound) refreshBypassRuleSetsLocked(
+	extractRuleSets bool,
+	warnEmpty bool,
+	logRuleSetCount bool,
+) (bool, error) {
+	if extractRuleSets {
+		var ruleSetPrefixes []netip.Prefix
+		for _, ruleSet := range i.bypassRuleSet {
+			ipSets := ruleSet.ExtractIPSet()
+			if warnEmpty && len(ipSets) == 0 {
+				i.logger.Warn("bypass_rule_set: no destination IP CIDR rules found in rule-set: ", ruleSet.Name())
+			}
+			var cidrCount int
+			for _, ipSet := range ipSets {
+				prefixes := ipSet.Prefixes()
+				ruleSetPrefixes = append(ruleSetPrefixes, prefixes...)
+				cidrCount += len(prefixes)
+			}
+			if logRuleSetCount {
+				i.logger.Debug(
+					"extracted eBPF bypass CIDRs from rule-set: tag=", ruleSet.Name(),
+					", count=", cidrCount,
+				)
+			}
 		}
-		var cidrCount int
-		for _, ipSet := range ipSets {
-			ruleSetPrefixes := ipSet.Prefixes()
-			prefixes = append(prefixes, ruleSetPrefixes...)
-			cidrCount += len(ruleSetPrefixes)
-		}
-		if logRuleSetCount {
-			i.logger.Debug(
-				"extracted eBPF bypass CIDRs from rule-set: tag=", ruleSet.Name(),
-				", count=", cidrCount,
+		i.bypassRuleSetCIDR = ruleSetPrefixes
+		if conflicts := i.fakeIPBypassConflictCount(ruleSetPrefixes); conflicts > 0 && logRuleSetCount {
+			i.logger.Warn(
+				"eBPF FakeIP force interception overrides bypass_rule_set CIDRs: overlaps=",
+				conflicts,
 			)
 		}
 	}
-	if conflicts := i.fakeIPBypassConflictCount(prefixes); conflicts > 0 && logRuleSetCount {
-		i.logger.Warn(
-			"eBPF FakeIP force interception overrides bypass_rule_set CIDRs: overlaps=",
-			conflicts,
-		)
-	}
+	prefixes := slices.Clone(i.bypassRuleSetCIDR)
 	backend := i.cgroupBackendInstance()
 	if backend != nil {
 		hostAddresses, hostBypassPrefixes := i.partitionLocalHostPrefixes(i.localInterfacePrefixes())
@@ -106,13 +117,20 @@ func (i *Inbound) refreshBypassRuleSetsLocked(warnEmpty bool, logRuleSetCount bo
 		if err := backend.UpdateHostAddresses(hostAddresses); err != nil {
 			return false, err
 		}
-		updated, err := backend.UpdateBypassCIDR(prefixes)
+		policy, err := i.compileBypassCIDRPolicy(prefixes)
+		if err != nil {
+			return false, err
+		}
+		updateStarted := i.debug.bypassPolicyOperationStarted()
+		updated, err := backend.UpdateCompiledBypassCIDR(policy)
+		i.debug.observeBypassPolicyUpdate(updateStarted, err)
 		if err != nil {
 			return false, err
 		}
 		if i.sharedNetwork != nil {
 			if sharedBackend := i.sharedNetwork.sharedBackendInstance(); sharedBackend != nil {
-				if err = sharedBackend.SetBypassCIDRState(prefixes); err != nil {
+				ipv4Count, ipv6Count := backend.BypassCIDRCount()
+				if err = sharedBackend.SetBypassCIDRState(ipv4Count, ipv6Count); err != nil {
 					return false, err
 				}
 			}
@@ -122,7 +140,13 @@ func (i *Inbound) refreshBypassRuleSetsLocked(warnEmpty bool, logRuleSetCount bo
 	}
 	if i.sharedNetwork != nil {
 		if sharedBackend := i.sharedNetwork.sharedBackendInstance(); sharedBackend != nil {
-			updated, err := sharedBackend.UpdateBypassCIDR(prefixes)
+			policy, err := i.compileBypassCIDRPolicy(prefixes)
+			if err != nil {
+				return false, err
+			}
+			updateStarted := i.debug.bypassPolicyOperationStarted()
+			updated, err := sharedBackend.UpdateCompiledBypassCIDR(policy)
+			i.debug.observeBypassPolicyUpdate(updateStarted, err)
 			if err != nil {
 				return false, err
 			}
@@ -133,6 +157,16 @@ func (i *Inbound) refreshBypassRuleSetsLocked(warnEmpty bool, logRuleSetCount bo
 	updated := !slices.Equal(i.bypassCIDR, prefixes)
 	i.bypassCIDR = slices.Clone(prefixes)
 	return updated, nil
+}
+
+func (i *Inbound) compileBypassCIDRPolicy(prefixes []netip.Prefix) (ECommon.BypassCIDRPolicy, error) {
+	started := i.debug.bypassPolicyOperationStarted()
+	policy, err := ECommon.CompileBypassCIDRPolicy(prefixes)
+	i.debug.observeBypassPolicyCompile(started, len(prefixes), policy, err)
+	if err != nil {
+		return policy, E.Cause(err, "compile eBPF bypass CIDR policy")
+	}
+	return policy, nil
 }
 
 func (i *Inbound) partitionLocalHostPrefixes(prefixes []netip.Prefix) ([]netip.Addr, []netip.Prefix) {
@@ -205,7 +239,7 @@ func (i *Inbound) InterfaceUpdated() {
 	i.udpNat.Purge()
 	i.bypassRuleSetAccess.Lock()
 	if i.bypassRuleSetStarted {
-		updated, err := i.refreshBypassRuleSetsLocked(false, false)
+		updated, err := i.refreshBypassRuleSetsLocked(false, false, false)
 		if err != nil {
 			i.logger.Error("refresh eBPF local interface bypass: ", err)
 		} else if updated {

@@ -57,11 +57,18 @@ func populateUIDPolicyMap(mapFD int, entries []uidLPMKey) error {
 }
 
 func (b *CgroupBackend) UpdateBypassCIDR(prefixes []netip.Prefix) (bool, error) {
-	ipv4Prefixes, ipv6Prefixes, err := compileBypassCIDRPolicy(prefixes)
+	policy, err := CompileBypassCIDRPolicy(prefixes)
 	if err != nil {
 		return false, E.Cause(err, "compile bypass CIDR policy")
 	}
-	if err = checkLPMTriePolicyCompatibility("bypass CIDR", len(ipv4Prefixes)+len(ipv6Prefixes)); err != nil {
+	return b.UpdateCompiledBypassCIDR(policy)
+}
+
+func (b *CgroupBackend) UpdateCompiledBypassCIDR(policy BypassCIDRPolicy) (bool, error) {
+	ipv4Prefixes := policy.ipv4
+	ipv6Prefixes := policy.ipv6
+	err := checkLPMTriePolicyCompatibility("bypass CIDR", len(ipv4Prefixes)+len(ipv6Prefixes))
+	if err != nil {
 		return false, err
 	}
 	if len(ipv4Prefixes) > maxBypassCIDRPolicyEntries {
