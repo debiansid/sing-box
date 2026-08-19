@@ -175,9 +175,8 @@ shared 数据路径的 IPv6；shared 使用独立的 `shared.ipv6_mode`。
 #### local.exclude_interface
 
 不参与本机 cgroup socket 拦截的接口。填写完整名称时排除单个接口；名称以 `+` 或
-`*` 结尾时，排除所有此前缀开头的接口。内置默认值覆盖常见 VPN 接口
-（`ipsec+`、`tun+`、`wg+`、`warp+` 和 `CloudflareWARP`）。有活动流量的排除接口会
-暂时绕过 cgroup socket 重定向，以便 VPN 握手完成。该选项可用于 `local` 和
+`*` 结尾时，排除所有此前缀开头的接口。未配置时，内置默认值为 `tun+` 和 `ipsec+`。
+有活动流量的排除接口会暂时绕过 cgroup socket 重定向，以便 VPN 握手完成。该选项可用于 `local` 和
 `hybrid` 模式；在 `hybrid` 模式下，匹配的接口也不会挂载 shared TC 程序。
 
 ### shared

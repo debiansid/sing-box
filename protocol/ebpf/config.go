@@ -285,9 +285,11 @@ func validateSharedNetworkProtocols(enabled bool, enableUDP bool, dnsMode string
 	return nil
 }
 
+var defaultExcludeInterfacePatterns = [...]string{"tun+", "ipsec+"}
+
 func normalizeExcludeInterfaces(interfaces []string) ([]string, error) {
-	seen := make(map[string]struct{}, len(interfaces)+5)
-	excludeInterfaces := make([]string, 0, len(interfaces)+5)
+	seen := make(map[string]struct{}, len(interfaces)+len(defaultExcludeInterfacePatterns))
+	excludeInterfaces := make([]string, 0, len(interfaces)+len(defaultExcludeInterfacePatterns))
 	for _, raw := range interfaces {
 		interfaceName := strings.TrimSpace(raw)
 		if interfaceName == "" {
@@ -299,8 +301,7 @@ func normalizeExcludeInterfaces(interfaces []string) ([]string, error) {
 		seen[interfaceName] = struct{}{}
 		excludeInterfaces = append(excludeInterfaces, interfaceName)
 	}
-	defaultPatterns := []string{"ipsec+", "tun+", "wg+", "warp+", "CloudflareWARP"}
-	for _, pattern := range defaultPatterns {
+	for _, pattern := range defaultExcludeInterfacePatterns {
 		if _, loaded := seen[pattern]; !loaded {
 			seen[pattern] = struct{}{}
 			excludeInterfaces = append(excludeInterfaces, pattern)

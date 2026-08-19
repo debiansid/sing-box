@@ -189,8 +189,8 @@ uses the implementation default (currently 65536). Valid range is 0 through
 
 Interfaces excluded from local cgroup socket interception. An exact name
 excludes one interface; a name ending in `+` or `*` excludes all interfaces
-with that prefix. Built-in defaults cover common VPN interfaces (`ipsec+`,
-`tun+`, `wg+`, `warp+`, and `CloudflareWARP`). An active excluded interface
+with that prefix. When omitted, the built-in defaults are `tun+` and `ipsec+`.
+An active excluded interface
 temporarily bypasses cgroup socket redirection so the VPN handshake can
 complete. This option is available in `local` and `hybrid` modes.
 In `hybrid` mode, matching interfaces are also omitted from shared TC

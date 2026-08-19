@@ -97,15 +97,20 @@ func TestNormalizeExcludeInterfaces(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(defaults) != 5 {
+	if len(defaults) != len(defaultExcludeInterfacePatterns) {
 		t.Fatalf("unexpected default excluded interfaces: %v", defaults)
+	}
+	for index, pattern := range defaultExcludeInterfacePatterns {
+		if defaults[index] != pattern {
+			t.Fatalf("unexpected default excluded interfaces: %v", defaults)
+		}
 	}
 
 	excluded, err := normalizeExcludeInterfaces([]string{" tun0 ", "tun+", "tun+"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(excluded) < 2 || excluded[0] != "tun0" || excluded[1] != "tun+" {
+	if len(excluded) != 3 || excluded[0] != "tun0" || excluded[1] != "tun+" || excluded[2] != "ipsec+" {
 		t.Fatalf("unexpected excluded interfaces: %v", excluded)
 	}
 	_, err = normalizeExcludeInterfaces([]string{" "})
