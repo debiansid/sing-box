@@ -183,7 +183,7 @@ func TestNormalizeSharedIPv6Mode(t *testing.T) {
 }
 
 func TestRequiresIPv6Redirect(t *testing.T) {
-	for _, test := range []struct {
+	tests := []struct {
 		name       string
 		inbound    Inbound
 		required   bool
@@ -225,7 +225,9 @@ func TestRequiresIPv6Redirect(t *testing.T) {
 			required:   true,
 			sharedOnly: true,
 		},
-	} {
+	}
+	for index := range tests {
+		test := &tests[index]
 		t.Run(test.name, func(t *testing.T) {
 			if required := test.inbound.requiresIPv6Redirect(); required != test.required {
 				t.Fatalf("unexpected IPv6 redirect requirement: %v", required)

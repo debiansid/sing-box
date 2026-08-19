@@ -524,12 +524,8 @@ func prepareSharedNetworkProgramLoad(t *testing.T, cgroupBackend *CgroupBackend,
 		RedirectIPv6:         netip.MustParsePrefix("fd53:696e:672d:626f::/64"),
 		IncludeSourceMAC:     []MACAddress{{0x02, 0x00, 0x00, 0x00, 0x00, 0x01}},
 		ExcludeSourceMAC:     []MACAddress{{0x02, 0x00, 0x00, 0x00, 0x00, 0x02}},
-		MapCapacity: SharedNetworkMapCapacities{
-			Proxy:    SharedNetworkMapCapacity,
-			Bypass:   SharedNetworkMapCapacity,
-			Fragment: SharedNetworkMapCapacity,
-		},
-		UDPTimeout: 5 * time.Minute,
+		MapCapacity:          DefaultSharedNetworkMapCapacities(),
+		UDPTimeout:           5 * time.Minute,
 	})
 	if err != nil {
 		t.Fatal(err)
