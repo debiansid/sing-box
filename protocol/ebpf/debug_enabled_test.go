@@ -4,8 +4,6 @@ package ebpf
 
 import (
 	"errors"
-	"net/http"
-	"net/http/httptest"
 	"net/netip"
 	"testing"
 	"time"
@@ -58,21 +56,5 @@ func TestEBPFDebugStateSnapshot(t *testing.T) {
 		snapshot.UDPBindingMiss.Shared.ConnectedPackets != 1 ||
 		snapshot.UDPBindingMiss.Shared.ConnectedSessions != 1 {
 		t.Fatalf("unexpected UDP binding miss snapshot: %+v", snapshot.UDPBindingMiss)
-	}
-}
-
-func TestEBPFDebugPProfMux(t *testing.T) {
-	request := httptest.NewRequest(http.MethodGet, "/debug/pprof/goroutine?debug=1", nil)
-	response := httptest.NewRecorder()
-	newEBPFDebugPProfMux().ServeHTTP(response, request)
-	if response.Code != http.StatusOK || response.Body.Len() == 0 {
-		t.Fatalf("unexpected pprof response: status=%d length=%d", response.Code, response.Body.Len())
-	}
-}
-
-func TestEBPFDebugPProfRejectsInvalidPort(t *testing.T) {
-	t.Setenv(ebpfDebugPProfPortEnv, "invalid")
-	if release, err := acquireEBPFDebugPProf(nil); err == nil || release != nil {
-		t.Fatalf("unexpected pprof result: release=%v err=%v", release != nil, err)
 	}
 }

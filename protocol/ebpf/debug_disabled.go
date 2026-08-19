@@ -49,6 +49,8 @@ func ebpfRuntimeStatusReporterEnabled(logger log.ContextLogger) bool {
 	return ebpfDebugLoggingEnabled(logger)
 }
 
-func acquireEBPFDebugPProf(logger log.ContextLogger) (func(), error) { return nil, nil }
-
 func logEBPFDebugBuild(logger log.ContextLogger) {}
+
+func (i *Inbound) enableProgramRuntimeStats() {}
+
+func (i *Inbound) disableProgramRuntimeStats() error { return nil }

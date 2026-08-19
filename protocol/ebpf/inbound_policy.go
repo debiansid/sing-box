@@ -68,7 +68,7 @@ func (i *Inbound) updateBypassRuleSet(adapter.RuleSet) {
 	}
 	updated, err := i.refreshBypassRuleSetsLocked(true, false, true)
 	if err != nil {
-		i.logger.Error("refresh eBPF bypass_rule_set: ", err)
+		i.policyWarnings.warn(i.logger, "refresh eBPF bypass_rule_set; keeping previous policy: ", err)
 		return
 	}
 	if updated {
@@ -88,20 +88,18 @@ func (i *Inbound) refreshBypassRuleSetsLocked(
 			if warnEmpty && len(ipSets) == 0 {
 				i.logger.Warn("bypass_rule_set: no destination IP CIDR rules found in rule-set: ", ruleSet.Name())
 			}
-			var cidrCount int
 			for _, ipSet := range ipSets {
 				prefixes := ipSet.Prefixes()
 				ruleSetPrefixes = append(ruleSetPrefixes, prefixes...)
-				cidrCount += len(prefixes)
-			}
-			if logRuleSetCount {
-				i.logger.Debug(
-					"extracted eBPF bypass CIDRs from rule-set: tag=", ruleSet.Name(),
-					", count=", cidrCount,
-				)
 			}
 		}
 		i.bypassRuleSetCIDR = ruleSetPrefixes
+		if logRuleSetCount {
+			i.logger.Debug(
+				"extracted eBPF bypass CIDRs: rule_sets=", len(i.bypassRuleSet),
+				", raw_prefixes=", len(ruleSetPrefixes),
+			)
+		}
 		if conflicts := i.fakeIPBypassConflictCount(ruleSetPrefixes); conflicts > 0 && logRuleSetCount {
 			i.logger.Warn(
 				"eBPF FakeIP force interception overrides bypass_rule_set CIDRs: overlaps=",
@@ -241,7 +239,7 @@ func (i *Inbound) InterfaceUpdated() {
 	if i.bypassRuleSetStarted {
 		updated, err := i.refreshBypassRuleSetsLocked(false, false, false)
 		if err != nil {
-			i.logger.Error("refresh eBPF local interface bypass: ", err)
+			i.policyWarnings.warn(i.logger, "refresh eBPF local interface bypass; keeping previous policy: ", err)
 		} else if updated {
 			i.logBypassCIDRUpdate()
 		}
@@ -250,7 +248,7 @@ func (i *Inbound) InterfaceUpdated() {
 	i.lifecycleAccess.Lock()
 	defer i.lifecycleAccess.Unlock()
 	if err := i.refreshCgroupIPv6Availability(false); err != nil {
-		i.logger.Warn("refresh eBPF local cgroup IPv6 availability: ", err)
+		i.ipv6Warnings.warn(i.logger, "refresh eBPF local cgroup IPv6 availability: ", err)
 	}
 	if i.sharedNetwork != nil {
 		i.sharedNetwork.InterfaceUpdated()

@@ -101,13 +101,16 @@ type Inbound struct {
 	udpClientTable      udpClientTable
 	udpWarnings         udpWarningLimiters
 	tcpWarnings         warningLimiter
+	unexpectedTCPWarn   warningLimiter
+	policyWarnings      warningLimiter
+	ipv6Warnings        warningLimiter
 	tcpJanitorWarn      warningLimiter
 	runtimeStatusWarn   warningLimiter
 	tcpJanitorStop      context.CancelFunc
 	tcpJanitorDone      chan struct{}
 	runtimeStatusCancel context.CancelFunc
 	runtimeStatusDone   chan struct{}
-	debugPProfRelease   func()
+	programStatsRelease func() error
 	debug               eBPFDebugState
 	diagnostics         eBPFDiagnostics
 }

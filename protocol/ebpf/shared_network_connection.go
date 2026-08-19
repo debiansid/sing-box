@@ -37,7 +37,11 @@ func (s *sharedNetwork) NewConnection(ctx context.Context, conn net.Conn, metada
 	}
 	if err != nil {
 		s.inbound.diagnostics.sharedTCPLookupError.Add(1)
-		s.inbound.logger.ErrorContext(ctx, "lookup shared-network TCP original destination: ", err)
+		s.tcpWarnings.errorContext(
+			s.inbound.logger,
+			ctx,
+			"lookup shared-network TCP original destination: ", err,
+		)
 		conn.Close()
 		return
 	}
@@ -59,11 +63,17 @@ func (s *sharedNetwork) logMissingSharedTCPRedirect(
 	listener netip.AddrPort,
 ) {
 	if !s.inbound.isRedirectListenerDestination(listener, s.listeners.selectedPort()) {
-		s.inbound.logger.DebugContext(
-			ctx,
-			"unexpected direct connection to eBPF shared-network listener: client=", client,
-			" listener=", listener,
-		)
+		allowed, suppressed := s.unexpectedTCPWarn.allow(time.Now())
+		if allowed {
+			args := []any{
+				"unexpected direct connection to eBPF shared-network listener: client=", client,
+				" listener=", listener,
+			}
+			if suppressed > 0 {
+				args = append(args, " (", suppressed, " similar connections suppressed)")
+			}
+			s.inbound.logger.DebugContext(ctx, args...)
+		}
 		return
 	}
 	allowed, suppressed := s.tcpWarnings.allow(time.Now())

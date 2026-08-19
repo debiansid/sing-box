@@ -145,7 +145,10 @@ func (i *Inbound) refreshCgroupIPv6Availability(initial bool) error {
 	if err != nil {
 		i.cgroupIPv6Available = true
 		i.resetCgroupIPv6ProbeLocked()
-		i.logger.Warn("probe eBPF local cgroup IPv6 availability; keeping interception enabled: ", err)
+		i.ipv6Warnings.warn(
+			i.logger,
+			"probe eBPF local cgroup IPv6 availability; keeping interception enabled: ", err,
+		)
 		return nil
 	}
 	i.cgroupIPv6Available = available
@@ -179,7 +182,7 @@ func (i *Inbound) runCgroupIPv6Probe(generation uint64) {
 	if err != nil {
 		i.cgroupIPv6Probe.candidate = false
 		i.cgroupIPv6Probe.count = 0
-		i.logger.Warn("probe eBPF local cgroup IPv6 availability after network update: ", err)
+		i.ipv6Warnings.warn(i.logger, "probe eBPF local cgroup IPv6 availability after network update: ", err)
 		return
 	}
 	if available == i.cgroupIPv6Available {
@@ -205,7 +208,7 @@ func (i *Inbound) runCgroupIPv6Probe(generation uint64) {
 	}
 	changed, err := backend.UpdateIPv6Available(available)
 	if err != nil {
-		i.logger.Warn("update eBPF local cgroup IPv6 availability after network update: ", err)
+		i.ipv6Warnings.warn(i.logger, "update eBPF local cgroup IPv6 availability after network update: ", err)
 		return
 	}
 	if changed {

@@ -76,6 +76,11 @@ func (s eBPFDiagnosticPathSnapshot) total() uint64 {
 		s.UDPBindingMiss + s.UDPBindingRecovery + s.CleanupError
 }
 
+func (s eBPFDiagnosticPathSnapshot) failures() uint64 {
+	return s.TCPRedirectMiss + s.TCPLookupError + s.UDPPacketInfoError +
+		s.UDPRedirectMiss + s.UDPLookupError + s.UDPBindingMiss + s.CleanupError
+}
+
 func (s eBPFDiagnosticSnapshot) empty() bool {
 	return s.Local.total() == 0 && s.Shared.total() == 0
 }
@@ -85,7 +90,7 @@ func (i *Inbound) logDiagnosticSummary() {
 	if snapshot.empty() {
 		return
 	}
-	i.logger.Warn(
+	message := []any{
 		"eBPF traffic diagnostic summary: local={tcp_redirect_miss:", snapshot.Local.TCPRedirectMiss,
 		", tcp_lookup_error:", snapshot.Local.TCPLookupError,
 		", udp_packet_info_error:", snapshot.Local.UDPPacketInfoError,
@@ -105,5 +110,10 @@ func (i *Inbound) logDiagnosticSummary() {
 		", udp_binding_recovery:", snapshot.Shared.UDPBindingRecovery,
 		", cleanup_error:", snapshot.Shared.CleanupError,
 		"}",
-	)
+	}
+	if snapshot.Local.failures()+snapshot.Shared.failures() > 0 {
+		i.logger.Warn(message...)
+	} else {
+		i.logger.Debug(message...)
+	}
 }

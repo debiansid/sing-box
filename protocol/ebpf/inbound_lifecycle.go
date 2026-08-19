@@ -25,6 +25,7 @@ func (i *Inbound) Start(stage adapter.StartStage) error {
 			i.sharedNetwork = newSharedNetwork(i, i.sharedNetworkOptions)
 		}
 	case adapter.StartStateStart:
+		i.enableProgramRuntimeStats()
 		if i.cgroupEnabled && i.androidUIDOptions != nil {
 			if err := i.resolveAndroidUIDPolicy(); err != nil {
 				return combineStartError(E.Cause(err, "resolve Android UID policy"), i.cleanupStartFailure())
@@ -35,7 +36,7 @@ func (i *Inbound) Start(stage adapter.StartStage) error {
 		}
 		backend := i.cgroupBackendInstance()
 		if i.cgroupEnabled && backend == nil {
-			return E.New("eBPF backend is not initialized")
+			return combineStartError(E.New("eBPF backend is not initialized"), i.cleanupStartFailure())
 		}
 		if err := i.startBypassRuleSets(); err != nil {
 			return combineStartError(
@@ -69,9 +70,6 @@ func (i *Inbound) Start(stage adapter.StartStage) error {
 			if i.enableTCP {
 				i.startTCPRedirectJanitor()
 			}
-			if i.cgroupIPv6Mode == cgroupIPv6ModeAuto && i.cgroupIPv6Enabled() {
-				i.logger.Debug("eBPF local cgroup IPv6 interception: available=", i.cgroupIPv6Available)
-			}
 			bypassIPv4Count, bypassIPv6Count := backend.BypassCIDRCount()
 			selfBypassMode := backend.SelfBypassMode()
 			socketBypassCapacity := i.cgroupMapCapacity.SocketBypass
@@ -85,14 +83,16 @@ func (i *Inbound) Start(stage adapter.StartStage) error {
 				", ipv6_mode=", i.cgroupIPv6Mode,
 				", ipv6_active=", i.cgroupIPv6Active(),
 				", bypass_private_address=", i.localBypassPrivateAddress,
-				", fakeip_force=[", i.fakeIPPrefixString(), "]",
-				", self_bypass=", selfBypassMode,
 				", udp_state_cleanup=", backend.UDPCleanupMode(),
-				", internal_redirect_prefix=[", strings.Join(i.redirectAddressStrings(), ", "), "]",
 				", uid_policy={include_configured:", i.cgroupPolicy.IncludeUIDConfigured,
 				", include:[", formatUIDRanges(i.cgroupPolicy.IncludeUID), "]",
 				", exclude:[", formatUIDRanges(i.cgroupPolicy.ExcludeUID), "]}",
 				", bypass_cidr={ipv4:", bypassIPv4Count, ", ipv6:", bypassIPv6Count, "}",
+			)
+			i.logger.Debug(
+				"eBPF local cgroup details: fakeip_force=[", i.fakeIPPrefixString(), "]",
+				", self_bypass=", selfBypassMode,
+				", internal_redirect_prefix=[", strings.Join(i.redirectAddressStrings(), ", "), "]",
 				", state_capacity={tcp_redirect:", i.cgroupMapCapacity.TCPRedirect,
 				", udp_redirect:", i.cgroupMapCapacity.UDPRedirect,
 				", socket_bypass:", socketBypassCapacity, "}",
@@ -100,11 +100,6 @@ func (i *Inbound) Start(stage adapter.StartStage) error {
 				", programs=[", strings.Join(backend.AttachedPrograms(), ", "), "]",
 			)
 		}
-		releaseDebugPProf, err := acquireEBPFDebugPProf(i.logger)
-		if err != nil {
-			return combineStartError(E.Cause(err, "start eBPF debug pprof"), i.cleanupStartFailure())
-		}
-		i.debugPProfRelease = releaseDebugPProf
 		logEBPFDebugBuild(i.logger)
 		i.logRuntimeStatus("startup")
 		i.startRuntimeStatusReporter()
@@ -178,9 +173,9 @@ func (i *Inbound) cleanupStartFailure() error {
 
 func (i *Inbound) closeResources() error {
 	defer i.logDiagnosticSummary()
-	defer i.closeDebugPProf()
 	i.stopRuntimeStatusReporter()
 	i.logRuntimeStatus("shutdown")
+	programStatsErr := i.disableProgramRuntimeStats()
 	i.stopTCPRedirectJanitor()
 	i.resetCgroupIPv6ProbeLocked()
 	i.stopBypassRuleSets()
@@ -211,15 +206,7 @@ func (i *Inbound) closeResources() error {
 	i.unregisterSocketProtector()
 	listenerErr := i.closeListeners()
 	i.udpNat.Purge()
-	return E.Errors(sharedErr, backendErr, listenerErr, i.removeLocalRoutes())
-}
-
-func (i *Inbound) closeDebugPProf() {
-	if i.debugPProfRelease == nil {
-		return
-	}
-	i.debugPProfRelease()
-	i.debugPProfRelease = nil
+	return E.Errors(sharedErr, backendErr, listenerErr, programStatsErr, i.removeLocalRoutes())
 }
 
 func (i *Inbound) cgroupBackendInstance() *ECommon.CgroupBackend {

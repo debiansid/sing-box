@@ -3,28 +3,19 @@
 package ebpf
 
 import (
-	"errors"
-	"net"
-	"net/http"
-	httpPProf "net/http/pprof"
 	"net/netip"
 	"os"
 	"runtime"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
 	ECommon "github.com/sagernet/sing-box/common/ebpf"
 	"github.com/sagernet/sing-box/log"
-	E "github.com/sagernet/sing/common/exceptions"
 )
 
-const (
-	ebpfRuntimeStatusInterval = time.Minute
-	ebpfDebugPProfPortEnv     = "SING_BOX_EBPF_PPROF_PORT"
-)
+const ebpfRuntimeStatusInterval = 5 * time.Minute
 
 type eBPFDebugState struct {
 	localTCPRedirectSweep     eBPFDebugTaskMetric
@@ -315,100 +306,32 @@ func ebpfRuntimeStatusReporterEnabled(logger log.ContextLogger) bool {
 	return ebpfDebugLoggingEnabled(logger)
 }
 
-type eBPFDebugPProfServer struct {
-	server     *http.Server
-	listener   net.Listener
-	port       string
-	references int
-}
-
-var (
-	ebpfDebugPProfAccess sync.Mutex
-	ebpfDebugPProf       *eBPFDebugPProfServer
-)
-
-func acquireEBPFDebugPProf(logger log.ContextLogger) (func(), error) {
-	port := os.Getenv(ebpfDebugPProfPortEnv)
-	if port == "" {
-		return nil, nil
-	}
-	parsedPort, err := strconv.ParseUint(port, 10, 16)
-	if err != nil || parsedPort == 0 {
-		return nil, E.New("invalid ", ebpfDebugPProfPortEnv, ": ", port)
-	}
-	port = strconv.FormatUint(parsedPort, 10)
-	ebpfDebugPProfAccess.Lock()
-	defer ebpfDebugPProfAccess.Unlock()
-	if ebpfDebugPProf != nil {
-		if ebpfDebugPProf.port != port {
-			return nil, E.New("eBPF debug pprof is already listening on port ", ebpfDebugPProf.port)
-		}
-		ebpfDebugPProf.references++
-		return releaseEBPFDebugPProfFunc(), nil
-	}
-	address := net.JoinHostPort("127.0.0.1", port)
-	listener, err := net.Listen("tcp", address)
-	if err != nil {
-		return nil, err
-	}
-	server := &http.Server{
-		Addr:              address,
-		Handler:           newEBPFDebugPProfMux(),
-		ReadHeaderTimeout: 5 * time.Second,
-	}
-	ebpfDebugPProf = &eBPFDebugPProfServer{
-		server:     server,
-		listener:   listener,
-		port:       port,
-		references: 1,
-	}
-	go func() {
-		if serveErr := server.Serve(listener); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
-			logger.Warn("serve eBPF debug pprof: ", serveErr)
-		}
-	}()
-	logger.Info("eBPF debug pprof listening on http://", address, "/debug/pprof/")
-	return releaseEBPFDebugPProfFunc(), nil
-}
-
-func releaseEBPFDebugPProfFunc() func() {
-	var once sync.Once
-	return func() {
-		once.Do(releaseEBPFDebugPProf)
-	}
-}
-
-func releaseEBPFDebugPProf() {
-	ebpfDebugPProfAccess.Lock()
-	defer ebpfDebugPProfAccess.Unlock()
-	if ebpfDebugPProf == nil {
-		return
-	}
-	ebpfDebugPProf.references--
-	if ebpfDebugPProf.references > 0 {
-		return
-	}
-	_ = ebpfDebugPProf.server.Close()
-	_ = ebpfDebugPProf.listener.Close()
-	ebpfDebugPProf = nil
-}
-
-func newEBPFDebugPProfMux() *http.ServeMux {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/debug/pprof/", httpPProf.Index)
-	mux.HandleFunc("/debug/pprof/cmdline", httpPProf.Cmdline)
-	mux.HandleFunc("/debug/pprof/profile", httpPProf.Profile)
-	mux.HandleFunc("/debug/pprof/symbol", httpPProf.Symbol)
-	mux.HandleFunc("/debug/pprof/trace", httpPProf.Trace)
-	for _, profile := range []string{"allocs", "block", "goroutine", "heap", "mutex", "threadcreate"} {
-		mux.Handle("/debug/pprof/"+profile, httpPProf.Handler(profile))
-	}
-	return mux
-}
-
 func logEBPFDebugBuild(logger log.ContextLogger) {
 	logger.Info(
 		"eBPF debug instrumentation enabled: runtime_status_interval=", ebpfRuntimeStatusInterval,
-		", pprof_env=", ebpfDebugPProfPortEnv,
 	)
+}
+
+func (i *Inbound) enableProgramRuntimeStats() {
+	if i.programStatsRelease != nil {
+		return
+	}
+	release, err := ECommon.AcquireProgramRuntimeStats()
+	if err != nil {
+		i.logger.Warn("enable eBPF program runtime statistics: ", err)
+		return
+	}
+	i.programStatsRelease = release
+	if release != nil {
+		i.logger.Debug("eBPF program runtime statistics enabled")
+	}
+}
+
+func (i *Inbound) disableProgramRuntimeStats() error {
+	release := i.programStatsRelease
+	i.programStatsRelease = nil
+	if release == nil {
+		return nil
+	}
+	return release()
 }

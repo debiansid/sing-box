@@ -24,17 +24,13 @@ import (
 )
 
 func (i *Inbound) startListeners() error {
-	err := i.listeners.start(
+	return i.listeners.start(
 		i.enableTCP,
 		i.enableUDP,
 		i.redirectIPv4Prefix.IsValid(),
 		i.cgroupIPv6Enabled(),
 		i.newListener,
 	)
-	if err == nil {
-		i.logger.Debug("eBPF local cgroup redirect listeners ready: [", i.listeners.String(), "]")
-	}
-	return err
 }
 
 func (i *Inbound) closeListeners() error {
@@ -57,7 +53,7 @@ func (i *Inbound) NewConnection(ctx context.Context, conn net.Conn, metadata ada
 	}
 	if err != nil {
 		i.diagnostics.localTCPLookupError.Add(1)
-		i.logger.ErrorContext(ctx, "lookup TCP original destination: ", err)
+		i.tcpWarnings.errorContext(i.logger, ctx, "lookup TCP original destination: ", err)
 		conn.Close()
 		return
 	}
@@ -69,7 +65,14 @@ func (i *Inbound) NewConnection(ctx context.Context, conn net.Conn, metadata ada
 
 func (i *Inbound) logMissingTCPRedirect(ctx context.Context, backend *ECommon.CgroupBackend, listener netip.AddrPort) {
 	if !i.isRedirectListenerDestination(listener, i.listeners.selectedPort()) {
-		i.logger.DebugContext(ctx, "unexpected direct connection to eBPF listener: listener=", listener)
+		allowed, suppressed := i.unexpectedTCPWarn.allow(time.Now())
+		if allowed {
+			args := []any{"unexpected direct connection to eBPF listener: listener=", listener}
+			if suppressed > 0 {
+				args = append(args, " (", suppressed, " similar connections suppressed)")
+			}
+			i.logger.DebugContext(ctx, args...)
+		}
 		return
 	}
 	allowed, suppressed := i.tcpWarnings.allow(time.Now())

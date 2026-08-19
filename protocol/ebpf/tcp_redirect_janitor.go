@@ -61,19 +61,11 @@ func (i *Inbound) runTCPRedirectJanitor(ctx context.Context, done chan<- struct{
 		if !result.Complete {
 			nextInterval = localTCPRedirectScanInterval
 		}
-		if result.Removed > 0 {
-			if result.Complete {
-				i.logger.Debug(
-					"eBPF local TCP redirect cleanup: removed=", result.Removed,
-					", redirect_state=", result.Usage.Entries, "/", result.Usage.Capacity,
-				)
-			} else {
-				i.logger.Debug(
-					"eBPF local TCP redirect cleanup: removed=", result.Removed,
-					", scanned=", result.Scanned,
-					", scan_complete=false",
-				)
-			}
+		if result.Complete && result.Removed > 0 {
+			i.logger.Debug(
+				"eBPF local TCP redirect cleanup: removed=", result.Removed,
+				", redirect_state=", result.Usage.Entries, "/", result.Usage.Capacity,
+			)
 		}
 		timer.Reset(nextInterval)
 	}

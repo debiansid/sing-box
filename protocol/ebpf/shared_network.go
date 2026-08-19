@@ -26,22 +26,23 @@ const (
 )
 
 type sharedNetwork struct {
-	inbound         *Inbound
-	interfaces      []string
-	sharedBackend   *ECommon.SharedNetworkBackend
-	tcManager       *sharedTCManager
-	listeners       internalListenerSet
-	udpNat          *udpnat.Service
-	udpClientTable  udpClientTable
-	udpWarnings     udpWarningLimiters
-	tcpWarnings     warningLimiter
-	mapCapacity     ECommon.SharedNetworkMapCapacities
-	janitorWarnings warningLimiter
-	janitorCancel   context.CancelFunc
-	janitorDone     chan struct{}
-	tcPriority      uint16
-	lifecycleAccess sync.RWMutex
-	backendAccess   sync.RWMutex
+	inbound           *Inbound
+	interfaces        []string
+	sharedBackend     *ECommon.SharedNetworkBackend
+	tcManager         *sharedTCManager
+	listeners         internalListenerSet
+	udpNat            *udpnat.Service
+	udpClientTable    udpClientTable
+	udpWarnings       udpWarningLimiters
+	tcpWarnings       warningLimiter
+	unexpectedTCPWarn warningLimiter
+	mapCapacity       ECommon.SharedNetworkMapCapacities
+	janitorWarnings   warningLimiter
+	janitorCancel     context.CancelFunc
+	janitorDone       chan struct{}
+	tcPriority        uint16
+	lifecycleAccess   sync.RWMutex
+	backendAccess     sync.RWMutex
 }
 
 func newSharedNetwork(inbound *Inbound, options option.EBPFSharedOptions) *sharedNetwork {
@@ -142,13 +143,15 @@ func (s *sharedNetwork) Start(cgroupBackend *ECommon.CgroupBackend) error {
 		", redirect_listener_port=", s.listeners.selectedPort(),
 		", dns_mode=", s.inbound.dnsMode,
 		", ipv6_mode=", s.inbound.sharedIPv6Mode,
-		", fakeip_force=[", s.inbound.fakeIPPrefixString(), "]",
 		", bypass_maps=", bypassMapSource,
 		", bypass_private_address=", s.inbound.sharedBypassPrivateAddress,
 		", source_cidr={include:", len(s.inbound.sharedNetworkOptions.IncludeSourceCIDR),
 		", exclude:", len(s.inbound.sharedNetworkOptions.ExcludeSourceCIDR), "}",
 		", source_mac={include:", len(s.inbound.sharedNetworkIncludeMAC),
 		", exclude:", len(s.inbound.sharedNetworkExcludeMAC), "}",
+	)
+	s.inbound.logger.Debug(
+		"eBPF shared-network details: fakeip_force=[", s.inbound.fakeIPPrefixString(), "]",
 		", tc_priority=", s.tcPriority,
 		", state_capacity={proxy:", s.mapCapacity.Proxy,
 		", bypass:", s.mapCapacity.Bypass,
@@ -159,17 +162,13 @@ func (s *sharedNetwork) Start(cgroupBackend *ECommon.CgroupBackend) error {
 }
 
 func (s *sharedNetwork) startListeners() error {
-	err := s.listeners.start(
+	return s.listeners.start(
 		s.inbound.enableTCP,
 		s.inbound.enableUDP,
 		s.inbound.redirectIPv4Prefix.IsValid(),
 		s.inbound.sharedNetworkIPv6Enabled(),
 		s.newListener,
 	)
-	if err == nil {
-		s.inbound.logger.Debug("eBPF shared-network redirect listeners ready: [", s.listeners.String(), "]")
-	}
-	return err
 }
 
 func (s *sharedNetwork) newListener(network string, ipv6Listener bool, port uint16) *listener.Listener {
@@ -329,21 +328,12 @@ func (s *sharedNetwork) runFlowJanitor(ctx context.Context, done chan<- struct{}
 			if result.Complete {
 				lastSweep = now
 			}
-			if result.Removed > 0 {
-				if result.Complete {
-					s.inbound.logger.Debug(
-						"eBPF shared-network flow cleanup: removed=", result.Removed,
-						", retained=", result.Retained,
-						", proxy_state=", result.Usage.Entries, "/", result.Usage.Capacity,
-					)
-				} else {
-					s.inbound.logger.Debug(
-						"eBPF shared-network flow cleanup: removed=", result.Removed,
-						", retained=", result.Retained,
-						", scanned=", result.Scanned,
-						", scan_complete=false",
-					)
-				}
+			if result.Complete && result.Removed > 0 {
+				s.inbound.logger.Debug(
+					"eBPF shared-network flow cleanup: removed=", result.Removed,
+					", retained=", result.Retained,
+					", proxy_state=", result.Usage.Entries, "/", result.Usage.Capacity,
+				)
 			}
 			if !result.Complete {
 				continue

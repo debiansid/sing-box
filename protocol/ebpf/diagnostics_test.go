@@ -22,6 +22,20 @@ func TestEBPFDiagnosticSnapshot(t *testing.T) {
 	if snapshot.empty() || snapshot.Local.total() != 14 || snapshot.Shared.total() != 7 {
 		t.Fatalf("unexpected diagnostic totals: %+v", snapshot)
 	}
+	if snapshot.Local.failures() != 3 || snapshot.Shared.failures() != 7 {
+		t.Fatalf("unexpected diagnostic failure totals: %+v", snapshot)
+	}
+}
+
+func TestEBPFDiagnosticRecoveryIsNotFailure(t *testing.T) {
+	snapshot := eBPFDiagnosticPathSnapshot{
+		UDPRedirectRecovery:  1,
+		UDPConnectedRecovery: 2,
+		UDPBindingRecovery:   3,
+	}
+	if snapshot.total() != 6 || snapshot.failures() != 0 {
+		t.Fatalf("unexpected recovery-only diagnostic totals: %+v", snapshot)
+	}
 }
 
 func TestEmptyEBPFDiagnosticSnapshot(t *testing.T) {

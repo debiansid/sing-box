@@ -26,14 +26,20 @@ type RuntimeMapStatus struct {
 }
 
 type RuntimeProgramStatus struct {
-	Name         string `json:"name"`
-	Section      string `json:"section"`
-	ID           uint32 `json:"id,omitempty"`
-	MemlockBytes uint64 `json:"memlock_bytes,omitempty"`
-	Loaded       bool   `json:"loaded"`
-	Attached     bool   `json:"attached"`
-	AttachType   string `json:"attach_type,omitempty"`
-	Error        string `json:"error,omitempty"`
+	Name            string `json:"name"`
+	Section         string `json:"section"`
+	ID              uint32 `json:"id,omitempty"`
+	MemlockBytes    uint64 `json:"memlock_bytes,omitempty"`
+	RunCount        uint64 `json:"run_count,omitempty"`
+	RuntimeNanos    uint64 `json:"runtime_ns,omitempty"`
+	AverageNanos    uint64 `json:"average_ns_per_run,omitempty"`
+	RecursionMisses uint64 `json:"recursion_misses,omitempty"`
+	Loaded          bool   `json:"loaded"`
+	Attached        bool   `json:"attached"`
+	StatsKnown      bool   `json:"stats_known,omitempty"`
+	AttachType      string `json:"attach_type,omitempty"`
+	Error           string `json:"error,omitempty"`
+	StatsError      string `json:"stats_error,omitempty"`
 }
 
 type CgroupRuntimeStatus struct {
@@ -94,6 +100,10 @@ func (c *runtimeStatusCollector) collect(maps map[string]*CiliumEBPF.Map) []Runt
 		if info.Type == CiliumEBPF.Array || info.Type == CiliumEBPF.PerCPUArray {
 			entry.Entries = info.MaxEntries
 			entry.EntriesKnown = true
+			status = append(status, entry)
+			continue
+		}
+		if !collectRuntimeMapEntries {
 			status = append(status, entry)
 			continue
 		}
@@ -206,5 +216,6 @@ func runtimeProgramStatus(program *CiliumEBPF.Program, name string, section stri
 	if memlock, available := info.Memlock(); available {
 		status.MemlockBytes = memlock
 	}
+	populateProgramRuntimeStats(program, &status)
 	return status
 }
