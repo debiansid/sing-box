@@ -18,7 +18,7 @@ import (
 const (
 	sharedFlowMaxIdle              = 5 * time.Minute
 	sharedFlowPressureMaxIdle      = 15 * time.Second
-	sharedFlowSweepInterval        = 30 * time.Second
+	sharedFlowSweepInterval        = 5 * time.Minute
 	sharedFlowPressureInterval     = 5 * time.Second
 	sharedFlowPressureEnterPercent = 70
 	sharedFlowPressureExitPercent  = 50
