@@ -135,15 +135,7 @@ func (i *Inbound) prepareCgroupBackend() error {
 		return err
 	}
 	i.setCgroupBackend(backend)
-	protectManager, loaded := i.networkManager.(adapter.SocketProtectManager)
-	if !loaded {
-		closeErr := backend.Close()
-		if backend.IsClosed() {
-			i.setCgroupBackend(nil)
-		}
-		return E.Errors(E.New("network manager does not support socket protection"), closeErr)
-	}
-	if err = protectManager.RegisterSocketProtectFunc(backend.SocketProtectFunc()); err != nil {
+	if err = adapter.RegisterSocketProtectFunc(i.networkManager, backend.SocketProtectFunc()); err != nil {
 		closeErr := backend.Close()
 		if backend.IsClosed() {
 			i.setCgroupBackend(nil)
@@ -247,8 +239,6 @@ func (i *Inbound) unregisterSocketProtector() {
 	if !i.protectRegistered {
 		return
 	}
-	if protectManager, loaded := i.networkManager.(adapter.SocketProtectManager); loaded {
-		protectManager.UnregisterSocketProtectFunc()
-	}
+	adapter.UnregisterSocketProtectFunc(i.networkManager)
 	i.protectRegistered = false
 }

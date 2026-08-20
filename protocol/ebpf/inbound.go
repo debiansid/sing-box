@@ -48,6 +48,10 @@ var (
 	}
 )
 
+type fakeIPRangeProvider interface {
+	FakeIPRanges() (netip.Prefix, netip.Prefix)
+}
+
 func RegisterInbound(registry *inbound.Registry) {
 	inbound.Register[option.EBPFInboundOptions](registry, C.TypeEBPF, NewInbound)
 }
@@ -232,7 +236,7 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 	}
 	if dnsTransportManager := service.FromContext[adapter.DNSTransportManager](ctx); dnsTransportManager != nil {
 		if fakeIPTransport := dnsTransportManager.FakeIP(); fakeIPTransport != nil {
-			if rangeProvider, loaded := fakeIPTransport.Store().(adapter.FakeIPRangeProvider); loaded {
+			if rangeProvider, loaded := fakeIPTransport.Store().(fakeIPRangeProvider); loaded {
 				inbound.fakeIPIPv4Prefix, inbound.fakeIPIPv6Prefix = rangeProvider.FakeIPRanges()
 			}
 		}
