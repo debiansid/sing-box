@@ -54,8 +54,10 @@ type CgroupRuntimeStatus struct {
 }
 
 type SharedNetworkRuntimeStatus struct {
-	Maps     []RuntimeMapStatus     `json:"maps"`
-	Programs []RuntimeProgramStatus `json:"programs"`
+	Maps       []RuntimeMapStatus      `json:"maps"`
+	Programs   []RuntimeProgramStatus  `json:"programs"`
+	Statistics SharedNetworkStatistics `json:"statistics"`
+	StatsError string                  `json:"stats_error,omitempty"`
 }
 
 type runtimeStatusCollector struct {

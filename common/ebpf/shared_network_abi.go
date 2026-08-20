@@ -11,7 +11,22 @@ import (
 	E "github.com/sagernet/sing/common/exceptions"
 )
 
-const sharedNetworkStatTokenReservationFailure = 0
+const (
+	sharedNetworkStatTokenReservationFailure = 0
+	sharedNetworkStatTokenPublishRetry       = 1
+	sharedNetworkStatOriginalPublishFailure  = 2
+	sharedNetworkStatEgressFlowMiss          = 3
+)
+
+type SharedNetworkStatistics struct {
+	TokenReservationFailures uint64 `json:"token_reservation_failures"`
+	TokenPublishRetries      uint64 `json:"token_publish_retries"`
+	OriginalPublishFailures  uint64 `json:"original_publish_failures"`
+	EgressFlowMisses         uint64 `json:"egress_flow_misses"`
+	TokenLookupMisses        uint64 `json:"token_lookup_misses"`
+	GenerationLookupMisses   uint64 `json:"generation_lookup_misses"`
+	GenerationMismatches     uint64 `json:"generation_mismatches"`
+}
 
 const sharedNetworkTCPReleaseGrace = time.Second
 

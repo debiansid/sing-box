@@ -53,6 +53,9 @@ type SharedNetworkBackend struct {
 	replyTokenSequence  atomic.Uint64
 	flowReferences      map[SharedNetworkFlowHandle]uint32
 	flowReleases        map[SharedNetworkFlowHandle]time.Time
+	tokenLookupMisses   atomic.Uint64
+	generationMisses    atomic.Uint64
+	generationMismatch  atomic.Uint64
 	flowSweepAccess     sync.Mutex
 	flowSweepScratch    mapScanScratch[sharedNetworkOriginalKey, sharedNetworkTokenValue]
 	flowSweepCandidates []sharedNetworkFlowEntry
@@ -445,8 +448,8 @@ func (b *SharedNetworkBackend) RuntimeStatus() SharedNetworkRuntimeStatus {
 		return SharedNetworkRuntimeStatus{}
 	}
 	b.access.RLock()
-	defer b.access.RUnlock()
 	if b.runtime == nil {
+		b.access.RUnlock()
 		return SharedNetworkRuntimeStatus{}
 	}
 	status := SharedNetworkRuntimeStatus{
@@ -460,6 +463,12 @@ func (b *SharedNetworkBackend) RuntimeStatus() SharedNetworkRuntimeStatus {
 			section = "classifier/egress"
 		}
 		status.Programs = append(status.Programs, runtimeProgramStatus(program, name, section))
+	}
+	b.access.RUnlock()
+	var statsErr error
+	status.Statistics, statsErr = b.SharedNetworkStatistics()
+	if statsErr != nil {
+		status.StatsError = statsErr.Error()
 	}
 	return status
 }

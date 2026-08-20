@@ -115,7 +115,10 @@ NOINLINE int reserve_token_attempt(
     }
     scratch->token.generation = now ^ ((__u64)hash << 32U);
     scratch->token.last_seen_ns = now;
-    if (!publish_token(scratch, control, BPF_NOEXIST)) return SB_SHARED_TOKEN_RETRY;
+    if (!publish_token(scratch, control, BPF_NOEXIST)) {
+        record_shared_stat(SB_SHARED_STAT_TOKEN_PUBLISH_RETRY);
+        return SB_SHARED_TOKEN_RETRY;
+    }
     if (map_update(
             &shared_flow_by_original,
             &scratch->original,
@@ -131,6 +134,7 @@ NOINLINE int reserve_token_attempt(
         __builtin_memcpy(&scratch->token, existing, sizeof(scratch->token));
         return SB_SHARED_TOKEN_RESERVED;
     }
+    record_shared_stat(SB_SHARED_STAT_ORIGINAL_PUBLISH_FAILURE);
     return SB_SHARED_TOKEN_RETRY;
 }
 

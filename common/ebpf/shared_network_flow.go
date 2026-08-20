@@ -59,6 +59,9 @@ func (b *SharedNetworkBackend) lookupFlow(
 		unsafe.Pointer(&key),
 		unsafe.Pointer(&value),
 	); err != nil {
+		if errors.Is(err, unix.ENOENT) {
+			b.tokenLookupMisses.Add(1)
+		}
 		return OriginalDestination{}, nil, E.Cause(err, "lookup shared-network original destination")
 	}
 	address, err := sharedNetworkOriginalAddress(value)
@@ -295,9 +298,13 @@ func (b *SharedNetworkBackend) validateFlowGenerationLocked(flow SharedNetworkFl
 		unsafe.Pointer(&flow.originalKey),
 		unsafe.Pointer(&current),
 	); err != nil {
+		if errors.Is(err, unix.ENOENT) {
+			b.generationMisses.Add(1)
+		}
 		return E.Cause(err, "validate shared-network flow generation")
 	}
 	if current.Generation != flow.generation || current.TokenAddr != flow.listenerKey.TokenAddr {
+		b.generationMismatch.Add(1)
 		return E.Cause(unix.ENOENT, "shared-network flow generation changed")
 	}
 	return nil
@@ -571,4 +578,31 @@ func (b *SharedNetworkBackend) TokenReservationFailures() (uint64, error) {
 		return 0, err
 	}
 	return failures, nil
+}
+
+func (b *SharedNetworkBackend) SharedNetworkStatistics() (SharedNetworkStatistics, error) {
+	if b == nil {
+		return SharedNetworkStatistics{}, errBackendClosed
+	}
+	b.access.RLock()
+	defer b.access.RUnlock()
+	if b.runtime == nil {
+		return SharedNetworkStatistics{}, errBackendClosed
+	}
+	var values [4]uint64
+	for index := range values {
+		key := uint32(index)
+		if err := lookupMap(b.statsMapFD, unsafe.Pointer(&key), unsafe.Pointer(&values[index])); err != nil {
+			return SharedNetworkStatistics{}, err
+		}
+	}
+	return SharedNetworkStatistics{
+		TokenReservationFailures: values[sharedNetworkStatTokenReservationFailure],
+		TokenPublishRetries:      values[sharedNetworkStatTokenPublishRetry],
+		OriginalPublishFailures:  values[sharedNetworkStatOriginalPublishFailure],
+		EgressFlowMisses:         values[sharedNetworkStatEgressFlowMiss],
+		TokenLookupMisses:        b.tokenLookupMisses.Load(),
+		GenerationLookupMisses:   b.generationMisses.Load(),
+		GenerationMismatches:     b.generationMismatch.Load(),
+	}, nil
 }

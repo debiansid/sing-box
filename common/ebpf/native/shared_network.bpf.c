@@ -81,10 +81,12 @@ static long (*l3_csum_replace)(struct __sk_buff *skb, __u32 offset, __u64 from, 
     (void *)BPF_FUNC_l3_csum_replace;
 static long (*l4_csum_replace)(struct __sk_buff *skb, __u32 offset, __u64 from, __u64 to, __u64 flags) =
     (void *)BPF_FUNC_l4_csum_replace;
-INLINE void record_token_reservation_failure(void) {
-    __u32 key = SB_SHARED_STAT_TOKEN_RESERVATION_FAILURE;
+INLINE void record_shared_stat(__u32 key) {
     __u64 *counter = map_lookup(&shared_stats, &key);
     if (counter != 0) __sync_fetch_and_add(counter, 1U);
+}
+INLINE void record_token_reservation_failure(void) {
+    record_shared_stat(SB_SHARED_STAT_TOKEN_RESERVATION_FAILURE);
 }
 INLINE void refresh_activity_timestamp(__u64 *last_seen_ns, __u64 now) {
     __u64 previous = *last_seen_ns;
@@ -446,7 +448,10 @@ NOINLINE int egress_ipv4(
     struct sb_shared_original_value *original = map_lookup(
         &shared_flow_by_token,
         &scratch->listener_key);
-    if (original == 0 || original->ifindex != skb->ifindex) return TC_ACT_SHOT;
+    if (original == 0 || original->ifindex != skb->ifindex) {
+        record_shared_stat(SB_SHARED_STAT_EGRESS_FLOW_MISS);
+        return TC_ACT_SHOT;
+    }
     __builtin_memcpy(&scratch->original_value, original, sizeof(scratch->original_value));
     __be32 original_address;
     __builtin_memcpy(&original_address, scratch->original_value.addr, 4U);
@@ -809,7 +814,10 @@ NOINLINE int egress_ipv6(
     struct sb_shared_original_value *original = map_lookup(
         &shared_flow_by_token,
         &scratch->listener_key);
-    if (original == 0 || original->ifindex != skb->ifindex) return TC_ACT_SHOT;
+    if (original == 0 || original->ifindex != skb->ifindex) {
+        record_shared_stat(SB_SHARED_STAT_EGRESS_FLOW_MISS);
+        return TC_ACT_SHOT;
+    }
     __builtin_memcpy(&scratch->original_value, original, sizeof(scratch->original_value));
     if (fragment_state == SB_SHARED_FRAGMENT_FIRST) {
         prepare_fragment_key(
