@@ -24,7 +24,7 @@ const (
 	sharedFlowPressureExitPercent  = 50
 	sharedFlowPressureExitRounds   = 3
 	sharedFlowFallbackScanBudget   = 1024
-	sharedFlowReleaseFlushInterval = time.Second
+	sharedFlowReleaseFlushInterval = 250 * time.Millisecond
 	sharedFlowReleaseFlushBudget   = 4096
 )
 
