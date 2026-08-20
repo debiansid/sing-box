@@ -219,6 +219,14 @@ sudo -E SING_BOX_EBPF_INTEGRATION=1 \
   -benchmem ./common/ebpf
 ```
 
+For end-to-end comparisons against Redirect, TProxy, route-based TUN, and TUN
+auto-redirect, use the isolated namespace harness described in
+[`../../.github/benchmark/README.md`](../../.github/benchmark/README.md). It
+measures local and shared eBPF separately, validates that tested flows do not
+silently use the direct path, and includes long-lived UDP plus per-socket UDP
+churn. Keep this cross-inbound harness separate from microbenchmarks: its
+results include the complete sing-box routing and listener pipeline.
+
 An opt-in end-to-end stress test attaches only to a temporary child cgroup. It
 measures short TCP connections plus connected-UDP request/reply restoration and
 socket-release cleanup. Counts and concurrency can be changed with
