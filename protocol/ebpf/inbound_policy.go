@@ -6,7 +6,11 @@ import (
 	"context"
 	"net"
 	"net/netip"
+	"os"
+	"path/filepath"
 	"slices"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/sagernet/netlink"
@@ -21,6 +25,20 @@ func isGlobalUnicastIP(ip net.IP) bool {
 		return false
 	}
 	return ip.IsGlobalUnicast()
+}
+
+func getInterfacePacketCount(interfaceName string) (rx uint64, tx uint64, err error) {
+	rxData, err := os.ReadFile(filepath.Join("/sys/class/net", interfaceName, "statistics", "rx_packets"))
+	if err != nil {
+		return 0, 0, err
+	}
+	txData, err := os.ReadFile(filepath.Join("/sys/class/net", interfaceName, "statistics", "tx_packets"))
+	if err != nil {
+		return 0, 0, err
+	}
+	rx, _ = strconv.ParseUint(strings.TrimSpace(string(rxData)), 10, 64)
+	tx, _ = strconv.ParseUint(strings.TrimSpace(string(txData)), 10, 64)
+	return rx, tx, nil
 }
 
 func findActiveExcludedInterfaceNames(excludeInterfaces []string) []string {
@@ -124,6 +142,34 @@ func excludedInterfaceWithDefaultRoute(interfaceNames []string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+func excludedInterfaceWithTraffic(interfaceNames []string) (string, bool) {
+	for _, interfaceName := range interfaceNames {
+		rx, tx, err := getInterfacePacketCount(interfaceName)
+		if err == nil && (rx > 0 || tx > 1) {
+			return interfaceName, true
+		}
+	}
+	return "", false
+}
+
+func excludedInterfaceReady(interfaceNames []string) (string, bool) {
+	// IPsec installs its default route before the first packet is visible in
+	// the virtual interface. Keep this fast path for Google VPN, while tun+
+	// interfaces use traffic confirmation so their endpoint remains proxied
+	// during tunnel establishment.
+	var tunInterfaces []string
+	for _, interfaceName := range interfaceNames {
+		if strings.HasPrefix(interfaceName, "ipsec") {
+			if interfaceHasDefaultRoute(interfaceName) {
+				return interfaceName, true
+			}
+		} else {
+			tunInterfaces = append(tunInterfaces, interfaceName)
+		}
+	}
+	return excludedInterfaceWithTraffic(tunInterfaces)
 }
 
 func (i *Inbound) startBypassRuleSets() error {
@@ -388,7 +434,7 @@ func (i *Inbound) disableVPNBypassLocked() error {
 
 func (i *Inbound) syncVPNBypassState(excludeInterfaces []string) {
 	interfaceNames := findActiveExcludedInterfaceNames(excludeInterfaces)
-	interfaceName, active := excludedInterfaceWithDefaultRoute(interfaceNames)
+	interfaceName, active := excludedInterfaceReady(interfaceNames)
 
 	i.bypassRuleSetAccess.Lock()
 	defer i.bypassRuleSetAccess.Unlock()
@@ -433,7 +479,6 @@ func (i *Inbound) watchExcludedInterfaces(ctx context.Context, excludeInterfaces
 }
 
 func (i *Inbound) InterfaceUpdated() {
-	i.udpNat.Purge()
 	if len(i.excludeInterface) > 0 {
 		i.syncVPNBypassState(i.excludeInterface)
 	}
