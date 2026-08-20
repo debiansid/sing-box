@@ -108,6 +108,7 @@ type Inbound struct {
 	runtimeStatusWarn   warningLimiter
 	tcpJanitorStop      context.CancelFunc
 	tcpJanitorDone      chan struct{}
+	tcpJanitorWake      chan struct{}
 	runtimeStatusCancel context.CancelFunc
 	runtimeStatusDone   chan struct{}
 	programStatsRelease func() error

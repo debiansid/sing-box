@@ -5,11 +5,14 @@ package ebpf
 import (
 	"context"
 	"time"
+
+	ECommon "github.com/sagernet/sing-box/common/ebpf"
 )
 
 const (
 	localTCPRedirectMaxAge        = 10 * time.Minute
-	localTCPRedirectSweepInterval = time.Minute
+	localTCPRedirectSweepInterval = 5 * time.Minute
+	localTCPRedirectPollInterval  = 30 * time.Second
 	localTCPRedirectScanInterval  = 5 * time.Second
 	localTCPRedirectScanBudget    = 1024
 )
@@ -22,6 +25,7 @@ func (i *Inbound) startTCPRedirectJanitor() {
 	done := make(chan struct{})
 	i.tcpJanitorStop = cancel
 	i.tcpJanitorDone = done
+	i.tcpJanitorWake = make(chan struct{}, 1)
 	go i.runTCPRedirectJanitor(ctx, done)
 }
 
@@ -33,17 +37,59 @@ func (i *Inbound) stopTCPRedirectJanitor() {
 	<-i.tcpJanitorDone
 	i.tcpJanitorStop = nil
 	i.tcpJanitorDone = nil
+	i.tcpJanitorWake = nil
+}
+
+func (i *Inbound) wakeTCPRedirectJanitor() {
+	if i.tcpJanitorWake == nil {
+		return
+	}
+	select {
+	case i.tcpJanitorWake <- struct{}{}:
+	default:
+	}
 }
 
 func (i *Inbound) runTCPRedirectJanitor(ctx context.Context, done chan<- struct{}) {
 	defer close(done)
 	timer := time.NewTimer(localTCPRedirectSweepInterval)
 	defer timer.Stop()
+	pollTicker := time.NewTicker(localTCPRedirectPollInterval)
+	defer pollTicker.Stop()
+	var lastReservationFailures uint64
+	resetTimer := func(interval time.Duration) {
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
+		}
+		timer.Reset(interval)
+	}
 	for {
+		runSweep := false
 		select {
 		case <-ctx.Done():
 			return
 		case <-timer.C:
+			runSweep = true
+		case <-i.tcpJanitorWake:
+			runSweep = true
+		case <-pollTicker.C:
+			backend := i.cgroupBackendInstance()
+			if backend == nil {
+				return
+			}
+			failures, err := backend.RedirectReservationFailures(ECommon.ProtocolTCP)
+			if err != nil {
+				i.tcpJanitorWarn.warn(i.logger, "read local TCP redirect reservation failures: ", err)
+				continue
+			}
+			runSweep = failures > lastReservationFailures
+			lastReservationFailures = failures
+		}
+		if !runSweep {
+			continue
 		}
 		nextInterval := localTCPRedirectSweepInterval
 		backend := i.cgroupBackendInstance()
@@ -55,7 +101,7 @@ func (i *Inbound) runTCPRedirectJanitor(ctx context.Context, done chan<- struct{
 		i.debug.observe(ebpfDebugTaskLocalTCPRedirectSweep, time.Since(started), err)
 		if err != nil {
 			i.tcpJanitorWarn.warn(i.logger, "sweep stale local TCP redirects: ", err)
-			timer.Reset(nextInterval)
+			resetTimer(nextInterval)
 			continue
 		}
 		if !result.Complete {
@@ -67,6 +113,6 @@ func (i *Inbound) runTCPRedirectJanitor(ctx context.Context, done chan<- struct{
 				", redirect_state=", result.Usage.Entries, "/", result.Usage.Capacity,
 			)
 		}
-		timer.Reset(nextInterval)
+		resetTimer(nextInterval)
 	}
 }
