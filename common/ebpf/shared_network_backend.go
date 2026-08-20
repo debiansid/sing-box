@@ -53,6 +53,7 @@ type SharedNetworkBackend struct {
 	replyTokenSequence  atomic.Uint64
 	flowReferences      map[SharedNetworkFlowHandle]uint32
 	flowReleases        map[SharedNetworkFlowHandle]time.Time
+	flowReleaseWake     chan struct{}
 	tokenLookupMisses   atomic.Uint64
 	generationMisses    atomic.Uint64
 	generationMismatch  atomic.Uint64
@@ -205,6 +206,7 @@ func PrepareSharedNetwork(cgroupBackend *CgroupBackend, config SharedNetworkConf
 		bypassIPv6Map:   bypassIPv6Map,
 		bypassIPv4MapFD: bypassIPv4MapFD,
 		bypassIPv6MapFD: bypassIPv6MapFD,
+		flowReleaseWake: make(chan struct{}, 1),
 	}
 	backend.control.ListenerPort = config.ListenerPort
 	backend.control.UDPTimeoutSeconds = udpTimeoutSeconds

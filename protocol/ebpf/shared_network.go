@@ -24,7 +24,6 @@ const (
 	sharedFlowPressureExitPercent  = 50
 	sharedFlowPressureExitRounds   = 3
 	sharedFlowFallbackScanBudget   = 1024
-	sharedFlowReleaseFlushInterval = 250 * time.Millisecond
 	sharedFlowReleaseFlushBudget   = 4096
 )
 
@@ -301,25 +300,69 @@ func (s *sharedNetwork) stopFlowJanitor() {
 
 func (s *sharedNetwork) runFlowJanitor(ctx context.Context, done chan<- struct{}) {
 	defer close(done)
-	ticker := time.NewTicker(sharedFlowReleaseFlushInterval)
-	defer ticker.Stop()
+	pressureTicker := time.NewTicker(sharedFlowPressureInterval)
+	defer pressureTicker.Stop()
+	var releaseTimer *time.Timer
+	var releaseTimerChannel <-chan time.Time
+	resetReleaseTimer := func(backend *ECommon.SharedNetworkBackend) {
+		delay, available := backend.NextTCPFlowReleaseDelay(time.Now())
+		if !available {
+			if releaseTimer != nil {
+				releaseTimer.Stop()
+			}
+			releaseTimerChannel = nil
+			return
+		}
+		if releaseTimer == nil {
+			releaseTimer = time.NewTimer(delay)
+		} else {
+			if !releaseTimer.Stop() {
+				select {
+				case <-releaseTimer.C:
+				default:
+				}
+			}
+			releaseTimer.Reset(delay)
+		}
+		releaseTimerChannel = releaseTimer.C
+	}
+	defer func() {
+		if releaseTimer != nil {
+			releaseTimer.Stop()
+		}
+	}()
 	pressure := false
 	belowExitRounds := 0
 	lastSweep := time.Now()
-	lastPressurePoll := time.Time{}
 	var lastReservationFailures uint64
 	scanInProgress := false
 	attachmentActive := s.tcManager != nil && s.tcManager.isEnabled()
 	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-		}
-		now := time.Now()
 		backend := s.sharedBackendInstance()
 		if backend == nil {
 			return
+		}
+		pressurePoll := false
+		select {
+		case <-ctx.Done():
+			return
+		case <-pressureTicker.C:
+			pressurePoll = true
+		case <-backend.TCPFlowReleaseWake():
+			resetReleaseTimer(backend)
+			continue
+		case <-releaseTimerChannel:
+		}
+		now := time.Now()
+		if !pressurePoll {
+			flushStarted := time.Now()
+			_, flushErr := backend.FlushReleasedTCPFlows(now, sharedFlowReleaseFlushBudget)
+			s.inbound.debug.observe(ebpfDebugTaskSharedFlowReleaseFlush, time.Since(flushStarted), flushErr)
+			if flushErr != nil {
+				s.janitorWarnings.warn(s.inbound.logger, "flush released shared-network TCP flows: ", flushErr)
+			}
+			resetReleaseTimer(backend)
+			continue
 		}
 		if s.tcManager == nil || !s.tcManager.isEnabled() {
 			attachmentActive = false
@@ -332,16 +375,6 @@ func (s *sharedNetwork) runFlowJanitor(ctx context.Context, done chan<- struct{}
 			attachmentActive = true
 			lastSweep = time.Time{}
 		}
-		flushStarted := time.Now()
-		_, flushErr := backend.FlushReleasedTCPFlows(now, sharedFlowReleaseFlushBudget)
-		s.inbound.debug.observe(ebpfDebugTaskSharedFlowReleaseFlush, time.Since(flushStarted), flushErr)
-		if flushErr != nil {
-			s.janitorWarnings.warn(s.inbound.logger, "flush released shared-network TCP flows: ", flushErr)
-		}
-		if now.Sub(lastPressurePoll) < sharedFlowPressureInterval {
-			continue
-		}
-		lastPressurePoll = now
 		reservationPressure := false
 		pollStarted := time.Now()
 		reservationFailures, failureErr := backend.TokenReservationFailures()

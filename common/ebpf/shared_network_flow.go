@@ -289,6 +289,35 @@ func (b *SharedNetworkBackend) deferTCPFlowReleaseLocked(flow SharedNetworkFlowH
 		b.flowReleases = make(map[SharedNetworkFlowHandle]time.Time)
 	}
 	b.flowReleases[flow] = now.Add(sharedNetworkTCPReleaseGrace)
+	select {
+	case b.flowReleaseWake <- struct{}{}:
+	default:
+	}
+}
+
+func (b *SharedNetworkBackend) TCPFlowReleaseWake() <-chan struct{} {
+	if b == nil {
+		return nil
+	}
+	return b.flowReleaseWake
+}
+
+func (b *SharedNetworkBackend) NextTCPFlowReleaseDelay(now time.Time) (time.Duration, bool) {
+	if b == nil {
+		return 0, false
+	}
+	b.flowAccess.Lock()
+	defer b.flowAccess.Unlock()
+	var earliest time.Time
+	for _, deadline := range b.flowReleases {
+		if earliest.IsZero() || deadline.Before(earliest) {
+			earliest = deadline
+		}
+	}
+	if earliest.IsZero() {
+		return 0, false
+	}
+	return max(earliest.Sub(now), 0), true
 }
 
 func (b *SharedNetworkBackend) validateFlowGenerationLocked(flow SharedNetworkFlowHandle) error {
