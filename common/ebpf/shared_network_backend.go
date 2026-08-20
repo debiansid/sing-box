@@ -177,6 +177,12 @@ func PrepareSharedNetwork(cgroupBackend *CgroupBackend, config SharedNetworkConf
 		}
 		return nil, prepareErr
 	}
+	if bypassIPv4Map == nil {
+		bypassIPv4Map = runtimeState.maps["shared_bypass_ipv4"]
+	}
+	if bypassIPv6Map == nil {
+		bypassIPv6Map = runtimeState.maps["shared_bypass_ipv6"]
+	}
 
 	bypassIPv4MapFD := runtimeState.fallback_bypass_ipv4_map_fd
 	bypassIPv6MapFD := runtimeState.fallback_bypass_ipv6_map_fd
