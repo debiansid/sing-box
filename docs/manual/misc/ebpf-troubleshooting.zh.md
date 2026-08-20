@@ -80,8 +80,9 @@ CC="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-an
 GOARCH=arm64 GOOS=android make build
 ```
 
-配置中还需将日志级别设为 `debug`。调试构建每 5 分钟输出一次 eBPF runtime-status
-JSON，并增加 `debug` 对象，其中包括：
+配置中还需将日志级别设为 `debug`。调试构建会在启动、停止，以及 redirect miss
+或 map 压力事件后输出 eBPF runtime-status JSON；30 秒内的多个事件会合并为一次
+采集。JSON 中增加 `debug` 对象，其中包括：
 
 - Go heap、stack、runtime 总内存、RSS、goroutine、GC 次数和 GC pause；
 - local TCP 清理、shared 压力轮询、shared flow 清理、attachment 自愈、IPv6
@@ -151,10 +152,11 @@ map 内存。后者需要结合 runtime-status 中的 `memlock_bytes`、program 
 再采集 `bpftool prog profile id <id>`；不要自行开启全局 BPF kernel statistics，
 它会影响整个系统。
 
-## 周期维护
+## 运行期维护
 
 shared flow 清理、attachment 自愈、local TCP 清理和 IPv6 路由探测用于保证长期
-运行正确性，在普通构建中也会启用，并非调试 timer。如果 CPU 占用呈周期性，请
+运行正确性，在普通构建中也会启用。大部分工作由事件或 deadline 驱动；对于没有
+可靠用户态事件的内核状态，仅保留低频 watchdog。如果 CPU 占用呈周期性，请
 同时提供 `ebpf_debug` runtime-status 和 CPU profile，不要直接关闭这些任务；否则
 可能造成 map 耗尽、redirect 过期或接口脱挂。
 

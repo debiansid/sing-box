@@ -92,7 +92,9 @@ GOARCH=arm64 GOOS=android make build
 ```
 
 Set the sing-box log level to `debug`. The diagnostic build emits eBPF
-runtime-status JSON every five minutes and adds a `debug` object containing:
+runtime-status JSON at startup and shutdown, and after redirect or map-pressure
+events. Events within 30 seconds are coalesced into one collection. The JSON
+adds a `debug` object containing:
 
 - Go heap, stack, total runtime allocation, RSS, goroutine, GC, and GC pause
   counters;
@@ -173,11 +175,12 @@ separate `bpftool prog profile id <id>` capture; do not enable global kernel
 BPF statistics unless specifically requested because they affect the whole
 system.
 
-## Periodic maintenance
+## Runtime maintenance
 
 Shared flow cleanup, attachment reconciliation, local TCP cleanup, and IPv6
-route probing are correctness work and remain enabled in normal builds. They
-are not debug-only timers. If CPU usage appears periodic, include an
+route probing are correctness work and remain enabled in normal builds. Most
+work is event or deadline driven, with low-frequency watchdogs for kernel state
+that has no reliable userspace event. If CPU usage appears periodic, include an
 `ebpf_debug` runtime-status sample and a CPU profile instead of disabling these
 tasks; doing so can cause map exhaustion, stale redirects, or detached
 interfaces.

@@ -117,15 +117,17 @@ Correctness maintenance remains enabled in release builds:
 | Task | Normal trigger | Purpose |
 |------|----------------|---------|
 | Shared pressure poll | 5 seconds | Detect reservation failures and sustained proxy-map pressure. |
-| Shared orphan sweep | 30 seconds, faster under pressure | Reclaim unreferenced proxy generations. |
-| Shared attachment reconciliation | Network change or 30 seconds | Attach new interfaces and repair TCX/clsact and `route_localnet`. |
-| Local TCP cleanup | 1 minute | Remove state from failed or abandoned accepts. |
+| Shared TCP grace cleanup | Earliest queued deadline | Reclaim closed TCP generations without periodic idle wakeups. |
+| Shared orphan sweep | Reservation pressure or 5-minute fallback | Reclaim unreferenced proxy generations. |
+| Shared attachment reconciliation | Network change or 2-minute watchdog | Attach new interfaces and repair TCX/clsact and `route_localnet`. |
+| Local TCP cleanup | Redirect failure or 5-minute fallback | Remove state from failed or abandoned accepts. |
 | Local IPv6 probe | Debounced network change | Implement `local.ipv6_mode: auto`. |
 
 Normal Debug logging reports lightweight status every ten minutes without
-walking large maps. `ebpf_debug` changes the interval to five minutes and adds
-full occupancy, Go runtime, task timing, and optional kernel program runtime
-statistics. It does not add instrumentation to the packet path.
+walking large maps. `ebpf_debug` collects full occupancy, Go runtime, task
+timing, and optional kernel program runtime statistics at startup, shutdown,
+and after coalesced failure events. It does not add instrumentation to the
+packet path.
 
 ## Generated objects
 
