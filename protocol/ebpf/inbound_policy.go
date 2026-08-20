@@ -240,6 +240,9 @@ func (i *Inbound) refreshBypassRuleSetsLocked(warnEmpty bool, logRuleSetCount bo
 				if err = sharedBackend.SetBypassCIDRState(prefixes); err != nil {
 					return false, err
 				}
+				if err = sharedBackend.SetBypassChainStop(i.vpnBypassActive); err != nil {
+					return false, err
+				}
 			}
 		}
 		i.bypassCIDR = slices.Clone(prefixes)
@@ -249,6 +252,9 @@ func (i *Inbound) refreshBypassRuleSetsLocked(warnEmpty bool, logRuleSetCount bo
 		if sharedBackend := i.sharedNetwork.sharedBackendInstance(); sharedBackend != nil {
 			updated, err := sharedBackend.UpdateBypassCIDR(prefixes)
 			if err != nil {
+				return false, err
+			}
+			if err = sharedBackend.SetBypassChainStop(i.vpnBypassActive); err != nil {
 				return false, err
 			}
 			i.bypassCIDR = slices.Clone(prefixes)

@@ -169,6 +169,7 @@ const (
 	sharedNetworkFlagDNSRespectBypass
 	sharedNetworkFlagFakeIPIPv4
 	sharedNetworkFlagFakeIPIPv6
+	sharedNetworkFlagStopChainOnBypass
 )
 
 const sharedNetworkPolicyFlags = sharedNetworkFlagHostIPv4 |

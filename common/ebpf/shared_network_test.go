@@ -50,6 +50,9 @@ func TestSharedNetworkABI(t *testing.T) {
 			sharedNetworkFlagFakeIPIPv6,
 		)
 	}
+	if sharedNetworkFlagStopChainOnBypass != 1<<18 {
+		t.Fatalf("unexpected shared-network bypass chain flag: %#x", sharedNetworkFlagStopChainOnBypass)
+	}
 	if sharedNetworkPolicyFlags != 0x5fe0 {
 		t.Fatalf("unexpected shared-network policy flags: %#x", sharedNetworkPolicyFlags)
 	}

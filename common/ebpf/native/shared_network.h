@@ -38,6 +38,7 @@
 #define SB_SHARED_FLAG_DNS_RESPECT_BYPASS (1U << 15)
 #define SB_SHARED_FLAG_FAKEIP_IPV4 (1U << 16)
 #define SB_SHARED_FLAG_FAKEIP_IPV6 (1U << 17)
+#define SB_SHARED_FLAG_STOP_CHAIN_ON_BYPASS (1U << 18)
 
 struct sb_shared_control {
     __u32 enabled;

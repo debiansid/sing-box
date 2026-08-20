@@ -61,6 +61,9 @@ func (i *Inbound) Start(stage adapter.StartStage) error {
 			if err := i.sharedNetwork.Start(backend); err != nil {
 				return combineStartError(err, i.cleanupStartFailure())
 			}
+			// The bypass watcher starts before shared TC. Re-apply its state now
+			// so an already-connected VPN immediately stops Android offload.
+			i.refreshBypassPolicy()
 		}
 		if i.cgroupEnabled {
 			if err := backend.Attach(); err != nil {
