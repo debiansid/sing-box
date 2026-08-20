@@ -22,7 +22,7 @@ import (
 )
 
 const (
-	sharedNetworkHealthCheckInterval = 30 * time.Second
+	sharedNetworkHealthCheckInterval = 2 * time.Minute
 	// Run before Android tethering offload (IPv6 priority 2, IPv4 priority 3).
 	defaultSharedNetworkTCPriority = 1
 	sharedIngressFilterHandle      = 0x5342
