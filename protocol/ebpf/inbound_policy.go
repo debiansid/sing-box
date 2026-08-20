@@ -444,7 +444,10 @@ func (i *Inbound) syncVPNBypassState(excludeInterfaces []string) {
 	var err error
 	if active {
 		err = i.enableVPNBypassLocked(interfaceName)
-	} else {
+	} else if len(interfaceNames) == 0 {
+		// Keep an already-enabled bypass while the tunnel interface remains
+		// present but has not produced traffic in this sample. CF tunnels can
+		// briefly reset counters or addresses during endpoint handover.
 		err = i.disableVPNBypassLocked()
 	}
 	if err != nil {
