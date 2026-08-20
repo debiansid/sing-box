@@ -47,34 +47,33 @@ type sharedNetworkRuntime struct {
 }
 
 type SharedNetworkBackend struct {
-	access                sync.RWMutex
-	health                backendHealth
-	flowAccess            sync.Mutex
-	flowReferences        map[SharedNetworkFlowHandle]uint32
-	flowSweepAccess       sync.Mutex
-	flowSweepScratch      mapScanScratch[sharedNetworkOriginalKey, sharedNetworkTokenValue]
-	flowSweepCandidates   []sharedNetworkFlowEntry
-	flowSweepRemoved      uint32
-	proxyUsage            atomic.Uint32
-	proxyUsageKnown       atomic.Bool
-	statusCollector       runtimeStatusCollector
-	runtime               *sharedNetworkRuntime
-	statsMapFD            int
-	mapCapacity           SharedNetworkMapCapacities
-	control               sharedNetworkControl
-	hostIPv4              []netip.Prefix
-	hostIPv6              []netip.Prefix
-	bypassIPv4MapFD       int
-	bypassIPv6MapFD       int
-	bypassIPv4CIDR        []netip.Prefix
-	bypassIPv6CIDR        []netip.Prefix
-	includeSourceIPv4     []netip.Prefix
-	includeSourceIPv6     []netip.Prefix
-	excludeSourceIPv4     []netip.Prefix
-	excludeSourceIPv6     []netip.Prefix
-	includeSourceMAC      []MACAddress
-	excludeSourceMAC      []MACAddress
-	independentBypassCIDR bool
+	access              sync.RWMutex
+	health              backendHealth
+	flowAccess          sync.Mutex
+	flowReferences      map[SharedNetworkFlowHandle]uint32
+	flowSweepAccess     sync.Mutex
+	flowSweepScratch    mapScanScratch[sharedNetworkOriginalKey, sharedNetworkTokenValue]
+	flowSweepCandidates []sharedNetworkFlowEntry
+	flowSweepRemoved    uint32
+	proxyUsage          atomic.Uint32
+	proxyUsageKnown     atomic.Bool
+	statusCollector     runtimeStatusCollector
+	runtime             *sharedNetworkRuntime
+	statsMapFD          int
+	mapCapacity         SharedNetworkMapCapacities
+	control             sharedNetworkControl
+	hostIPv4            []netip.Prefix
+	hostIPv6            []netip.Prefix
+	bypassIPv4MapFD     int
+	bypassIPv6MapFD     int
+	bypassIPv4CIDR      []netip.Prefix
+	bypassIPv6CIDR      []netip.Prefix
+	includeSourceIPv4   []netip.Prefix
+	includeSourceIPv6   []netip.Prefix
+	excludeSourceIPv4   []netip.Prefix
+	excludeSourceIPv6   []netip.Prefix
+	includeSourceMAC    []MACAddress
+	excludeSourceMAC    []MACAddress
 }
 
 func PrepareSharedNetwork(cgroupBackend *CgroupBackend, config SharedNetworkConfig) (*SharedNetworkBackend, error) {
@@ -137,8 +136,7 @@ func PrepareSharedNetwork(cgroupBackend *CgroupBackend, config SharedNetworkConf
 	}
 	var bypassIPv4Map *CiliumEBPF.Map
 	var bypassIPv6Map *CiliumEBPF.Map
-	sharedCgroupMapsLocked := cgroupBackend != nil && !config.IndependentBypassCIDR
-	if sharedCgroupMapsLocked {
+	if cgroupBackend != nil {
 		cgroupBackend.access.RLock()
 		if err := cgroupBackend.health.requireUsable(cgroupBackend.runtime != nil); err != nil {
 			cgroupBackend.access.RUnlock()
@@ -148,7 +146,7 @@ func PrepareSharedNetwork(cgroupBackend *CgroupBackend, config SharedNetworkConf
 		bypassIPv6Map = cgroupBackend.runtime.maps["cgroup_bypass_ipv6"]
 	}
 	err = prepareSharedNetworkRuntime(runtimeState, config.MapCapacity, bypassIPv4Map, bypassIPv6Map)
-	if sharedCgroupMapsLocked {
+	if cgroupBackend != nil {
 		cgroupBackend.access.RUnlock()
 	}
 	if err != nil {
@@ -174,12 +172,11 @@ func PrepareSharedNetwork(cgroupBackend *CgroupBackend, config SharedNetworkConf
 		bypassIPv6MapFD = bypassIPv6Map.FD()
 	}
 	backend := &SharedNetworkBackend{
-		mapCapacity:           config.MapCapacity,
-		runtime:               runtimeState,
-		statsMapFD:            runtimeState.stats_map_fd,
-		bypassIPv4MapFD:       bypassIPv4MapFD,
-		bypassIPv6MapFD:       bypassIPv6MapFD,
-		independentBypassCIDR: config.IndependentBypassCIDR,
+		mapCapacity:     config.MapCapacity,
+		runtime:         runtimeState,
+		statsMapFD:      runtimeState.stats_map_fd,
+		bypassIPv4MapFD: bypassIPv4MapFD,
+		bypassIPv6MapFD: bypassIPv6MapFD,
 	}
 	backend.control.ListenerPort = config.ListenerPort
 	backend.control.UDPTimeoutSeconds = udpTimeoutSeconds

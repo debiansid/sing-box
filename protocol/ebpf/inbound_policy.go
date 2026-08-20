@@ -215,7 +215,6 @@ func (i *Inbound) refreshBypassRuleSetsLocked(warnEmpty bool, logRuleSetCount bo
 			)
 		}
 	}
-	sharedPrefixes := slices.Clone(prefixes)
 	if conflicts := i.fakeIPBypassConflictCount(prefixes); conflicts > 0 && logRuleSetCount {
 		i.logger.Warn(
 			"eBPF FakeIP force interception overrides bypass_rule_set CIDRs: overlaps=",
@@ -229,7 +228,6 @@ func (i *Inbound) refreshBypassRuleSetsLocked(warnEmpty bool, logRuleSetCount bo
 	if backend != nil {
 		hostAddresses, hostBypassPrefixes := i.partitionLocalHostPrefixes(i.localInterfacePrefixes())
 		prefixes = append(prefixes, hostBypassPrefixes...)
-		sharedPrefixes = append(sharedPrefixes, hostBypassPrefixes...)
 		if err := backend.UpdateHostAddresses(hostAddresses); err != nil {
 			return false, err
 		}
@@ -239,7 +237,7 @@ func (i *Inbound) refreshBypassRuleSetsLocked(warnEmpty bool, logRuleSetCount bo
 		}
 		if i.sharedNetwork != nil {
 			if sharedBackend := i.sharedNetwork.sharedBackendInstance(); sharedBackend != nil {
-				if err = sharedBackend.SetBypassCIDRState(sharedPrefixes); err != nil {
+				if err = sharedBackend.SetBypassCIDRState(prefixes); err != nil {
 					return false, err
 				}
 			}
@@ -249,7 +247,7 @@ func (i *Inbound) refreshBypassRuleSetsLocked(warnEmpty bool, logRuleSetCount bo
 	}
 	if i.sharedNetwork != nil {
 		if sharedBackend := i.sharedNetwork.sharedBackendInstance(); sharedBackend != nil {
-			updated, err := sharedBackend.UpdateBypassCIDR(sharedPrefixes)
+			updated, err := sharedBackend.UpdateBypassCIDR(prefixes)
 			if err != nil {
 				return false, err
 			}
