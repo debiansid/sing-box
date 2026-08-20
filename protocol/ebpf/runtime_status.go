@@ -15,6 +15,7 @@ const (
 	ebpfDebugTaskLocalTCPRedirectSweep     = "local_tcp_redirect_sweep"
 	ebpfDebugTaskSharedFlowPressurePoll    = "shared_flow_pressure_poll"
 	ebpfDebugTaskSharedFlowSweep           = "shared_flow_sweep"
+	ebpfDebugTaskSharedFlowReleaseFlush    = "shared_flow_release_flush"
 	ebpfDebugTaskSharedAttachmentReconcile = "shared_attachment_reconcile"
 	ebpfDebugTaskIPv6RouteProbe            = "ipv6_route_probe"
 	ebpfDebugTaskRuntimeStatusCollection   = "runtime_status_collection"

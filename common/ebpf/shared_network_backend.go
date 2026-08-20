@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"sync"
 	"sync/atomic"
+	"time"
 	"unsafe"
 
 	E "github.com/sagernet/sing/common/exceptions"
@@ -51,6 +52,7 @@ type SharedNetworkBackend struct {
 	flowAccess          sync.Mutex
 	replyTokenSequence  atomic.Uint64
 	flowReferences      map[SharedNetworkFlowHandle]uint32
+	flowReleases        map[SharedNetworkFlowHandle]time.Time
 	flowSweepAccess     sync.Mutex
 	flowSweepScratch    mapScanScratch[sharedNetworkOriginalKey, sharedNetworkTokenValue]
 	flowSweepCandidates []sharedNetworkFlowEntry

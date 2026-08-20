@@ -24,6 +24,8 @@ const (
 	sharedFlowPressureExitPercent  = 50
 	sharedFlowPressureExitRounds   = 3
 	sharedFlowFallbackScanBudget   = 1024
+	sharedFlowReleaseFlushInterval = time.Second
+	sharedFlowReleaseFlushBudget   = 4096
 )
 
 type sharedNetwork struct {
@@ -299,11 +301,12 @@ func (s *sharedNetwork) stopFlowJanitor() {
 
 func (s *sharedNetwork) runFlowJanitor(ctx context.Context, done chan<- struct{}) {
 	defer close(done)
-	ticker := time.NewTicker(sharedFlowPressureInterval)
+	ticker := time.NewTicker(sharedFlowReleaseFlushInterval)
 	defer ticker.Stop()
 	pressure := false
 	belowExitRounds := 0
 	lastSweep := time.Now()
+	lastPressurePoll := time.Time{}
 	var lastReservationFailures uint64
 	scanInProgress := false
 	attachmentActive := s.tcManager != nil && s.tcManager.isEnabled()
@@ -329,6 +332,16 @@ func (s *sharedNetwork) runFlowJanitor(ctx context.Context, done chan<- struct{}
 			attachmentActive = true
 			lastSweep = time.Time{}
 		}
+		flushStarted := time.Now()
+		_, flushErr := backend.FlushReleasedTCPFlows(now, sharedFlowReleaseFlushBudget)
+		s.inbound.debug.observe(ebpfDebugTaskSharedFlowReleaseFlush, time.Since(flushStarted), flushErr)
+		if flushErr != nil {
+			s.janitorWarnings.warn(s.inbound.logger, "flush released shared-network TCP flows: ", flushErr)
+		}
+		if now.Sub(lastPressurePoll) < sharedFlowPressureInterval {
+			continue
+		}
+		lastPressurePoll = now
 		reservationPressure := false
 		pollStarted := time.Now()
 		reservationFailures, failureErr := backend.TokenReservationFailures()

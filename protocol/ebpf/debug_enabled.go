@@ -21,6 +21,7 @@ type eBPFDebugState struct {
 	localTCPRedirectSweep     eBPFDebugTaskMetric
 	sharedFlowPressurePoll    eBPFDebugTaskMetric
 	sharedFlowSweep           eBPFDebugTaskMetric
+	sharedFlowReleaseFlush    eBPFDebugTaskMetric
 	sharedAttachmentReconcile eBPFDebugTaskMetric
 	ipv6RouteProbe            eBPFDebugTaskMetric
 	runtimeStatusCollection   eBPFDebugTaskMetric
@@ -157,6 +158,8 @@ func (d *eBPFDebugState) metric(task string) *eBPFDebugTaskMetric {
 		return &d.sharedFlowPressurePoll
 	case ebpfDebugTaskSharedFlowSweep:
 		return &d.sharedFlowSweep
+	case ebpfDebugTaskSharedFlowReleaseFlush:
+		return &d.sharedFlowReleaseFlush
 	case ebpfDebugTaskSharedAttachmentReconcile:
 		return &d.sharedAttachmentReconcile
 	case ebpfDebugTaskIPv6RouteProbe:
@@ -278,6 +281,7 @@ func (d *eBPFDebugState) snapshot() *eBPFDebugSnapshot {
 			ebpfDebugTaskLocalTCPRedirectSweep:     d.localTCPRedirectSweep.snapshot(),
 			ebpfDebugTaskSharedFlowPressurePoll:    d.sharedFlowPressurePoll.snapshot(),
 			ebpfDebugTaskSharedFlowSweep:           d.sharedFlowSweep.snapshot(),
+			ebpfDebugTaskSharedFlowReleaseFlush:    d.sharedFlowReleaseFlush.snapshot(),
 			ebpfDebugTaskSharedAttachmentReconcile: d.sharedAttachmentReconcile.snapshot(),
 			ebpfDebugTaskIPv6RouteProbe:            d.ipv6RouteProbe.snapshot(),
 			ebpfDebugTaskRuntimeStatusCollection:   d.runtimeStatusCollection.snapshot(),

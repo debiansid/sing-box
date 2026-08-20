@@ -273,8 +273,19 @@ func (b *SharedNetworkBackend) ReleaseFlow(flow *SharedNetworkFlowHandle) error 
 	if !b.releaseFlowReferenceLocked(*flow) {
 		return nil
 	}
+	if flow.originalKey.Protocol == ProtocolTCP {
+		b.deferTCPFlowReleaseLocked(*flow, time.Now())
+		return nil
+	}
 	_, err := b.deleteFlowGenerationLocked(*flow)
 	return err
+}
+
+func (b *SharedNetworkBackend) deferTCPFlowReleaseLocked(flow SharedNetworkFlowHandle, now time.Time) {
+	if b.flowReleases == nil {
+		b.flowReleases = make(map[SharedNetworkFlowHandle]time.Time)
+	}
+	b.flowReleases[flow] = now.Add(sharedNetworkTCPReleaseGrace)
 }
 
 func (b *SharedNetworkBackend) validateFlowGenerationLocked(flow SharedNetworkFlowHandle) error {
@@ -338,10 +349,50 @@ func (b *SharedNetworkBackend) deleteTokenGenerationLocked(flow SharedNetworkFlo
 }
 
 func (b *SharedNetworkBackend) retainFlowLocked(flow SharedNetworkFlowHandle) {
+	delete(b.flowReleases, flow)
 	if b.flowReferences == nil {
 		b.flowReferences = make(map[SharedNetworkFlowHandle]uint32)
 	}
 	b.flowReferences[flow]++
+}
+
+func (b *SharedNetworkBackend) FlushReleasedTCPFlows(now time.Time, budget uint32) (uint32, error) {
+	if b == nil {
+		return 0, errBackendClosed
+	}
+	if budget == 0 {
+		return 0, unix.EINVAL
+	}
+	b.access.RLock()
+	defer b.access.RUnlock()
+	if b.runtime == nil {
+		return 0, errBackendClosed
+	}
+	b.flowAccess.Lock()
+	defer b.flowAccess.Unlock()
+	var processed uint32
+	var removed uint32
+	var flushErr error
+	for flow, deadline := range b.flowReleases {
+		if processed >= budget || now.Before(deadline) {
+			continue
+		}
+		processed++
+		if b.flowReferences[flow] > 0 {
+			delete(b.flowReleases, flow)
+			continue
+		}
+		delete(b.flowReleases, flow)
+		flowRemoved, err := b.deleteFlowGenerationLocked(flow)
+		if err != nil {
+			flushErr = E.Errors(flushErr, err)
+			continue
+		}
+		if flowRemoved {
+			removed++
+		}
+	}
+	return removed, flushErr
 }
 
 func (b *SharedNetworkBackend) releaseFlowReferenceLocked(flow SharedNetworkFlowHandle) bool {

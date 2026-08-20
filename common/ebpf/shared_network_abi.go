@@ -13,6 +13,8 @@ import (
 
 const sharedNetworkStatTokenReservationFailure = 0
 
+const sharedNetworkTCPReleaseGrace = time.Second
+
 const (
 	sharedNetworkScratchSize         = 272
 	sharedNetworkFragmentKeySize     = 44
