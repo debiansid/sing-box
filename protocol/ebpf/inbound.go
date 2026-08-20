@@ -106,6 +106,7 @@ type Inbound struct {
 	ipv6Warnings        warningLimiter
 	tcpJanitorWarn      warningLimiter
 	runtimeStatusWarn   warningLimiter
+	maintenanceAccess   sync.RWMutex
 	tcpJanitorStop      context.CancelFunc
 	tcpJanitorDone      chan struct{}
 	tcpJanitorWake      chan struct{}

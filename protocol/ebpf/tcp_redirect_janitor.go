@@ -25,7 +25,9 @@ func (i *Inbound) startTCPRedirectJanitor() {
 	done := make(chan struct{})
 	i.tcpJanitorStop = cancel
 	i.tcpJanitorDone = done
+	i.maintenanceAccess.Lock()
 	i.tcpJanitorWake = make(chan struct{}, 1)
+	i.maintenanceAccess.Unlock()
 	go i.runTCPRedirectJanitor(ctx, done)
 }
 
@@ -37,15 +39,20 @@ func (i *Inbound) stopTCPRedirectJanitor() {
 	<-i.tcpJanitorDone
 	i.tcpJanitorStop = nil
 	i.tcpJanitorDone = nil
+	i.maintenanceAccess.Lock()
 	i.tcpJanitorWake = nil
+	i.maintenanceAccess.Unlock()
 }
 
 func (i *Inbound) wakeTCPRedirectJanitor() {
-	if i.tcpJanitorWake == nil {
+	i.maintenanceAccess.RLock()
+	wake := i.tcpJanitorWake
+	i.maintenanceAccess.RUnlock()
+	if wake == nil {
 		return
 	}
 	select {
-	case i.tcpJanitorWake <- struct{}{}:
+	case wake <- struct{}{}:
 	default:
 	}
 }

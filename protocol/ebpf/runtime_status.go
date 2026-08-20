@@ -164,7 +164,9 @@ func (i *Inbound) startRuntimeStatusReporter() {
 	wake := make(chan struct{}, 1)
 	i.runtimeStatusCancel = cancel
 	i.runtimeStatusDone = done
+	i.maintenanceAccess.Lock()
 	i.runtimeStatusWake = wake
+	i.maintenanceAccess.Unlock()
 	go func() {
 		defer close(done)
 		var ticker *time.Ticker
@@ -218,15 +220,20 @@ func (i *Inbound) stopRuntimeStatusReporter() {
 	<-i.runtimeStatusDone
 	i.runtimeStatusCancel = nil
 	i.runtimeStatusDone = nil
+	i.maintenanceAccess.Lock()
 	i.runtimeStatusWake = nil
+	i.maintenanceAccess.Unlock()
 }
 
 func (i *Inbound) requestRuntimeStatus() {
-	if i.runtimeStatusWake == nil {
+	i.maintenanceAccess.RLock()
+	wake := i.runtimeStatusWake
+	i.maintenanceAccess.RUnlock()
+	if wake == nil {
 		return
 	}
 	select {
-	case i.runtimeStatusWake <- struct{}{}:
+	case wake <- struct{}{}:
 	default:
 	}
 }
