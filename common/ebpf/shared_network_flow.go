@@ -49,10 +49,6 @@ func (b *SharedNetworkBackend) lookupFlow(
 	if b.runtime == nil {
 		return OriginalDestination{}, nil, errBackendClosed
 	}
-	if retain {
-		b.flowAccess.Lock()
-		defer b.flowAccess.Unlock()
-	}
 	var value sharedNetworkOriginalValue
 	if err = lookupMap(
 		int(b.runtime.flow_by_token_map_fd),
@@ -67,6 +63,10 @@ func (b *SharedNetworkBackend) lookupFlow(
 	address, err := sharedNetworkOriginalAddress(value)
 	if err != nil {
 		return OriginalDestination{}, nil, err
+	}
+	if retain {
+		b.flowAccess.Lock()
+		defer b.flowAccess.Unlock()
 	}
 	flow := makeSharedNetworkFlowHandle(key, value)
 	if err = b.validateFlowGenerationLocked(flow); err != nil {

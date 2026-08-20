@@ -158,7 +158,9 @@ INLINE bool load_cached_token(struct sb_shared_scratch *scratch) {
         &scratch->original);
     if (existing == 0) return false;
     __builtin_memcpy(&scratch->token, existing, sizeof(scratch->token));
-    refresh_activity_timestamp(&existing->last_seen_ns, ktime_get_ns());
+    if (scratch->original.protocol != IPPROTO_TCP_VALUE) {
+        refresh_activity_timestamp(&existing->last_seen_ns, ktime_get_ns());
+    }
     return true;
 }
 
