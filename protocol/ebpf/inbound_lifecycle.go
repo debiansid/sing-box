@@ -7,6 +7,7 @@ import (
 
 	"github.com/sagernet/sing-box/adapter"
 	ECommon "github.com/sagernet/sing-box/common/ebpf"
+	"github.com/sagernet/sing/common/control"
 	E "github.com/sagernet/sing/common/exceptions"
 )
 
@@ -148,7 +149,13 @@ func (i *Inbound) prepareCgroupBackend() error {
 		}
 		return E.Errors(E.New("network manager does not support socket protection"), closeErr)
 	}
-	if err = protectManager.RegisterSocketProtectFunc(backend.SocketProtectFunc()); err != nil {
+	// The eBPF socket bypass only prevents local cgroup interception. When an
+	// Android VPN installs the default route on tun0, sing-box's own upstream
+	// sockets must also be protected at the platform level so they continue to
+	// use the underlying physical network. This is especially important after
+	// VPN bypass expands to 0/0 for system and tethered traffic.
+	protectFunc := control.Append(i.networkManager.ProtectFunc(), backend.SocketProtectFunc())
+	if err = protectManager.RegisterSocketProtectFunc(protectFunc); err != nil {
 		closeErr := backend.Close()
 		if backend.IsClosed() {
 			i.setCgroupBackend(nil)
