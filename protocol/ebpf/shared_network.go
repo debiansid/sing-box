@@ -385,6 +385,9 @@ func (s *sharedNetwork) runFlowJanitor(ctx context.Context, done chan<- struct{}
 			reservationPressure = reservationFailures > lastReservationFailures
 			lastReservationFailures = reservationFailures
 		}
+		if reservationPressure {
+			s.inbound.requestRuntimeStatus()
+		}
 		if !sharedFlowSweepRequired(now.Sub(lastSweep), pressure, reservationPressure, scanInProgress) {
 			continue
 		}

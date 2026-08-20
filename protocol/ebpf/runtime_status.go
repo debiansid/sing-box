@@ -19,6 +19,7 @@ const (
 	ebpfDebugTaskSharedAttachmentReconcile = "shared_attachment_reconcile"
 	ebpfDebugTaskIPv6RouteProbe            = "ipv6_route_probe"
 	ebpfDebugTaskRuntimeStatusCollection   = "runtime_status_collection"
+	ebpfRuntimeStatusEventMinInterval      = 30 * time.Second
 )
 
 type ebpfLocalRuntimeStatus struct {
@@ -160,18 +161,50 @@ func (i *Inbound) startRuntimeStatusReporter() {
 	}
 	ctx, cancel := context.WithCancel(i.ctx)
 	done := make(chan struct{})
+	wake := make(chan struct{}, 1)
 	i.runtimeStatusCancel = cancel
 	i.runtimeStatusDone = done
+	i.runtimeStatusWake = wake
 	go func() {
 		defer close(done)
-		ticker := time.NewTicker(ebpfRuntimeStatusInterval)
-		defer ticker.Stop()
+		var ticker *time.Ticker
+		var tickerChannel <-chan time.Time
+		if ebpfRuntimeStatusInterval > 0 {
+			ticker = time.NewTicker(ebpfRuntimeStatusInterval)
+			tickerChannel = ticker.C
+			defer ticker.Stop()
+		}
+		lastCollection := time.Now()
+		var eventTimer *time.Timer
+		var eventTimerChannel <-chan time.Time
+		defer func() {
+			if eventTimer != nil {
+				eventTimer.Stop()
+			}
+		}()
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case <-ticker.C:
+			case <-tickerChannel:
 				i.logRuntimeStatus("periodic")
+				lastCollection = time.Now()
+			case <-wake:
+				remaining := ebpfRuntimeStatusEventMinInterval - time.Since(lastCollection)
+				if remaining > 0 {
+					if eventTimer == nil {
+						eventTimer = time.NewTimer(remaining)
+						eventTimerChannel = eventTimer.C
+					}
+					continue
+				}
+				i.logRuntimeStatus("event")
+				lastCollection = time.Now()
+			case <-eventTimerChannel:
+				eventTimerChannel = nil
+				eventTimer = nil
+				i.logRuntimeStatus("event")
+				lastCollection = time.Now()
 			}
 		}
 	}()
@@ -185,4 +218,15 @@ func (i *Inbound) stopRuntimeStatusReporter() {
 	<-i.runtimeStatusDone
 	i.runtimeStatusCancel = nil
 	i.runtimeStatusDone = nil
+	i.runtimeStatusWake = nil
+}
+
+func (i *Inbound) requestRuntimeStatus() {
+	if i.runtimeStatusWake == nil {
+		return
+	}
+	select {
+	case i.runtimeStatusWake <- struct{}{}:
+	default:
+	}
 }

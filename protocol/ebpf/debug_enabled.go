@@ -15,7 +15,7 @@ import (
 	"github.com/sagernet/sing-box/log"
 )
 
-const ebpfRuntimeStatusInterval = 5 * time.Minute
+const ebpfRuntimeStatusInterval time.Duration = 0
 
 type eBPFDebugState struct {
 	localTCPRedirectSweep     eBPFDebugTaskMetric
@@ -326,7 +326,7 @@ func ebpfRuntimeStatusReporterEnabled(logger log.ContextLogger) bool {
 
 func logEBPFDebugBuild(logger log.ContextLogger) {
 	logger.Info(
-		"eBPF debug instrumentation enabled: runtime_status_interval=", ebpfRuntimeStatusInterval,
+		"eBPF debug instrumentation enabled: runtime_status=event_driven",
 	)
 }
 

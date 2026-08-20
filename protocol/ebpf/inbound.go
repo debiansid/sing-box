@@ -111,6 +111,7 @@ type Inbound struct {
 	tcpJanitorWake      chan struct{}
 	runtimeStatusCancel context.CancelFunc
 	runtimeStatusDone   chan struct{}
+	runtimeStatusWake   chan struct{}
 	programStatsRelease func() error
 	debug               eBPFDebugState
 	diagnostics         eBPFDiagnostics

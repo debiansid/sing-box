@@ -31,6 +31,7 @@ func (s *sharedNetwork) NewConnection(ctx context.Context, conn net.Conn, metada
 	original, flow, err := backend.LookupFlow(ECommon.ProtocolTCP, client, tokenDestination)
 	if errors.Is(err, unix.ENOENT) {
 		s.inbound.diagnostics.sharedTCPRedirectMiss.Add(1)
+		s.inbound.requestRuntimeStatus()
 		s.logMissingSharedTCPRedirect(ctx, backend, client, tokenDestination)
 		conn.Close()
 		return
@@ -127,6 +128,7 @@ func (s *sharedNetwork) NewPacket(buffer *buf.Buffer, oob []byte, source M.Socks
 		if err != nil {
 			if errors.Is(err, unix.ENOENT) {
 				s.inbound.diagnostics.sharedUDPRedirectMiss.Add(1)
+				s.inbound.requestRuntimeStatus()
 			} else {
 				s.inbound.diagnostics.sharedUDPLookupError.Add(1)
 			}

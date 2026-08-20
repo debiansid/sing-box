@@ -48,6 +48,7 @@ func (i *Inbound) NewConnection(ctx context.Context, conn net.Conn, metadata ada
 	if errors.Is(err, unix.ENOENT) {
 		i.diagnostics.localTCPRedirectMiss.Add(1)
 		i.wakeTCPRedirectJanitor()
+		i.requestRuntimeStatus()
 		i.logMissingTCPRedirect(ctx, backend, listenerDestination)
 		conn.Close()
 		return
