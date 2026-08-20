@@ -22,12 +22,6 @@
 // to "next", which can skip tethering programs attached after sing-box.
 #define SB_SHARED_ACT_CONTINUE TC_ACT_UNSPEC
 
-INLINE int shared_bypass_action(const struct sb_shared_control *control) {
-    return (control->flags & SB_SHARED_FLAG_STOP_CHAIN_ON_BYPASS) != 0U
-        ? TC_ACT_PIPE
-        : SB_SHARED_ACT_CONTINUE;
-}
-
 #ifndef BPF_F_MARK_MANGLED_0
 #define BPF_F_MARK_MANGLED_0 (1ULL << 5)
 #endif
@@ -255,7 +249,7 @@ NOINLINE int ingress_ipv4(
             4U);
         if (!load_fragment(scratch)) return TC_ACT_SHOT;
         if (scratch->fragment_value.action == SB_SHARED_POLICY_BYPASS) {
-            return shared_bypass_action(control);
+            return SB_SHARED_ACT_CONTINUE;
         }
         if (scratch->fragment_value.action != SB_SHARED_POLICY_PROXY) {
             return TC_ACT_SHOT;
@@ -294,7 +288,7 @@ NOINLINE int ingress_ipv4(
             if (more_fragments && !store_ipv4_fragment_bypass(scratch, skb, ip)) {
                 return TC_ACT_SHOT;
             }
-            return shared_bypass_action(control);
+            return SB_SHARED_ACT_CONTINUE;
         }
         if (!ipv4_client_selected(
                 scratch->source_mac.address,
@@ -304,7 +298,7 @@ NOINLINE int ingress_ipv4(
             if (more_fragments && !store_ipv4_fragment_bypass(scratch, skb, ip)) {
                 return TC_ACT_SHOT;
             }
-            return shared_bypass_action(control);
+            return SB_SHARED_ACT_CONTINUE;
         }
         __u8 policy = ipv4_policy(
             (const __u8 *)&ip->destination,
@@ -319,7 +313,7 @@ NOINLINE int ingress_ipv4(
             if (more_fragments && !store_ipv4_fragment_bypass(scratch, skb, ip)) {
                 return TC_ACT_SHOT;
             }
-            return shared_bypass_action(control);
+            return SB_SHARED_ACT_CONTINUE;
         }
     }
 
@@ -593,7 +587,7 @@ NOINLINE int ingress_ipv6(
             16U);
         if (!load_fragment(scratch)) return TC_ACT_SHOT;
         if (scratch->fragment_value.action == SB_SHARED_POLICY_BYPASS) {
-            return shared_bypass_action(control);
+            return SB_SHARED_ACT_CONTINUE;
         }
         if (scratch->fragment_value.action != SB_SHARED_POLICY_PROXY) {
             return TC_ACT_SHOT;
@@ -629,7 +623,7 @@ NOINLINE int ingress_ipv6(
                 !store_ipv6_fragment_bypass(scratch, skb, ip, protocol, fragment_id)) {
                 return TC_ACT_SHOT;
             }
-            return shared_bypass_action(control);
+            return SB_SHARED_ACT_CONTINUE;
         }
         if (!ipv6_client_selected(scratch->source_mac.address, ip->source, control)) {
             cache_bypass(scratch, protocol, tcp_sequence);
@@ -637,7 +631,7 @@ NOINLINE int ingress_ipv6(
                 !store_ipv6_fragment_bypass(scratch, skb, ip, protocol, fragment_id)) {
                 return TC_ACT_SHOT;
             }
-            return shared_bypass_action(control);
+            return SB_SHARED_ACT_CONTINUE;
         }
         __u8 policy = ipv6_policy(
             ip->destination,
@@ -653,7 +647,7 @@ NOINLINE int ingress_ipv6(
                 !store_ipv6_fragment_bypass(scratch, skb, ip, protocol, fragment_id)) {
                 return TC_ACT_SHOT;
             }
-            return shared_bypass_action(control);
+            return SB_SHARED_ACT_CONTINUE;
         }
     }
 

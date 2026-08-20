@@ -237,6 +237,10 @@ func (b *SharedNetworkBackend) SetBypassCIDRState(prefixes []netip.Prefix) error
 	if b == nil {
 		return errBackendClosed
 	}
+	if b.independentBypassCIDR {
+		_, err := b.UpdateBypassCIDR(prefixes)
+		return err
+	}
 	ipv4, ipv6, err := compileBypassCIDRPolicy(prefixes)
 	if err != nil {
 		return E.Cause(err, "compile shared-network bypass CIDR state")
@@ -257,34 +261,6 @@ func (b *SharedNetworkBackend) SetBypassCIDRState(prefixes []netip.Prefix) error
 		b.control.Flags = oldFlags
 	}
 	return err
-}
-
-// SetBypassChainStop controls whether bypass packets stop later TC programs.
-// Android tethering installs an offload classifier after sing-box; when a VPN
-// is active, bypass packets must reach policy routing instead of that classifier.
-func (b *SharedNetworkBackend) SetBypassChainStop(enabled bool) error {
-	if b == nil {
-		return errBackendClosed
-	}
-	b.access.Lock()
-	defer b.access.Unlock()
-	if err := b.requireUsableLocked(); err != nil {
-		return err
-	}
-	oldFlags := b.control.Flags
-	if enabled {
-		b.control.Flags |= sharedNetworkFlagStopChainOnBypass
-	} else {
-		b.control.Flags &^= sharedNetworkFlagStopChainOnBypass
-	}
-	if b.control.Flags == oldFlags {
-		return nil
-	}
-	if err := b.updateControl(); err != nil {
-		b.control.Flags = oldFlags
-		return err
-	}
-	return nil
 }
 
 func rollbackSharedNetworkPolicyMaps(

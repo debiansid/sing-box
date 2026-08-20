@@ -62,7 +62,7 @@ func (i *Inbound) Start(stage adapter.StartStage) error {
 				return combineStartError(err, i.cleanupStartFailure())
 			}
 			// The bypass watcher starts before shared TC. Re-apply its state now
-			// so an already-connected VPN immediately stops Android offload.
+			// so an already-connected VPN cannot leave 0/0 in the hotspot policy.
 			i.refreshBypassPolicy()
 		}
 		if i.cgroupEnabled {
