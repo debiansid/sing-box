@@ -473,6 +473,13 @@ func (b *SharedNetworkBackend) RuntimeStatus() SharedNetworkRuntimeStatus {
 	return status
 }
 
+func (b *SharedNetworkBackend) MapCapacity() SharedNetworkMapCapacities {
+	if b == nil {
+		return SharedNetworkMapCapacities{}
+	}
+	return b.mapCapacity
+}
+
 func (b *SharedNetworkBackend) Close() error {
 	if b == nil {
 		return nil

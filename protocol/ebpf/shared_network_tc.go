@@ -286,6 +286,19 @@ func (m *sharedTCManager) updateEnabledLocked(enabled bool) error {
 }
 
 func (m *sharedTCManager) detachLocked(attachment *sharedTCAttachment) error {
+	if m.backend != nil {
+		if removed, complete, err := m.backend.PurgeInterfaceFlows(
+			uint32(attachment.interfaceIndex),
+			m.backend.MapCapacity().Proxy,
+		); err != nil {
+			m.refreshWarnings.warn(m.logger, "purge eBPF shared-network state for ", attachment.interfaceName, ": ", err)
+		} else if removed > 0 || !complete {
+			m.logger.Debug(
+				"eBPF shared-network purged interface state: interface=", attachment.interfaceName,
+				" removed=", removed, ", complete=", complete,
+			)
+		}
+	}
 	detachErr := E.Errors(
 		attachment.tcx.Close(),
 		detachSharedTCFilter(attachment.ingress),

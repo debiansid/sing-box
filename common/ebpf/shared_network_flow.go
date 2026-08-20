@@ -507,6 +507,55 @@ func (b *SharedNetworkBackend) SweepOrphanedFlows(
 	return result, sweepErr
 }
 
+// PurgeInterfaceFlows removes state belonging to an interface generation that
+// is about to be detached. It is intentionally a control-plane operation.
+func (b *SharedNetworkBackend) PurgeInterfaceFlows(interfaceIndex uint32, budget uint32) (uint32, bool, error) {
+	if b == nil {
+		return 0, false, errBackendClosed
+	}
+	if interfaceIndex == 0 || budget == 0 {
+		return 0, false, unix.EINVAL
+	}
+	b.flowSweepAccess.Lock()
+	defer b.flowSweepAccess.Unlock()
+	b.access.RLock()
+	defer b.access.RUnlock()
+	if b.runtime == nil {
+		return 0, false, errBackendClosed
+	}
+	b.flowSweepCandidates = b.flowSweepCandidates[:0]
+	scan, err := b.flowSweepScratch.scan(
+		b.runtime.maps["shared_flow_by_original"],
+		b.mapCapacity.Proxy,
+		budget,
+		func(key sharedNetworkOriginalKey, value sharedNetworkTokenValue) {
+			if key.InterfaceIndex == interfaceIndex {
+				b.flowSweepCandidates = append(b.flowSweepCandidates, sharedNetworkFlowEntry{key: key, value: value})
+			}
+		},
+	)
+	if err != nil {
+		return 0, scan.Complete, err
+	}
+	var removed uint32
+	for _, entry := range b.flowSweepCandidates {
+		flow := makeSharedNetworkFlowHandleFromOriginal(
+			entry.key,
+			entry.value.TokenAddr,
+			b.control.ListenerPort,
+			entry.value.Generation,
+		)
+		b.flowAccess.Lock()
+		_, removeErr := b.deleteFlowGenerationLocked(flow)
+		b.flowAccess.Unlock()
+		if removeErr != nil {
+			return removed, scan.Complete, removeErr
+		}
+		removed++
+	}
+	return removed, scan.Complete, nil
+}
+
 func (b *SharedNetworkBackend) removeOrphanedFlowCandidate(
 	mapFD int,
 	entry sharedNetworkFlowEntry,
