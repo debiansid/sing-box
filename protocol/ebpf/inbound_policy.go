@@ -285,7 +285,6 @@ func (i *Inbound) refreshBypassRuleSetsLocked(warnEmpty bool, logRuleSetCount bo
 		)
 	}
 	if i.vpnBypassActive {
-		sharedPrefixes = slices.Clone(fullBypassPrefixes)
 		prefixes = slices.Clone(fullBypassPrefixes)
 	}
 	backend := i.cgroupBackendInstance()
