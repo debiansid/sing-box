@@ -222,8 +222,6 @@ func NewDefault(ctx context.Context, options option.DialerOptions) (*DefaultDial
 	if options.TCPMultiPath {
 		dialer4.SetMultipathTCP(true)
 	}
-	tcpDialer4 := tfo.Dialer{Dialer: dialer4, DisableTFO: !options.TCPFastOpen}
-	tcpDialer6 := tfo.Dialer{Dialer: dialer6, DisableTFO: !options.TCPFastOpen}
 	if networkManager != nil {
 		// net.Dialer and tfo.Dialer both honor ControlContext. Keeping the
 		// context here is what allows shared hotspot flows to stay on tun0
@@ -240,6 +238,8 @@ func NewDefault(ctx context.Context, options option.DialerOptions) (*DefaultDial
 			udpDialer6.ControlContext = controlContextAppend(udpDialer6.ControlContext, autoDetectBindContext)
 		}
 	}
+	tcpDialer4 := tfo.Dialer{Dialer: dialer4, DisableTFO: !options.TCPFastOpen}
+	tcpDialer6 := tfo.Dialer{Dialer: dialer6, DisableTFO: !options.TCPFastOpen}
 	return &DefaultDialer{
 		dialer4:                tcpDialer4,
 		dialer6:                tcpDialer6,
