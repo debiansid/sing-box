@@ -285,6 +285,7 @@ func (i *Inbound) refreshBypassRuleSetsLocked(warnEmpty bool, logRuleSetCount bo
 		)
 	}
 	if i.vpnBypassActive {
+		sharedPrefixes = slices.Clone(fullBypassPrefixes)
 		prefixes = slices.Clone(fullBypassPrefixes)
 	}
 	backend := i.cgroupBackendInstance()
@@ -423,8 +424,17 @@ func (i *Inbound) enableVPNBypassLocked(interfaceName string) error {
 		return nil
 	}
 	i.vpnBypassActive = true
+	if backend := i.cgroupBackendInstance(); backend != nil {
+		if err := backend.SetPreserveUIDActive(true); err != nil {
+			i.vpnBypassActive = false
+			return err
+		}
+	}
 	if _, err := i.refreshBypassRuleSetsLocked(false, false); err != nil {
 		i.vpnBypassActive = false
+		if backend := i.cgroupBackendInstance(); backend != nil {
+			_ = backend.SetPreserveUIDActive(false)
+		}
 		return err
 	}
 	i.logger.Info("eBPF cgroup socket redirection bypassed: excluded interface has a default route: ", interfaceName)
@@ -436,9 +446,18 @@ func (i *Inbound) disableVPNBypassLocked() error {
 		return nil
 	}
 	i.vpnBypassActive = false
+	if backend := i.cgroupBackendInstance(); backend != nil {
+		if err := backend.SetPreserveUIDActive(false); err != nil {
+			i.vpnBypassActive = true
+			return err
+		}
+	}
 	updated, err := i.refreshBypassRuleSetsLocked(false, false)
 	if err != nil {
 		i.vpnBypassActive = true
+		if backend := i.cgroupBackendInstance(); backend != nil {
+			_ = backend.SetPreserveUIDActive(true)
+		}
 		return err
 	}
 	i.logger.Info("eBPF cgroup socket redirection resumed: excluded VPN interface disconnected")

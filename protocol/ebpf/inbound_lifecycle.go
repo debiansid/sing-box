@@ -19,6 +19,7 @@ func (i *Inbound) Start(stage adapter.StartStage) error {
 		if err := i.selectRedirectPrefixes(); err != nil {
 			return err
 		}
+		i.detectCloudflareUID()
 		if i.cgroupEnabled && i.androidUIDOptions == nil {
 			if err := i.prepareCgroupBackend(); err != nil {
 				return err
@@ -28,6 +29,7 @@ func (i *Inbound) Start(stage adapter.StartStage) error {
 			i.sharedNetwork = newSharedNetwork(i, i.sharedNetworkOptions)
 		}
 	case adapter.StartStateStart:
+		i.detectCloudflareUID()
 		if i.cgroupEnabled && i.androidUIDOptions != nil {
 			if err := i.resolveAndroidUIDPolicy(); err != nil {
 				return combineStartError(E.Cause(err, "resolve Android UID policy"), i.cleanupStartFailure())
@@ -98,6 +100,7 @@ func (i *Inbound) Start(stage adapter.StartStage) error {
 				", uid_policy={include_configured:", i.cgroupPolicy.IncludeUIDConfigured,
 				", include:[", formatUIDRanges(i.cgroupPolicy.IncludeUID), "]",
 				", exclude:[", formatUIDRanges(i.cgroupPolicy.ExcludeUID), "]}",
+				", preserve_vpn_uid=", i.preserveVPNUID,
 				", bypass_cidr={ipv4:", bypassIPv4Count, ", ipv6:", bypassIPv6Count, "}",
 				", state_capacity={tcp_redirect:", i.cgroupMapCapacity.TCPRedirect,
 				", udp_redirect:", i.cgroupMapCapacity.UDPRedirect,
@@ -138,6 +141,7 @@ func (i *Inbound) prepareCgroupBackend() error {
 		MapCapacity:   i.cgroupMapCapacity,
 		UDPTimeout:    i.udpTimeout,
 		Policy:        policy,
+		PreserveUID:   i.preserveVPNUID,
 	})
 	if err != nil {
 		return err

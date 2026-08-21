@@ -101,6 +101,7 @@ type Inbound struct {
 	vpnWatchDone           chan struct{}
 	vpnInterfacePackets    map[string]interfacePacketCount
 	vpnBypassActive        bool
+	preserveVPNUID         uint32
 
 	udpClientTable      udpClientTable
 	udpWarnings         udpWarningLimiters

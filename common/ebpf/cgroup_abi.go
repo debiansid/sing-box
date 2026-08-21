@@ -131,6 +131,7 @@ type CgroupConfig struct {
 	MapCapacity   CgroupMapCapacity
 	UDPTimeout    time.Duration
 	Policy        CgroupPolicy
+	PreserveUID   uint32
 }
 
 func DefaultCgroupMapCapacity() CgroupMapCapacity {

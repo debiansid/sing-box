@@ -14,6 +14,30 @@ import (
 	"github.com/sagernet/sing/common/ranges"
 )
 
+const cloudflareVPNPackage = "com.cloudflare.cloudflareoneagent"
+
+// detectCloudflareUID prepares a dormant UID policy for the Cloudflare VPN.
+// It is activated only after tun+ takes over the default route, so normal
+// interception remains unchanged during tunnel establishment.
+func (i *Inbound) detectCloudflareUID() {
+	if i.preserveVPNUID != 0 || !i.cgroupEnabled || i.androidUIDOptions != nil ||
+		i.cgroupPolicy.IncludeUIDConfigured || len(i.cgroupPolicy.ExcludeUID) != 0 {
+		return
+	}
+	packageManager := i.networkManager.PackageManager()
+	if packageManager == nil {
+		return
+	}
+	uid, loaded := packageManager.IDByPackage(cloudflareVPNPackage)
+	if !loaded {
+		return
+	}
+	i.cgroupPolicy.IncludeUIDConfigured = true
+	i.cgroupPolicy.IncludeUID = append(i.cgroupPolicy.IncludeUID, ECommon.UIDRange{Start: uid, End: uid})
+	i.preserveVPNUID = uid
+	i.logger.Info("eBPF will preserve Cloudflare VPN endpoint UID: ", uid)
+}
+
 const androidUserRange = 100000
 
 type androidUIDOptions struct {
