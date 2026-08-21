@@ -41,6 +41,15 @@ func getInterfacePacketCount(interfaceName string) (rx uint64, tx uint64, err er
 	return rx, tx, nil
 }
 
+type interfacePacketCount struct {
+	rx uint64
+	tx uint64
+}
+
+func packetCountIncreased(previous, current interfacePacketCount) bool {
+	return current.rx > previous.rx || current.tx > previous.tx
+}
+
 func findActiveExcludedInterfaceNames(excludeInterfaces []string) []string {
 	if len(excludeInterfaces) == 0 {
 		return nil
@@ -144,17 +153,23 @@ func excludedInterfaceWithDefaultRoute(interfaceNames []string) (string, bool) {
 	return "", false
 }
 
-func excludedInterfaceWithTraffic(interfaceNames []string) (string, bool) {
+func excludedInterfaceWithTraffic(interfaceNames []string, baseline map[string]interfacePacketCount) (string, bool) {
 	for _, interfaceName := range interfaceNames {
 		rx, tx, err := getInterfacePacketCount(interfaceName)
-		if err == nil && (rx > 0 || tx > 1) {
+		if err != nil {
+			continue
+		}
+		current := interfacePacketCount{rx: rx, tx: tx}
+		previous, loaded := baseline[interfaceName]
+		baseline[interfaceName] = current
+		if loaded && packetCountIncreased(previous, current) {
 			return interfaceName, true
 		}
 	}
 	return "", false
 }
 
-func excludedInterfaceReady(interfaceNames []string) (string, bool) {
+func excludedInterfaceReady(interfaceNames []string, baseline map[string]interfacePacketCount) (string, bool) {
 	// IPsec installs its default route before the first packet is visible in
 	// the virtual interface. Keep this fast path for Google VPN, while tun+
 	// interfaces use traffic confirmation so their endpoint remains proxied
@@ -169,7 +184,7 @@ func excludedInterfaceReady(interfaceNames []string) (string, bool) {
 			tunInterfaces = append(tunInterfaces, interfaceName)
 		}
 	}
-	return excludedInterfaceWithTraffic(tunInterfaces)
+	return excludedInterfaceWithTraffic(tunInterfaces, baseline)
 }
 
 func (i *Inbound) startBypassRuleSets() error {
@@ -210,6 +225,7 @@ func (i *Inbound) stopBypassRuleSets() {
 
 func (i *Inbound) stopBypassRuleSetsLocked() <-chan struct{} {
 	done := i.cancelVPNWatchLocked()
+	i.vpnInterfacePackets = nil
 	i.vpnBypassActive = false
 	if !i.bypassRuleSetStarted {
 		return done
@@ -434,13 +450,25 @@ func (i *Inbound) disableVPNBypassLocked() error {
 
 func (i *Inbound) syncVPNBypassState(excludeInterfaces []string) {
 	interfaceNames := findActiveExcludedInterfaceNames(excludeInterfaces)
-	interfaceName, active := excludedInterfaceReady(interfaceNames)
 
 	i.bypassRuleSetAccess.Lock()
 	defer i.bypassRuleSetAccess.Unlock()
 	if !i.bypassRuleSetStarted {
 		return
 	}
+	if i.vpnInterfacePackets == nil {
+		i.vpnInterfacePackets = make(map[string]interfacePacketCount, len(interfaceNames))
+	}
+	activeInterfaces := make(map[string]struct{}, len(interfaceNames))
+	for _, interfaceName := range interfaceNames {
+		activeInterfaces[interfaceName] = struct{}{}
+	}
+	for interfaceName := range i.vpnInterfacePackets {
+		if _, loaded := activeInterfaces[interfaceName]; !loaded {
+			delete(i.vpnInterfacePackets, interfaceName)
+		}
+	}
+	interfaceName, active := excludedInterfaceReady(interfaceNames, i.vpnInterfacePackets)
 	var err error
 	if active {
 		err = i.enableVPNBypassLocked(interfaceName)

@@ -173,6 +173,21 @@ func TestIsDefaultRoute(t *testing.T) {
 	}
 }
 
+func TestPacketCountIncreased(t *testing.T) {
+	if packetCountIncreased(interfacePacketCount{rx: 10, tx: 20}, interfacePacketCount{rx: 10, tx: 20}) {
+		t.Fatal("unchanged packet counters reported activity")
+	}
+	if !packetCountIncreased(interfacePacketCount{rx: 10, tx: 20}, interfacePacketCount{rx: 11, tx: 20}) {
+		t.Fatal("rx packet increment was not detected")
+	}
+	if !packetCountIncreased(interfacePacketCount{rx: 10, tx: 20}, interfacePacketCount{rx: 10, tx: 21}) {
+		t.Fatal("tx packet increment was not detected")
+	}
+	if packetCountIncreased(interfacePacketCount{rx: 10, tx: 20}, interfacePacketCount{rx: 0, tx: 0}) {
+		t.Fatal("counter reset reported activity")
+	}
+}
+
 func TestNormalizeSharedNetworkOptionsKeepsTCPriority(t *testing.T) {
 	options, err := normalizeSharedNetworkOptions(option.EBPFSharedOptions{
 		Interface: []string{"ap0"},

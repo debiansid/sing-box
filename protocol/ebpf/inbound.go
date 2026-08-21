@@ -99,6 +99,7 @@ type Inbound struct {
 	bypassRuleSetStarted   bool
 	vpnWatchCancel         context.CancelFunc
 	vpnWatchDone           chan struct{}
+	vpnInterfacePackets    map[string]interfacePacketCount
 	vpnBypassActive        bool
 
 	udpClientTable      udpClientTable
