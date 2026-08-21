@@ -63,6 +63,7 @@ func NewDefault(ctx context.Context, options option.DialerOptions) (*DefaultDial
 		fallbackNetworkType    []C.InterfaceType
 		networkFallbackDelay   time.Duration
 		autoDetectBindFunc     control.Func
+		autoDetectBindContext  controlContextFunc
 		socketProtectContext   adapter.SocketProtectContextFunc
 	)
 	if networkManager != nil {
@@ -118,8 +119,13 @@ func NewDefault(ctx context.Context, options option.DialerOptions) (*DefaultDial
 				}
 			} else {
 				bindFunc := networkManager.AutoDetectInterfaceFunc()
-				dialer.Control = control.Append(dialer.Control, bindFunc)
 				autoDetectBindFunc = bindFunc
+				autoDetectBindContext = func(ctx context.Context, network, address string, conn syscall.RawConn) error {
+					if adapter.IsSharedNetworkContext(ctx) {
+						return nil
+					}
+					return bindFunc(network, address, conn)
+				}
 			}
 		}
 		if options.RoutingMark == 0 && defaultOptions.RoutingMark != 0 {
@@ -227,6 +233,12 @@ func NewDefault(ctx context.Context, options option.DialerOptions) (*DefaultDial
 		dialer6.ControlContext = controlContextAppend(dialer6.ControlContext, controlContextWithProtect(dialer6.Control, socketProtectContext))
 		udpDialer4.ControlContext = controlContextAppend(udpDialer4.ControlContext, controlContextWithProtect(udpDialer4.Control, socketProtectContext))
 		udpDialer6.ControlContext = controlContextAppend(udpDialer6.ControlContext, controlContextWithProtect(udpDialer6.Control, socketProtectContext))
+		if autoDetectBindContext != nil {
+			dialer4.ControlContext = controlContextAppend(dialer4.ControlContext, autoDetectBindContext)
+			dialer6.ControlContext = controlContextAppend(dialer6.ControlContext, autoDetectBindContext)
+			udpDialer4.ControlContext = controlContextAppend(udpDialer4.ControlContext, autoDetectBindContext)
+			udpDialer6.ControlContext = controlContextAppend(udpDialer6.ControlContext, autoDetectBindContext)
+		}
 	}
 	return &DefaultDialer{
 		dialer4:                tcpDialer4,
@@ -380,6 +392,9 @@ func (d *DefaultDialer) ListenPacket(ctx context.Context, destination M.Socksadd
 			listenConfig := d.udpListenerConfig(ctx)
 			if d.autoDetectBindFunc != nil {
 				listenConfig.Control = control.Append(listenConfig.Control, func(network, address string, conn syscall.RawConn) error {
+					if adapter.IsSharedNetworkContext(ctx) {
+						return nil
+					}
 					if destination.Addr.IsValid() {
 						return d.autoDetectBindFunc(network, destination.String(), conn)
 					}
