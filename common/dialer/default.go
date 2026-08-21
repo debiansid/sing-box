@@ -302,7 +302,7 @@ func (d *DefaultDialer) DialContext(ctx context.Context, network string, address
 	} else if address.IsDomain() {
 		return nil, E.New("domain not resolved")
 	}
-	if d.networkStrategy == nil {
+	if d.networkStrategy == nil || adapter.IsSharedNetworkContext(ctx) {
 		return d.trackConn(listener.ListenNetworkNamespace[net.Conn](ctx, d.netns, func() (net.Conn, error) {
 			switch N.NetworkName(network) {
 			case N.NetworkUDP:
@@ -324,6 +324,9 @@ func (d *DefaultDialer) DialContext(ctx context.Context, network string, address
 }
 
 func (d *DefaultDialer) DialParallelInterface(ctx context.Context, network string, address M.Socksaddr, strategy *C.NetworkStrategy, interfaceType []C.InterfaceType, fallbackInterfaceType []C.InterfaceType, fallbackDelay time.Duration) (net.Conn, error) {
+	if adapter.IsSharedNetworkContext(ctx) {
+		return d.DialContext(ctx, network, address)
+	}
 	if strategy == nil {
 		strategy = d.networkStrategy
 	}
@@ -372,7 +375,7 @@ func (d *DefaultDialer) DialParallelInterface(ctx context.Context, network strin
 }
 
 func (d *DefaultDialer) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
-	if d.networkStrategy == nil {
+	if d.networkStrategy == nil || adapter.IsSharedNetworkContext(ctx) {
 		return d.trackPacketConn(listener.ListenNetworkNamespace[net.PacketConn](ctx, d.netns, func() (net.PacketConn, error) {
 			listenConfig := d.udpListenerConfig(ctx)
 			if d.autoDetectBindFunc != nil {
@@ -405,6 +408,9 @@ func (d *DefaultDialer) DialerForICMPDestination(destination netip.Addr) net.Dia
 }
 
 func (d *DefaultDialer) ListenSerialInterfacePacket(ctx context.Context, destination M.Socksaddr, strategy *C.NetworkStrategy, interfaceType []C.InterfaceType, fallbackInterfaceType []C.InterfaceType, fallbackDelay time.Duration) (net.PacketConn, error) {
+	if adapter.IsSharedNetworkContext(ctx) {
+		return d.ListenPacket(ctx, destination)
+	}
 	if strategy == nil {
 		strategy = d.networkStrategy
 	}
