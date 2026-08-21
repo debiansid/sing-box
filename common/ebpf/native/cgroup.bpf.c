@@ -101,8 +101,7 @@ INLINE bool uid_bypassed(const struct sb_ebpf_cgroup_control *config) {
 }
 
 INLINE bool uid_forced_proxy(const struct sb_ebpf_cgroup_control *config) {
-    if ((config->flags & SB_EBPF_CGROUP_FLAG_UID_POLICY) == 0U ||
-        (config->flags & SB_EBPF_CGROUP_FLAG_UID_DEFAULT_BYPASS) == 0U) return false;
+    if ((config->flags & SB_EBPF_CGROUP_FLAG_UID_DEFAULT_BYPASS) == 0U) return false;
     __u32 uid = swap32((__u32)get_current_uid_gid());
     struct sb_ebpf_uid_lpm_key key = {
         .prefixlen = 32U,
@@ -178,7 +177,7 @@ INLINE bool base_bypass(void *ctx, const struct sb_ebpf_cgroup_control *config, 
     if (tgid_mode ? is_tgid_self(config) : is_cookie_bypassed(ctx)) return true;
     if (!protocol_selected(config, protocol)) return true;
     if (service_port(protocol, port)) return true;
-    if (vpn_control_port(protocol, port)) return true;
+    if (vpn_control_port(protocol, port) && !uid_forced_proxy(config)) return true;
     if ((config->flags & SB_EBPF_CGROUP_FLAG_HIJACK_DNS) == 0U && port == 53U) return true;
     if (uid_bypassed(config)) return true;
     return false;

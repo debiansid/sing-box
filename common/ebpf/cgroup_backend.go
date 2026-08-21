@@ -851,7 +851,7 @@ func (b *CgroupBackend) updateCgroupControl(listenerPort uint16, selfTGID uint32
 	if b.runtime.uid_policy && (b.preserveUID == 0 || b.preserveUIDActive) {
 		flags |= cgroupFlagUIDPolicy
 	}
-	if b.runtime.uid_default_bypass && (b.preserveUID == 0 || b.preserveUIDActive) {
+	if b.runtime.uid_default_bypass {
 		flags |= cgroupFlagUIDDefaultBypass
 	}
 	if b.runtime.bypass_ipv4_policy {
