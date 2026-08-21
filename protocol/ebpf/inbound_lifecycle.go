@@ -19,21 +19,17 @@ func (i *Inbound) Start(stage adapter.StartStage) error {
 		if err := i.selectRedirectPrefixes(); err != nil {
 			return err
 		}
-		i.detectCloudflareUID()
-		if i.cgroupEnabled && i.androidUIDOptions == nil {
-			if err := i.prepareCgroupBackend(); err != nil {
-				return err
-			}
-		}
 		if i.sharedNetworkEnabled {
 			i.sharedNetwork = newSharedNetwork(i, i.sharedNetworkOptions)
 		}
 	case adapter.StartStateStart:
-		i.detectCloudflareUID()
-		if i.cgroupEnabled && i.androidUIDOptions != nil {
-			if err := i.resolveAndroidUIDPolicy(); err != nil {
-				return combineStartError(E.Cause(err, "resolve Android UID policy"), i.cleanupStartFailure())
+		if i.cgroupEnabled {
+			if i.androidUIDOptions != nil {
+				if err := i.resolveAndroidUIDPolicy(); err != nil {
+					return combineStartError(E.Cause(err, "resolve Android UID policy"), i.cleanupStartFailure())
+				}
 			}
+			i.detectCloudflareUID()
 			if err := i.prepareCgroupBackend(); err != nil {
 				return combineStartError(err, i.cleanupStartFailure())
 			}
