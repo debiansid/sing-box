@@ -16,9 +16,9 @@ import (
 
 const cloudflareVPNPackage = "com.cloudflare.cloudflareoneagent"
 
-// detectCloudflareUID prepares a dormant UID policy for the Cloudflare VPN.
-// It is activated only after tun+ takes over the default route, so normal
-// interception remains unchanged during tunnel establishment.
+// detectCloudflareUID records the Cloudflare Agent UID as a preserved VPN
+// endpoint. The UID remains eligible for eBPF interception while the rest of
+// the system switches to an excluded VPN interface.
 func (i *Inbound) detectCloudflareUID() {
 	if i.preserveVPNUID != 0 || !i.cgroupEnabled || len(i.cgroupPolicy.ExcludeUID) != 0 {
 		return
@@ -28,6 +28,11 @@ func (i *Inbound) detectCloudflareUID() {
 		return
 	}
 	uid, loaded := packageManager.IDByPackage(cloudflareVPNPackage)
+	if !loaded {
+		// Android packages using a sharedUserId are indexed separately by
+		// sing-tun's package manager.
+		uid, loaded = packageManager.IDBySharedPackage(cloudflareVPNPackage)
+	}
 	if !loaded {
 		return
 	}

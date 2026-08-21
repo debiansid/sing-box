@@ -129,6 +129,26 @@ func TestDetectCloudflareUIDPreservesInterception(t *testing.T) {
 	}
 }
 
+func TestDetectCloudflareUIDSharedPackage(t *testing.T) {
+	const cloudflareUID = 10127
+	inbound := &Inbound{
+		logger: log.NewNOPFactory().Logger(),
+		networkManager: &testNetworkManager{
+			packageManager: &testPackageManager{
+				idByShared: map[string]uint32{
+					cloudflareVPNPackage: cloudflareUID,
+				},
+			},
+		},
+		cgroupEnabled: true,
+	}
+
+	inbound.detectCloudflareUID()
+	if inbound.preserveVPNUID != cloudflareUID {
+		t.Fatalf("unexpected preserved shared Cloudflare UID: %d", inbound.preserveVPNUID)
+	}
+}
+
 func TestFormatUIDRanges(t *testing.T) {
 	formatted := formatUIDRanges([]ECommon.UIDRange{
 		{Start: 1000, End: 1000},
