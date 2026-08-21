@@ -128,6 +128,10 @@ type CgroupBackend struct {
 	bypassPrivateAddress  bool
 	dnsRespectBypass      bool
 	udpTimeoutSeconds     uint32
+	preserveUID           uint32
+	listenerPort          uint16
+	selfTGID              uint32
+	preserveUIDActive     bool
 }
 
 func PrepareCgroup(config CgroupConfig) (*CgroupBackend, error) {
@@ -276,6 +280,7 @@ func PrepareCgroup(config CgroupConfig) (*CgroupBackend, error) {
 		bypassPrivateAddress: policy.BypassPrivateAddress,
 		dnsRespectBypass:     policy.DNSRespectBypass,
 		udpTimeoutSeconds:    udpTimeoutSeconds,
+		preserveUID:          config.PreserveUID,
 	}
 	if config.AutoIPv6 {
 		if _, err = backend.updateIPv6AvailableLocked(config.IPv6Available); err != nil {
@@ -819,6 +824,8 @@ func (b *CgroupBackend) cgroupProgramSection(slot int, tgidMode bool) string {
 }
 
 func (b *CgroupBackend) updateCgroupControl(listenerPort uint16, selfTGID uint32) error {
+	b.listenerPort = listenerPort
+	b.selfTGID = selfTGID
 	var flags uint32
 	if b.runtime.enable_tcp {
 		flags |= cgroupFlagTCP
@@ -841,7 +848,7 @@ func (b *CgroupBackend) updateCgroupControl(listenerPort uint16, selfTGID uint32
 	if b.dnsRespectBypass {
 		flags |= cgroupFlagDNSRespectBypass
 	}
-	if b.runtime.uid_policy {
+	if b.runtime.uid_policy && (b.preserveUID == 0 || b.preserveUIDActive) {
 		flags |= cgroupFlagUIDPolicy
 	}
 	if b.runtime.uid_default_bypass {
@@ -889,6 +896,28 @@ func (b *CgroupBackend) updateCgroupControl(listenerPort uint16, selfTGID uint32
 	}
 	key := uint32(0)
 	return updateMap(b.runtime.control_map_fd, unsafe.Pointer(&key), unsafe.Pointer(&control))
+}
+
+// SetPreserveUIDActive keeps the VPN endpoint UID intercepted while the
+// remainder of the system uses the active VPN's full bypass policy.
+func (b *CgroupBackend) SetPreserveUIDActive(active bool) error {
+	if b == nil {
+		return errBackendClosed
+	}
+	b.access.Lock()
+	defer b.access.Unlock()
+	if b.preserveUID == 0 || b.preserveUIDActive == active {
+		return nil
+	}
+	if err := b.health.requireUsable(b.runtime != nil); err != nil {
+		return err
+	}
+	b.preserveUIDActive = active
+	if err := b.updateCgroupControl(b.listenerPort, b.selfTGID); err != nil {
+		b.preserveUIDActive = !active
+		return err
+	}
+	return nil
 }
 
 func (b *CgroupBackend) hostAddressFlags() uint32 {

@@ -19,6 +19,15 @@ INLINE bool dhcp_packet(__u8 protocol, __u16 source_port, __u16 destination_port
         destination_port == 546U || destination_port == 547U;
 }
 
+// IKEv2 and NAT-T negotiation must bypass packet redirection and be handled
+// by Android's kernel IPsec/XFRM stack. This mirrors the legacy TProxy
+// XFRM_BYPASS rule for UDP ports 500 and 4500.
+INLINE bool vpn_control_packet(__u8 protocol, __u16 source_port, __u16 destination_port) {
+    return protocol == IPPROTO_UDP_VALUE &&
+        (source_port == 500U || source_port == 4500U ||
+         destination_port == 500U || destination_port == 4500U);
+}
+
 #define SB_SHARED_SOURCE_IP_POLICY_FLAGS \
     (SB_SHARED_FLAG_INCLUDE_SOURCE | SB_SHARED_FLAG_EXCLUDE_SOURCE)
 #define SB_SHARED_SOURCE_MAC_POLICY_FLAGS \
@@ -97,6 +106,7 @@ NOINLINE __u8 ipv4_policy(
     __u16 destination_port,
     const struct sb_shared_control *control) {
     if (dhcp_packet(protocol, source_port, destination_port)) return SB_SHARED_POLICY_BYPASS;
+    if (vpn_control_packet(protocol, source_port, destination_port)) return SB_SHARED_POLICY_BYPASS;
     if (destination_port == 53U) {
         if ((control->flags & SB_SHARED_FLAG_DNS_HIJACK) == 0U) return SB_SHARED_POLICY_BYPASS;
         if ((control->flags & SB_SHARED_FLAG_DNS_RESPECT_BYPASS) == 0U) return SB_SHARED_POLICY_PROXY;
@@ -125,6 +135,7 @@ NOINLINE __u8 ipv6_policy(
     __u16 destination_port,
     const struct sb_shared_control *control) {
     if (dhcp_packet(protocol, source_port, destination_port)) return SB_SHARED_POLICY_BYPASS;
+    if (vpn_control_packet(protocol, source_port, destination_port)) return SB_SHARED_POLICY_BYPASS;
     if (destination_port == 53U) {
         if ((control->flags & SB_SHARED_FLAG_DNS_HIJACK) == 0U) return SB_SHARED_POLICY_BYPASS;
         if ((control->flags & SB_SHARED_FLAG_DNS_RESPECT_BYPASS) == 0U) return SB_SHARED_POLICY_PROXY;

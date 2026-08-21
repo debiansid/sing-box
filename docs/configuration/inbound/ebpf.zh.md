@@ -42,6 +42,7 @@ cgroup socket-address 程序拦截本机 socket，`shared` 数据路径使用 TC
     "include_android_user": [],
     "include_package": [],
     "exclude_package": [],
+    "exclude_interface": [],
     "state_capacity": 0
   },
   "shared": {
@@ -170,6 +171,13 @@ shared 数据路径的 IPv6；shared 使用独立的 `shared.ipv6_mode`。
 
 本机重定向、UDP flow 和 socket-cookie 回退状态的容量。`0` 使用实现默认值
 （当前为 65536）；允许范围为 `0` 到 `1048576`。增大会占用更多锁定内核内存。
+
+#### local.exclude_interface
+
+不参与本机 cgroup socket 拦截的接口。填写完整名称时排除单个接口；名称以 `+` 或
+`*` 结尾时，排除所有此前缀开头的接口。未配置时，内置默认值为 `tun+` 和 `ipsec+`。
+有活动流量的排除接口会暂时绕过 cgroup socket 重定向，以便 VPN 握手完成。该选项可用于 `local` 和
+`hybrid` 模式；在 `hybrid` 模式下，匹配的接口也不会挂载 shared TC 程序。
 
 ### shared
 

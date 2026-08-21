@@ -100,6 +100,16 @@ INLINE bool uid_bypassed(const struct sb_ebpf_cgroup_control *config) {
         : matched;
 }
 
+INLINE bool uid_forced_proxy(const struct sb_ebpf_cgroup_control *config) {
+    if ((config->flags & SB_EBPF_CGROUP_FLAG_UID_DEFAULT_BYPASS) == 0U) return false;
+    __u32 uid = swap32((__u32)get_current_uid_gid());
+    struct sb_ebpf_uid_lpm_key key = {
+        .prefixlen = 32U,
+    };
+    __builtin_memcpy(key.uid, &uid, sizeof(uid));
+    return map_lookup(&cgroup_uid_policy, &key) != 0;
+}
+
 INLINE bool protocol_selected(const struct sb_ebpf_cgroup_control *config, __u8 protocol) {
     if (protocol == TCP_VALUE) return (config->flags & SB_EBPF_CGROUP_FLAG_TCP) != 0U;
     if (protocol == UDP_VALUE) return (config->flags & SB_EBPF_CGROUP_FLAG_UDP) != 0U;
@@ -109,6 +119,13 @@ INLINE bool protocol_selected(const struct sb_ebpf_cgroup_control *config, __u8 
 INLINE bool service_port(__u8 protocol, __u16 port) {
     if (protocol != UDP_VALUE) return false;
     return port == 67U || port == 68U || port == 546U || port == 547U;
+}
+
+// IKEv2 control traffic must reach the kernel IPsec stack directly. If these
+// packets are redirected into sing-box, Android reports the underlying IKE
+// network as lost and repeatedly tears down the ipsec interface.
+INLINE bool vpn_control_port(__u8 protocol, __u16 port) {
+    return protocol == UDP_VALUE && (port == 500U || port == 4500U);
 }
 
 INLINE bool ipv4_mapped(const __u32 address[4]) {
@@ -160,6 +177,7 @@ INLINE bool base_bypass(void *ctx, const struct sb_ebpf_cgroup_control *config, 
     if (tgid_mode ? is_tgid_self(config) : is_cookie_bypassed(ctx)) return true;
     if (!protocol_selected(config, protocol)) return true;
     if (service_port(protocol, port)) return true;
+    if (vpn_control_port(protocol, port) && !uid_forced_proxy(config)) return true;
     if ((config->flags & SB_EBPF_CGROUP_FLAG_HIJACK_DNS) == 0U && port == 53U) return true;
     if (uid_bypassed(config)) return true;
     return false;
@@ -513,7 +531,7 @@ INLINE int handle_v4(
             (((config->flags & SB_EBPF_CGROUP_FLAG_BYPASS_PRIVATE_ADDRESS) != 0U &&
                 sb_ebpf_ipv4_private_address(destination_bytes)) ||
              ((config->flags & SB_EBPF_CGROUP_FLAG_BYPASS_IPV4) != 0U &&
-                bypass_ipv4_cidr(destination)))) {
+                !uid_forced_proxy(config) && bypass_ipv4_cidr(destination)))) {
             if (!connect_hook) {
                 flow_store(config, AF_INET_VALUE, protocol, port, flow_address, cookie,
                     SB_EBPF_UDP_FLOW_ACTION_BYPASS, 0);
@@ -595,7 +613,7 @@ INLINE int handle_v6(
                 (((config->flags & SB_EBPF_CGROUP_FLAG_BYPASS_PRIVATE_ADDRESS) != 0U &&
                     sb_ebpf_ipv4_private_address(destination_bytes)) ||
                  ((config->flags & SB_EBPF_CGROUP_FLAG_BYPASS_IPV4) != 0U &&
-                    bypass_ipv4_cidr(destination)))) {
+                    !uid_forced_proxy(config) && bypass_ipv4_cidr(destination)))) {
                 if (!connect_hook) {
                     flow_store(config, AF_INET_VALUE, protocol, port, flow_address, cookie,
                         SB_EBPF_UDP_FLOW_ACTION_BYPASS, 0);
@@ -643,7 +661,7 @@ INLINE int handle_v6(
             (((config->flags & SB_EBPF_CGROUP_FLAG_BYPASS_PRIVATE_ADDRESS) != 0U &&
                 sb_ebpf_ipv6_private_address((const __u8 *)address)) ||
              ((config->flags & SB_EBPF_CGROUP_FLAG_BYPASS_IPV6) != 0U &&
-                bypass_ipv6_cidr(address)))) {
+                !uid_forced_proxy(config) && bypass_ipv6_cidr(address)))) {
             if (!connect_hook) {
                 flow_store(config, AF_INET6_VALUE, protocol, port, flow_address, cookie,
                     SB_EBPF_UDP_FLOW_ACTION_BYPASS, 0);

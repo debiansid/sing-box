@@ -237,6 +237,10 @@ func (b *SharedNetworkBackend) SetBypassCIDRState(prefixes []netip.Prefix) error
 	if b == nil {
 		return errBackendClosed
 	}
+	if b.independentBypassCIDR {
+		_, err := b.UpdateBypassCIDR(prefixes)
+		return err
+	}
 	ipv4, ipv6, err := compileBypassCIDRPolicy(prefixes)
 	if err != nil {
 		return E.Cause(err, "compile shared-network bypass CIDR state")

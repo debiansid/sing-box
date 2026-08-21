@@ -28,6 +28,7 @@ type EBPFLocalOptions struct {
 	IncludeAndroidUser   badoption.Listable[int]    `json:"include_android_user,omitempty"`
 	IncludePackage       badoption.Listable[string] `json:"include_package,omitempty"`
 	ExcludePackage       badoption.Listable[string] `json:"exclude_package,omitempty"`
+	ExcludeInterface     badoption.Listable[string] `json:"exclude_interface,omitempty"`
 	StateCapacity        EBPFStateCapacity          `json:"state_capacity,omitempty"`
 }
 

@@ -3,10 +3,13 @@
 package ebpf
 
 import (
+	"context"
 	"strings"
+	"syscall"
 
 	"github.com/sagernet/sing-box/adapter"
 	ECommon "github.com/sagernet/sing-box/common/ebpf"
+	"github.com/sagernet/sing/common/control"
 	E "github.com/sagernet/sing/common/exceptions"
 )
 
@@ -16,19 +19,17 @@ func (i *Inbound) Start(stage adapter.StartStage) error {
 		if err := i.selectRedirectPrefixes(); err != nil {
 			return err
 		}
-		if i.cgroupEnabled && i.androidUIDOptions == nil {
-			if err := i.prepareCgroupBackend(); err != nil {
-				return err
-			}
-		}
 		if i.sharedNetworkEnabled {
 			i.sharedNetwork = newSharedNetwork(i, i.sharedNetworkOptions)
 		}
 	case adapter.StartStateStart:
-		if i.cgroupEnabled && i.androidUIDOptions != nil {
-			if err := i.resolveAndroidUIDPolicy(); err != nil {
-				return combineStartError(E.Cause(err, "resolve Android UID policy"), i.cleanupStartFailure())
+		if i.cgroupEnabled {
+			if i.androidUIDOptions != nil {
+				if err := i.resolveAndroidUIDPolicy(); err != nil {
+					return combineStartError(E.Cause(err, "resolve Android UID policy"), i.cleanupStartFailure())
+				}
 			}
+			i.detectCloudflareUID()
 			if err := i.prepareCgroupBackend(); err != nil {
 				return combineStartError(err, i.cleanupStartFailure())
 			}
@@ -61,6 +62,9 @@ func (i *Inbound) Start(stage adapter.StartStage) error {
 			if err := i.sharedNetwork.Start(backend); err != nil {
 				return combineStartError(err, i.cleanupStartFailure())
 			}
+			// The bypass watcher starts before shared TC. Re-apply its state now
+			// so an already-connected VPN cannot leave 0/0 in the hotspot policy.
+			i.refreshBypassPolicy()
 		}
 		if i.cgroupEnabled {
 			if err := backend.Attach(); err != nil {
@@ -92,6 +96,7 @@ func (i *Inbound) Start(stage adapter.StartStage) error {
 				", uid_policy={include_configured:", i.cgroupPolicy.IncludeUIDConfigured,
 				", include:[", formatUIDRanges(i.cgroupPolicy.IncludeUID), "]",
 				", exclude:[", formatUIDRanges(i.cgroupPolicy.ExcludeUID), "]}",
+				", preserve_vpn_uid=", i.preserveVPNUID,
 				", bypass_cidr={ipv4:", bypassIPv4Count, ", ipv6:", bypassIPv6Count, "}",
 				", state_capacity={tcp_redirect:", i.cgroupMapCapacity.TCPRedirect,
 				", udp_redirect:", i.cgroupMapCapacity.UDPRedirect,
@@ -132,6 +137,7 @@ func (i *Inbound) prepareCgroupBackend() error {
 		MapCapacity:   i.cgroupMapCapacity,
 		UDPTimeout:    i.udpTimeout,
 		Policy:        policy,
+		PreserveUID:   i.preserveVPNUID,
 	})
 	if err != nil {
 		return err
@@ -145,7 +151,24 @@ func (i *Inbound) prepareCgroupBackend() error {
 		}
 		return E.Errors(E.New("network manager does not support socket protection"), closeErr)
 	}
-	if err = protectManager.RegisterSocketProtectFunc(backend.SocketProtectFunc()); err != nil {
+	// The eBPF socket bypass only prevents local cgroup interception. When an
+	// Android VPN installs the default route on tun0, sing-box's own upstream
+	// sockets must also be protected at the platform level so they continue to
+	// use the underlying physical network. This is especially important after
+	// VPN bypass expands to 0/0 for system and tethered traffic.
+	backendProtectFunc := backend.SocketProtectFunc()
+	protectFunc := func(ctx context.Context, network, address string, conn syscall.RawConn) error {
+		if adapter.IsSharedNetworkContext(ctx) {
+			return backendProtectFunc(network, address, conn)
+		}
+		return control.Append(i.networkManager.ProtectFunc(), backendProtectFunc)(network, address, conn)
+	}
+	if contextManager, supported := i.networkManager.(adapter.SocketProtectContextManager); supported {
+		err = contextManager.RegisterSocketProtectContextFunc(protectFunc)
+	} else {
+		err = protectManager.RegisterSocketProtectFunc(control.Append(i.networkManager.ProtectFunc(), backendProtectFunc))
+	}
+	if err != nil {
 		closeErr := backend.Close()
 		if backend.IsClosed() {
 			i.setCgroupBackend(nil)

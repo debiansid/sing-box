@@ -14,6 +14,45 @@ import (
 	"github.com/sagernet/sing/common/ranges"
 )
 
+const cloudflareVPNPackage = "com.cloudflare.cloudflareoneagent"
+
+// detectCloudflareUID records the Cloudflare Agent UID as a preserved VPN
+// endpoint. The UID remains eligible for eBPF interception while the rest of
+// the system switches to an excluded VPN interface.
+func (i *Inbound) detectCloudflareUID() {
+	if i.preserveVPNUID != 0 || !i.cgroupEnabled || len(i.cgroupPolicy.ExcludeUID) != 0 {
+		return
+	}
+	packageManager := i.networkManager.PackageManager()
+	if packageManager == nil {
+		return
+	}
+	uid, loaded := packageManager.IDByPackage(cloudflareVPNPackage)
+	if !loaded {
+		// Android packages using a sharedUserId are indexed separately by
+		// sing-tun's package manager.
+		uid, loaded = packageManager.IDBySharedPackage(cloudflareVPNPackage)
+	}
+	if !loaded {
+		return
+	}
+	if !i.cgroupPolicy.IncludeUIDConfigured {
+		i.cgroupPolicy.IncludeUIDConfigured = true
+	}
+	uidIncluded := false
+	for _, uidRange := range i.cgroupPolicy.IncludeUID {
+		if uid >= uidRange.Start && uid <= uidRange.End {
+			uidIncluded = true
+			break
+		}
+	}
+	if !uidIncluded {
+		i.cgroupPolicy.IncludeUID = append(i.cgroupPolicy.IncludeUID, ECommon.UIDRange{Start: uid, End: uid})
+	}
+	i.preserveVPNUID = uid
+	i.logger.Info("eBPF will preserve Cloudflare VPN endpoint UID: ", uid)
+}
+
 const androidUserRange = 100000
 
 type androidUIDOptions struct {

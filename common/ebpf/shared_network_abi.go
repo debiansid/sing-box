@@ -38,6 +38,10 @@ type SharedNetworkConfig struct {
 	ExcludeSourceMAC     []MACAddress
 	MapCapacity          SharedNetworkMapCapacities
 	UDPTimeout           time.Duration
+	// IndependentBypassCIDR prevents shared TC policy updates from sharing the
+	// local cgroup bypass maps. This is required when local VPN endpoint bypass
+	// temporarily uses a full 0/0 policy.
+	IndependentBypassCIDR bool
 }
 
 type MACAddress [6]byte

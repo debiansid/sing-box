@@ -817,6 +817,11 @@ func TestCgroupBackendTGIDProbeIntegration(t *testing.T) {
 		EnableTCP:    true,
 		RedirectIPv4: netip.MustParsePrefix("127.128.0.0/9"),
 		MapCapacity:  DefaultCgroupMapCapacity(),
+		Policy: CgroupPolicy{
+			IncludeUIDConfigured: true,
+			IncludeUID:           []UIDRange{{Start: 10127, End: 10127}},
+		},
+		PreserveUID: 10127,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -831,6 +836,23 @@ func TestCgroupBackendTGIDProbeIntegration(t *testing.T) {
 	}
 	if backend.SelfBypassMode() != "tgid" {
 		t.Fatalf("expected TGID self bypass for the current cgroup, got %s", backend.SelfBypassMode())
+	}
+	key := uint32(0)
+	var control cgroupControl
+	if err = lookupMap(backend.runtime.control_map_fd, unsafe.Pointer(&key), unsafe.Pointer(&control)); err != nil {
+		t.Fatal(err)
+	}
+	if control.Flags&cgroupFlagUIDPolicy != 0 || control.Flags&cgroupFlagUIDDefaultBypass == 0 {
+		t.Fatalf("unexpected inactive preserved UID flags: %#x", control.Flags)
+	}
+	if err = backend.SetPreserveUIDActive(true); err != nil {
+		t.Fatal(err)
+	}
+	if err = lookupMap(backend.runtime.control_map_fd, unsafe.Pointer(&key), unsafe.Pointer(&control)); err != nil {
+		t.Fatal(err)
+	}
+	if control.Flags&cgroupFlagUIDPolicy == 0 || control.Flags&cgroupFlagUIDDefaultBypass == 0 {
+		t.Fatalf("unexpected active preserved UID flags: %#x", control.Flags)
 	}
 }
 

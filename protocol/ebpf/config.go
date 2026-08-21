@@ -50,6 +50,9 @@ func validateLocalOptions(enabled bool, options option.EBPFLocalOptions) error {
 	if options.StateCapacity != 0 {
 		return E.New("local.state_capacity requires local or hybrid mode")
 	}
+	if len(options.ExcludeInterface) > 0 {
+		return E.New("local.exclude_interface requires local or hybrid mode")
+	}
 	return nil
 }
 
@@ -280,4 +283,29 @@ func validateSharedNetworkProtocols(enabled bool, enableUDP bool, dnsMode string
 		return E.New("shared mode with DNS interception requires UDP")
 	}
 	return nil
+}
+
+var defaultExcludeInterfacePatterns = [...]string{"tun+", "ipsec+"}
+
+func normalizeExcludeInterfaces(interfaces []string) ([]string, error) {
+	seen := make(map[string]struct{}, len(interfaces)+len(defaultExcludeInterfacePatterns))
+	excludeInterfaces := make([]string, 0, len(interfaces)+len(defaultExcludeInterfacePatterns))
+	for _, raw := range interfaces {
+		interfaceName := strings.TrimSpace(raw)
+		if interfaceName == "" {
+			return nil, E.New("local.exclude_interface contains an empty interface name")
+		}
+		if _, loaded := seen[interfaceName]; loaded {
+			continue
+		}
+		seen[interfaceName] = struct{}{}
+		excludeInterfaces = append(excludeInterfaces, interfaceName)
+	}
+	for _, pattern := range defaultExcludeInterfacePatterns {
+		if _, loaded := seen[pattern]; !loaded {
+			seen[pattern] = struct{}{}
+			excludeInterfaces = append(excludeInterfaces, pattern)
+		}
+	}
+	return excludeInterfaces, nil
 }
