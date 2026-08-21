@@ -673,7 +673,7 @@ func (b *CgroupBackend) loadPrograms(listenerPort uint16, selfTGID uint32) error
 	if listenerPort == 0 {
 		return E.New("missing eBPF redirect listener port")
 	}
-	tryTGID := selfTGID != 0 && b.preserveUID == 0
+	tryTGID := selfTGID != 0
 	if err := b.updateCgroupControl(listenerPort, func() uint32 {
 		if tryTGID {
 			return selfTGID

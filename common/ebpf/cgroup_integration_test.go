@@ -817,6 +817,7 @@ func TestCgroupBackendTGIDProbeIntegration(t *testing.T) {
 		EnableTCP:    true,
 		RedirectIPv4: netip.MustParsePrefix("127.128.0.0/9"),
 		MapCapacity:  DefaultCgroupMapCapacity(),
+		PreserveUID:  10127,
 	})
 	if err != nil {
 		t.Fatal(err)
