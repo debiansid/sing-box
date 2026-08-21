@@ -177,6 +177,20 @@ func DNSResponseAddresses(response *dns.Msg) []netip.Addr {
 
 type inboundContextKey struct{}
 
+type sharedNetworkContextKey struct{}
+
+// WithSharedNetworkContext marks a routed connection as originating from the
+// shared TC hotspot path. Its outbound socket must stay eligible for the VPN
+// route instead of being forced onto Android's underlying network.
+func WithSharedNetworkContext(ctx context.Context) context.Context {
+	return context.WithValue(ctx, (*sharedNetworkContextKey)(nil), true)
+}
+
+func IsSharedNetworkContext(ctx context.Context) bool {
+	marked, _ := ctx.Value((*sharedNetworkContextKey)(nil)).(bool)
+	return marked
+}
+
 func WithContext(ctx context.Context, inboundContext *InboundContext) context.Context {
 	return context.WithValue(ctx, (*inboundContextKey)(nil), inboundContext)
 }

@@ -3,7 +3,9 @@
 package ebpf
 
 import (
+	"context"
 	"strings"
+	"syscall"
 
 	"github.com/sagernet/sing-box/adapter"
 	ECommon "github.com/sagernet/sing-box/common/ebpf"
@@ -154,8 +156,19 @@ func (i *Inbound) prepareCgroupBackend() error {
 	// sockets must also be protected at the platform level so they continue to
 	// use the underlying physical network. This is especially important after
 	// VPN bypass expands to 0/0 for system and tethered traffic.
-	protectFunc := control.Append(i.networkManager.ProtectFunc(), backend.SocketProtectFunc())
-	if err = protectManager.RegisterSocketProtectFunc(protectFunc); err != nil {
+	backendProtectFunc := backend.SocketProtectFunc()
+	protectFunc := func(ctx context.Context, network, address string, conn syscall.RawConn) error {
+		if adapter.IsSharedNetworkContext(ctx) {
+			return backendProtectFunc(network, address, conn)
+		}
+		return control.Append(i.networkManager.ProtectFunc(), backendProtectFunc)(network, address, conn)
+	}
+	if contextManager, supported := i.networkManager.(adapter.SocketProtectContextManager); supported {
+		err = contextManager.RegisterSocketProtectContextFunc(protectFunc)
+	} else {
+		err = protectManager.RegisterSocketProtectFunc(control.Append(i.networkManager.ProtectFunc(), backendProtectFunc))
+	}
+	if err != nil {
 		closeErr := backend.Close()
 		if backend.IsClosed() {
 			i.setCgroupBackend(nil)

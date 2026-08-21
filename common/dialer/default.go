@@ -37,6 +37,7 @@ type DefaultDialer struct {
 	udpAddr6               string
 	netns                  string
 	autoDetectBindFunc     control.Func
+	socketProtectContext   adapter.SocketProtectContextFunc
 	connectionManager      adapter.ConnectionManager
 	networkManager         adapter.NetworkManager
 	networkStrategy        *C.NetworkStrategy
@@ -62,6 +63,7 @@ func NewDefault(ctx context.Context, options option.DialerOptions) (*DefaultDial
 		fallbackNetworkType    []C.InterfaceType
 		networkFallbackDelay   time.Duration
 		autoDetectBindFunc     control.Func
+		socketProtectContext   adapter.SocketProtectContextFunc
 	)
 	if networkManager != nil {
 		interfaceFinder = networkManager.InterfaceFinder()
@@ -91,10 +93,6 @@ func NewDefault(ctx context.Context, options option.DialerOptions) (*DefaultDial
 	}
 
 	if networkManager != nil {
-		socketProtectFunc := adapter.SocketProtectFunc(networkManager)
-		dialer.Control = control.Append(dialer.Control, socketProtectFunc)
-		listener.Control = control.Append(listener.Control, socketProtectFunc)
-
 		defaultOptions := networkManager.DefaultOptions()
 		if defaultOptions.BindInterface != "" && !disableDefaultBind {
 			bindFunc := control.BindToInterface(networkManager.InterfaceFinder(), defaultOptions.BindInterface, -1)
@@ -118,9 +116,6 @@ func NewDefault(ctx context.Context, options option.DialerOptions) (*DefaultDial
 					networkStrategy = common.Ptr(C.NetworkStrategyDefault)
 					defaultNetworkStrategy = true
 				}
-				bindFunc := networkManager.ProtectFunc()
-				dialer.Control = control.Append(dialer.Control, bindFunc)
-				listener.Control = control.Append(listener.Control, bindFunc)
 			} else {
 				bindFunc := networkManager.AutoDetectInterfaceFunc()
 				dialer.Control = control.Append(dialer.Control, bindFunc)
@@ -223,6 +218,16 @@ func NewDefault(ctx context.Context, options option.DialerOptions) (*DefaultDial
 	}
 	tcpDialer4 := tfo.Dialer{Dialer: dialer4, DisableTFO: !options.TCPFastOpen}
 	tcpDialer6 := tfo.Dialer{Dialer: dialer6, DisableTFO: !options.TCPFastOpen}
+	if networkManager != nil {
+		// net.Dialer and tfo.Dialer both honor ControlContext. Keeping the
+		// context here is what allows shared hotspot flows to stay on tun0
+		// while VPN endpoint sockets remain protected on the physical network.
+		socketProtectContext = adapter.SocketProtectFuncContext(networkManager)
+		dialer4.ControlContext = controlContextAppend(dialer4.ControlContext, controlContextWithProtect(dialer4.Control, socketProtectContext))
+		dialer6.ControlContext = controlContextAppend(dialer6.ControlContext, controlContextWithProtect(dialer6.Control, socketProtectContext))
+		udpDialer4.ControlContext = controlContextAppend(udpDialer4.ControlContext, controlContextWithProtect(udpDialer4.Control, socketProtectContext))
+		udpDialer6.ControlContext = controlContextAppend(udpDialer6.ControlContext, controlContextWithProtect(udpDialer6.Control, socketProtectContext))
+	}
 	return &DefaultDialer{
 		dialer4:                tcpDialer4,
 		dialer6:                tcpDialer6,
@@ -233,6 +238,7 @@ func NewDefault(ctx context.Context, options option.DialerOptions) (*DefaultDial
 		udpAddr6:               udpAddr6,
 		netns:                  options.NetNs,
 		autoDetectBindFunc:     autoDetectBindFunc,
+		socketProtectContext:   socketProtectContext,
 		connectionManager:      connectionManager,
 		networkManager:         networkManager,
 		networkStrategy:        networkStrategy,
@@ -241,6 +247,37 @@ func NewDefault(ctx context.Context, options option.DialerOptions) (*DefaultDial
 		fallbackNetworkType:    fallbackNetworkType,
 		networkFallbackDelay:   networkFallbackDelay,
 	}, nil
+}
+
+type controlContextFunc func(context.Context, string, string, syscall.RawConn) error
+
+func controlContextAppend(oldFunc, newFunc controlContextFunc) controlContextFunc {
+	if oldFunc == nil {
+		return newFunc
+	}
+	if newFunc == nil {
+		return oldFunc
+	}
+	return func(ctx context.Context, network, address string, conn syscall.RawConn) error {
+		if err := oldFunc(ctx, network, address, conn); err != nil {
+			return err
+		}
+		return newFunc(ctx, network, address, conn)
+	}
+}
+
+func controlContextWithProtect(oldFunc control.Func, protectFunc adapter.SocketProtectContextFunc) controlContextFunc {
+	return func(ctx context.Context, network, address string, conn syscall.RawConn) error {
+		if oldFunc != nil {
+			if err := oldFunc(network, address, conn); err != nil {
+				return err
+			}
+		}
+		if protectFunc != nil {
+			return protectFunc(ctx, network, address, conn)
+		}
+		return nil
+	}
 }
 
 func setMarkWrapper(networkManager adapter.NetworkManager, mark uint32, isDefault bool) control.Func {
@@ -337,7 +374,7 @@ func (d *DefaultDialer) DialParallelInterface(ctx context.Context, network strin
 func (d *DefaultDialer) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
 	if d.networkStrategy == nil {
 		return d.trackPacketConn(listener.ListenNetworkNamespace[net.PacketConn](ctx, d.netns, func() (net.PacketConn, error) {
-			listenConfig := d.udpListener
+			listenConfig := d.udpListenerConfig(ctx)
 			if d.autoDetectBindFunc != nil {
 				listenConfig.Control = control.Append(listenConfig.Control, func(network, address string, conn syscall.RawConn) error {
 					if destination.Addr.IsValid() {
@@ -387,7 +424,7 @@ func (d *DefaultDialer) ListenSerialInterfacePacket(ctx context.Context, destina
 	if destination.IsIPv4() && !destination.Addr.IsUnspecified() {
 		network += "4"
 	}
-	packetConn, err := d.listenSerialInterfacePacket(ctx, d.udpListener, network, "", *strategy, interfaceType, fallbackInterfaceType, fallbackDelay)
+	packetConn, err := d.listenSerialInterfacePacket(ctx, d.udpListenerConfig(ctx), network, "", *strategy, interfaceType, fallbackInterfaceType, fallbackDelay)
 	if err != nil {
 		// bind interface failed on legacy xiaomi systems
 		if d.defaultNetworkStrategy && errors.Is(err, syscall.EPERM) {
@@ -402,11 +439,21 @@ func (d *DefaultDialer) ListenSerialInterfacePacket(ctx context.Context, destina
 
 func (d *DefaultDialer) UDPListenerControl() (control.Func, bool) {
 	egressEnabled := d.autoDetectBindFunc != nil && d.netns == ""
-	listenerControl := d.udpListener.Control
+	listenerControl := control.Append(d.udpListener.Control, adapter.SocketProtectFunc(d.networkManager))
 	if egressEnabled && d.networkManager.AutoRedirectOutputMark() == 0 {
 		listenerControl = control.Append(listenerControl, d.autoDetectBindFunc)
 	}
 	return listenerControl, egressEnabled
+}
+
+func (d *DefaultDialer) udpListenerConfig(ctx context.Context) net.ListenConfig {
+	listenConfig := d.udpListener
+	if d.socketProtectContext != nil {
+		listenConfig.Control = control.Append(listenConfig.Control, func(network, address string, conn syscall.RawConn) error {
+			return d.socketProtectContext(ctx, network, address, conn)
+		})
+	}
+	return listenConfig
 }
 
 func (d *DefaultDialer) trackConn(conn net.Conn, err error) (net.Conn, error) {
