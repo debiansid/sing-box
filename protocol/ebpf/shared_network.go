@@ -35,6 +35,7 @@ const (
 type sharedNetwork struct {
 	inbound           *Inbound
 	interfaces        []string
+	excludeInterfaces []string
 	sharedBackend     *ECommon.SharedNetworkBackend
 	tcManager         *sharedTCManager
 	listeners         internalListenerSet
@@ -69,13 +70,14 @@ func newSharedNetwork(inbound *Inbound, options option.EBPFSharedOptions) *share
 			len(options.IncludeMACAddress) > 0 || len(options.ExcludeMACAddress) > 0,
 	)
 	shared := &sharedNetwork{
-		inbound:      inbound,
-		interfaces:   append([]string(nil), options.Interface...),
-		mapCapacity:  mapCapacity,
-		tcPriority:   tcPriority,
-		dataPlane:    options.Advanced.DataPlane,
-		routingMark:  options.Advanced.RoutingMark,
-		routingTable: options.Advanced.RoutingTable,
+		inbound:           inbound,
+		interfaces:        append([]string(nil), options.Interface...),
+		excludeInterfaces: append([]string(nil), inbound.excludeInterface...),
+		mapCapacity:       mapCapacity,
+		tcPriority:        tcPriority,
+		dataPlane:         options.Advanced.DataPlane,
+		routingMark:       options.Advanced.RoutingMark,
+		routingTable:      options.Advanced.RoutingTable,
 	}
 	if shared.dataPlane == "" {
 		shared.dataPlane = sharedNetworkDataPlaneAuto
@@ -108,14 +110,15 @@ func (s *sharedNetwork) Start(cgroupBackend *ECommon.CgroupBackend) error {
 		prepareBackend: func() (*ECommon.SharedNetworkBackend, error) {
 			return s.prepareBackend(cgroupBackend)
 		},
-		onReady:        s.sharedNetworkReady,
-		logger:         s.inbound.logger,
-		interfaces:     s.interfaces,
-		enableIPv4:     s.inbound.redirectIPv4Prefix.IsValid(),
-		priority:       s.tcPriority,
-		networkMonitor: s.inbound.networkManager.NetworkMonitor(),
-		attachments:    make(map[string]*sharedTCAttachment),
-		debug:          &s.inbound.debug,
+		onReady:           s.sharedNetworkReady,
+		logger:            s.inbound.logger,
+		interfaces:        s.interfaces,
+		excludeInterfaces: s.excludeInterfaces,
+		enableIPv4:        s.inbound.redirectIPv4Prefix.IsValid(),
+		priority:          s.tcPriority,
+		networkMonitor:    s.inbound.networkManager.NetworkMonitor(),
+		attachments:       make(map[string]*sharedTCAttachment),
+		debug:             &s.inbound.debug,
 	}
 	if err := s.tcManager.Start(); err != nil {
 		return E.Errors(err, s.Close())
@@ -131,23 +134,24 @@ func (s *sharedNetwork) Start(cgroupBackend *ECommon.CgroupBackend) error {
 
 func (s *sharedNetwork) prepareBackend(cgroupBackend *ECommon.CgroupBackend) (*ECommon.SharedNetworkBackend, error) {
 	backend, err := ECommon.PrepareSharedNetwork(cgroupBackend, ECommon.SharedNetworkConfig{
-		ListenerPort:         s.listeners.selectedPort(),
-		EnableTCP:            s.inbound.enableTCP,
-		EnableUDP:            s.inbound.enableUDP,
-		DNSMode:              commonDNSMode(s.inbound.sharedDNSMode),
-		BypassPrivateAddress: s.inbound.sharedBypassPrivateAddress,
-		RedirectIPv4:         s.inbound.redirectIPv4Prefix,
-		RedirectIPv6:         s.inbound.sharedRedirectIPv6Prefix(),
-		FakeIPIPv4:           s.inbound.fakeIPIPv4Prefix,
-		FakeIPIPv6:           s.inbound.fakeIPIPv6Prefix,
-		IncludeSourceCIDR:    s.inbound.sharedNetworkOptions.IncludeSourceCIDR,
-		ExcludeSourceCIDR:    s.inbound.sharedNetworkOptions.ExcludeSourceCIDR,
-		IncludeSourceMAC:     s.inbound.sharedNetworkIncludeMAC,
-		ExcludeSourceMAC:     s.inbound.sharedNetworkExcludeMAC,
-		MapCapacity:          s.mapCapacity,
-		UDPTimeout:           s.inbound.udpTimeout,
-		DataPlane:            s.dataPlane,
-		RoutingMark:          s.routingMark,
+		ListenerPort:          s.listeners.selectedPort(),
+		EnableTCP:             s.inbound.enableTCP,
+		EnableUDP:             s.inbound.enableUDP,
+		DNSMode:               commonDNSMode(s.inbound.sharedDNSMode),
+		BypassPrivateAddress:  s.inbound.sharedBypassPrivateAddress,
+		RedirectIPv4:          s.inbound.redirectIPv4Prefix,
+		RedirectIPv6:          s.inbound.sharedRedirectIPv6Prefix(),
+		FakeIPIPv4:            s.inbound.fakeIPIPv4Prefix,
+		FakeIPIPv6:            s.inbound.fakeIPIPv6Prefix,
+		IncludeSourceCIDR:     s.inbound.sharedNetworkOptions.IncludeSourceCIDR,
+		ExcludeSourceCIDR:     s.inbound.sharedNetworkOptions.ExcludeSourceCIDR,
+		IncludeSourceMAC:      s.inbound.sharedNetworkIncludeMAC,
+		ExcludeSourceMAC:      s.inbound.sharedNetworkExcludeMAC,
+		MapCapacity:           s.mapCapacity,
+		UDPTimeout:            s.inbound.udpTimeout,
+		DataPlane:             s.dataPlane,
+		RoutingMark:           s.routingMark,
+		IndependentBypassCIDR: true,
 	})
 	if err != nil {
 		return nil, err
@@ -194,8 +198,8 @@ func (s *sharedNetwork) prepareBackend(cgroupBackend *ECommon.CgroupBackend) (*E
 		s.setSharedBackend(backend)
 		s.inbound.bypassRuleSetAccess.Unlock()
 	} else {
-		ipv4Count, ipv6Count := cgroupBackend.BypassCIDRCount()
-		if err = backend.SetBypassCIDRState(ipv4Count, ipv6Count); err != nil {
+		_, err = backend.UpdateBypassCIDR(s.inbound.currentBypassCIDR())
+		if err != nil {
 			closeErr := backend.Close()
 			return nil, E.Errors(err, closeErr)
 		}

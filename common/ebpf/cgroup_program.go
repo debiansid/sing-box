@@ -129,7 +129,6 @@ func (b *CgroupBackend) loadPrograms(listenerPort uint16, selfTGID uint32) error
 	b.runtime.self_bypass_tgid = false
 	value := uint8(1)
 	for cookie := range b.pendingSocketCookies {
-		cookie := cookie
 		if err = updateMap(b.socketBypassMapFD, unsafe.Pointer(&cookie), unsafe.Pointer(&value)); err != nil {
 			return E.Cause(err, "register pending eBPF bypass socket")
 		}
@@ -243,6 +242,8 @@ func (b *CgroupBackend) cgroupProgramSection(slot int, tgidMode bool) string {
 }
 
 func (b *CgroupBackend) updateCgroupControl(listenerPort uint16, selfTGID uint32) error {
+	b.listenerPort = listenerPort
+	b.selfTGID = selfTGID
 	var flags uint32
 	if b.runtime.enable_tcp {
 		flags |= cgroupFlagTCP
@@ -259,7 +260,7 @@ func (b *CgroupBackend) updateCgroupControl(listenerPort uint16, selfTGID uint32
 	if b.bypassPrivateAddress {
 		flags |= cgroupFlagBypassPrivateAddress
 	}
-	if b.runtime.uid_policy {
+	if b.runtime.uid_policy && (b.preserveUID == 0 || b.preserveUIDActive) {
 		flags |= cgroupFlagUIDPolicy
 	}
 	if b.runtime.uid_default_bypass {

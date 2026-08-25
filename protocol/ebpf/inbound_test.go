@@ -150,6 +150,9 @@ func TestValidateScopedOptions(t *testing.T) {
 	if err := validateSharedOptions(false, option.EBPFSharedOptions{Interface: []string{"ap0"}}); err == nil {
 		t.Fatal("expected shared-only options to be rejected")
 	}
+	if err := validateLocalOptions(false, option.EBPFLocalOptions{ExcludeInterface: []string{"tun0"}}); err == nil {
+		t.Fatal("expected local excluded-interface option to be rejected")
+	}
 	if err := validateSharedOptions(false, option.EBPFSharedOptions{IPv6Mode: sharedIPv6ModeOff}); err == nil {
 		t.Fatal("expected shared IPv6 mode to be rejected without shared mode")
 	}

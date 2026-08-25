@@ -46,23 +46,24 @@ const (
 )
 
 type SharedNetworkConfig struct {
-	ListenerPort         uint16
-	EnableTCP            bool
-	EnableUDP            bool
-	DNSMode              DNSMode
-	BypassPrivateAddress bool
-	RedirectIPv4         netip.Prefix
-	RedirectIPv6         netip.Prefix
-	FakeIPIPv4           netip.Prefix
-	FakeIPIPv6           netip.Prefix
-	IncludeSourceCIDR    []netip.Prefix
-	ExcludeSourceCIDR    []netip.Prefix
-	IncludeSourceMAC     []MACAddress
-	ExcludeSourceMAC     []MACAddress
-	MapCapacity          SharedNetworkMapCapacities
-	UDPTimeout           time.Duration
-	DataPlane            string
-	RoutingMark          uint32
+	ListenerPort          uint16
+	EnableTCP             bool
+	EnableUDP             bool
+	DNSMode               DNSMode
+	BypassPrivateAddress  bool
+	RedirectIPv4          netip.Prefix
+	RedirectIPv6          netip.Prefix
+	FakeIPIPv4            netip.Prefix
+	FakeIPIPv6            netip.Prefix
+	IncludeSourceCIDR     []netip.Prefix
+	ExcludeSourceCIDR     []netip.Prefix
+	IncludeSourceMAC      []MACAddress
+	ExcludeSourceMAC      []MACAddress
+	MapCapacity           SharedNetworkMapCapacities
+	UDPTimeout            time.Duration
+	DataPlane             string
+	RoutingMark           uint32
+	IndependentBypassCIDR bool
 }
 
 type MACAddress [6]byte

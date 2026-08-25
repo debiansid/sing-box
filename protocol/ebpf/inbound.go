@@ -82,6 +82,7 @@ type Inbound struct {
 	cgroupPolicy               ECommon.CgroupPolicy
 	androidUIDOptions          *androidUIDOptions
 	localRoutes                []*localRoute
+	excludeInterface           []string
 	sharedNetworkOptions       option.EBPFSharedOptions
 	sharedNetworkEnabled       bool
 	sharedIPv6Mode             string
@@ -100,16 +101,21 @@ type Inbound struct {
 
 	bypassRuleSetAccess    sync.Mutex
 	bypassRuleSet          []adapter.RuleSet
+	bypassCIDR             []netip.Prefix
 	bypassRuleSetPolicy    ECommon.BypassCIDRPolicy
 	bypassRuleSetDirty     bool
 	bypassRuleSetCallbacks []*list.Element[adapter.RuleSetUpdateCallback]
 	bypassRuleSetStarted   bool
+	vpnWatchCancel         context.CancelFunc
+	vpnWatchDone           chan struct{}
+	vpnInterfacePackets    map[string]interfacePacketCount
+	vpnBypassActive        bool
+	preserveVPNUID         uint32
 
 	udpClientTable      udpClientTable
 	udpWarnings         udpWarningLimiters
 	tcpWarnings         warningLimiter
 	unexpectedTCPWarn   warningLimiter
-	policyWarnings      warningLimiter
 	ipv6Warnings        warningLimiter
 	tcpJanitorWarn      warningLimiter
 	runtimeStatusWarn   warningLimiter
@@ -120,7 +126,7 @@ type Inbound struct {
 	runtimeStatusCancel context.CancelFunc
 	runtimeStatusDone   chan struct{}
 	runtimeStatusWake   chan struct{}
-	programStatsRelease func() error
+	programStatsRelease func() error //nolint:unused // Used by ebpf_debug builds.
 	debug               eBPFDebugState
 	diagnostics         eBPFDiagnostics
 }
@@ -180,6 +186,13 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 			return nil, err
 		}
 	}
+	var excludeInterfaces []string
+	if cgroupEnabled {
+		excludeInterfaces, err = normalizeExcludeInterfaces(options.Local.ExcludeInterface)
+		if err != nil {
+			return nil, err
+		}
+	}
 	sharedNetworkIncludeMAC, err := parseSharedNetworkMACAddresses(
 		"include_mac_address",
 		sharedNetworkOptions.IncludeMACAddress,
@@ -225,6 +238,7 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 		redirectIPv4Prefix:         redirectIPv4Candidates[0],
 		redirectIPv6Prefix:         redirectIPv6Candidates[0],
 		cgroupMapCapacity:          cgroupMapCapacity,
+		excludeInterface:           excludeInterfaces,
 		sharedNetworkOptions:       sharedNetworkOptions,
 		sharedNetworkEnabled:       sharedNetworkEnabled,
 		sharedIPv6Mode:             sharedIPv6Mode,

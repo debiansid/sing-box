@@ -3576,6 +3576,19 @@
             }
           ]
         },
+        "exclude_interface": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
+        },
         "state_capacity": {
           "type": "integer",
           "minimum": 0,

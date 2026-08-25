@@ -5,6 +5,7 @@ package ebpf
 import (
 	"errors"
 	"net"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -420,8 +421,8 @@ func (b *SpliceBackend) Close() error {
 	}
 	var closeErr error
 	if len(b.links) > 0 {
-		for index := len(b.links) - 1; index >= 0; index-- {
-			closeErr = E.Errors(closeErr, b.links[index].Close())
+		for _, spliceLink := range slices.Backward(b.links) {
+			closeErr = E.Errors(closeErr, spliceLink.Close())
 		}
 		b.links = nil
 	} else if b.attached && b.maps != nil && len(b.programs) == 2 {
@@ -558,7 +559,7 @@ func (w *spliceWatcher) run() {
 		}
 		var halfCloses []halfClose
 		w.access.Lock()
-		for index := 0; index < n; index++ {
+		for index := range n {
 			fd := events[index].Fd
 			pair := w.byFD[fd]
 			if pair == nil {

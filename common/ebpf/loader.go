@@ -147,7 +147,9 @@ func loadObjectPrograms(
 		mapSpec.Type = info.Type
 		mapSpec.KeySize = info.KeySize
 		mapSpec.ValueSize = info.ValueSize
-		mapSpec.MaxEntries = info.MaxEntries
+		// The kernel rounds BPF_F_NO_COMMON_LRU capacity up per CPU, while
+		// cilium/ebpf compatibility uses the capacity requested at creation.
+		mapSpec.MaxEntries = mapInstance.MaxEntries()
 		mapSpec.Flags = info.Flags
 		mapSpec.Extra = nil
 	}

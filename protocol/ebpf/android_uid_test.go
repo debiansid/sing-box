@@ -95,6 +95,60 @@ func TestResolveAndroidUIDPolicyRequiresPackageManager(t *testing.T) {
 	}
 }
 
+func TestDetectCloudflareUIDPreservesInterception(t *testing.T) {
+	const cloudflareUID = 10127
+	inbound := &Inbound{
+		logger: log.NewNOPFactory().Logger(),
+		networkManager: &testNetworkManager{
+			packageManager: &testPackageManager{
+				idByPackage: map[string]uint32{
+					cloudflareVPNPackage: cloudflareUID,
+				},
+			},
+		},
+		cgroupEnabled: true,
+	}
+
+	inbound.detectCloudflareUID()
+	if inbound.preserveVPNUID != cloudflareUID {
+		t.Fatalf("unexpected preserved Cloudflare UID: %d", inbound.preserveVPNUID)
+	}
+	if !inbound.cgroupPolicy.IncludeUIDConfigured {
+		t.Fatal("Cloudflare UID detection did not enable include policy")
+	}
+	if !uidInRanges(cloudflareUID, inbound.cgroupPolicy.IncludeUID) {
+		t.Fatalf("Cloudflare UID was not included: %+v", inbound.cgroupPolicy.IncludeUID)
+	}
+	if len(inbound.cgroupPolicy.ExcludeUID) != 0 {
+		t.Fatalf("Cloudflare UID detection unexpectedly changed exclude policy: %+v", inbound.cgroupPolicy.ExcludeUID)
+	}
+
+	inbound.detectCloudflareUID()
+	if len(inbound.cgroupPolicy.IncludeUID) != 1 {
+		t.Fatalf("Cloudflare UID was duplicated: %+v", inbound.cgroupPolicy.IncludeUID)
+	}
+}
+
+func TestDetectCloudflareUIDSharedPackage(t *testing.T) {
+	const cloudflareUID = 10127
+	inbound := &Inbound{
+		logger: log.NewNOPFactory().Logger(),
+		networkManager: &testNetworkManager{
+			packageManager: &testPackageManager{
+				idByShared: map[string]uint32{
+					cloudflareVPNPackage: cloudflareUID,
+				},
+			},
+		},
+		cgroupEnabled: true,
+	}
+
+	inbound.detectCloudflareUID()
+	if inbound.preserveVPNUID != cloudflareUID {
+		t.Fatalf("unexpected preserved shared Cloudflare UID: %d", inbound.preserveVPNUID)
+	}
+}
+
 func TestFormatUIDRanges(t *testing.T) {
 	formatted := formatUIDRanges([]ECommon.UIDRange{
 		{Start: 1000, End: 1000},

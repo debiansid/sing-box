@@ -46,6 +46,7 @@ network administration privileges.
     "include_android_user": [],
     "include_package": [],
     "exclude_package": [],
+    "exclude_interface": [],
     "state_capacity": 0
   },
   "shared": {
@@ -222,6 +223,17 @@ unused flow map to one entry. An explicit value applies to redirect, peer,
 enabled flow-cache, and socket-cookie maps. The recovery map uses the smaller
 of that value and 8192. Valid range is 0 through 1048576. Larger values consume
 more locked kernel memory.
+
+#### local.exclude_interface
+
+Interfaces excluded from local cgroup socket interception. An exact name
+excludes one interface; a name ending in `+` or `*` excludes all interfaces
+with that prefix. When omitted, the built-in defaults are `tun+` and `ipsec+`.
+An active excluded interface
+temporarily bypasses cgroup socket redirection so the VPN handshake can
+complete. This option is available in `local` and `hybrid` modes.
+In `hybrid` mode, matching interfaces are also omitted from shared TC
+attachments.
 
 ### shared
 

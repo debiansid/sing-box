@@ -227,6 +227,14 @@ func (i *Inbound) deleteUDPRedirectsWithBackend(
 
 func (i *Inbound) socketControl(ipv6Listener bool) control.Func {
 	return func(network string, address string, rawConn syscall.RawConn) error {
+		if strings.HasPrefix(network, "udp") {
+			if err := control.Raw(rawConn, func(fd uintptr) error {
+				_ = unix.SetsockoptInt(int(fd), unix.SOL_SOCKET, unix.SO_REUSEADDR, 1)
+				return unix.SetsockoptInt(int(fd), unix.SOL_SOCKET, unix.SO_BROADCAST, 1)
+			}); err != nil {
+				return err
+			}
+		}
 		if ipv6Listener {
 			return control.Raw(rawConn, func(fd uintptr) error {
 				if err := unix.SetsockoptInt(int(fd), unix.SOL_IPV6, unix.IPV6_TRANSPARENT, 1); err != nil {

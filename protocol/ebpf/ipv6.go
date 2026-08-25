@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"slices"
 	"time"
 
 	"github.com/sagernet/netlink"
@@ -73,12 +74,7 @@ func probeCgroupIPv6Available() (bool, error) {
 		}
 		return false, E.Cause(err, "probe native IPv6 route")
 	}
-	for _, route := range routes {
-		if routeSupportsNativeIPv6(route) {
-			return true, nil
-		}
-	}
-	return false, nil
+	return slices.ContainsFunc(routes, routeSupportsNativeIPv6), nil
 }
 
 func routeSupportsNativeIPv6(route netlink.Route) bool {

@@ -19,6 +19,12 @@ INLINE bool dhcp_packet(__u8 protocol, __u16 source_port, __u16 destination_port
         destination_port == 546U || destination_port == 547U;
 }
 
+INLINE bool vpn_control_packet(__u8 protocol, __u16 source_port, __u16 destination_port) {
+    return protocol == IPPROTO_UDP_VALUE &&
+        (source_port == 500U || source_port == 4500U ||
+         destination_port == 500U || destination_port == 4500U);
+}
+
 #define SB_SHARED_SOURCE_IP_POLICY_FLAGS \
     (SB_SHARED_FLAG_INCLUDE_SOURCE | SB_SHARED_FLAG_EXCLUDE_SOURCE)
 #define SB_SHARED_SOURCE_MAC_POLICY_FLAGS \
@@ -96,6 +102,7 @@ NOINLINE __u8 shared_dns_policy(
     __u16 destination_port,
     const struct sb_shared_control *control) {
     if (dhcp_packet(protocol, source_port, destination_port)) return SB_SHARED_POLICY_BYPASS;
+    if (vpn_control_packet(protocol, source_port, destination_port)) return SB_SHARED_POLICY_BYPASS;
     if (destination_port != 53U) return SB_SHARED_POLICY_CONTINUE;
     if (control->dns_mode == SB_SHARED_DNS_MODE_OFF) return SB_SHARED_POLICY_BYPASS;
     if (control->dns_mode == SB_SHARED_DNS_MODE_HIJACK) return SB_SHARED_POLICY_PROXY;

@@ -6,7 +6,6 @@ import (
 	"net/netip"
 	"time"
 
-	ECommon "github.com/sagernet/sing-box/common/ebpf"
 	"github.com/sagernet/sing-box/log"
 )
 
@@ -21,14 +20,6 @@ type eBPFDebugUDPWriterState struct{}
 func (d *eBPFDebugState) observe(task string, duration time.Duration, err error) {}
 
 func (d *eBPFDebugState) bypassPolicyOperationStarted() time.Time { return time.Time{} }
-
-func (d *eBPFDebugState) observeBypassPolicyCompile(
-	started time.Time,
-	rawPrefixes int,
-	policy ECommon.BypassCIDRPolicy,
-	err error,
-) {
-}
 
 func (d *eBPFDebugState) observeBypassPolicyUpdate(started time.Time, err error) {}
 

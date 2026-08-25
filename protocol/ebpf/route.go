@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net"
 	"net/netip"
+	"slices"
 
 	"github.com/sagernet/netlink"
 	E "github.com/sagernet/sing/common/exceptions"
@@ -101,8 +102,8 @@ func (i *Inbound) removeLocalRoutes() error {
 	}
 	routes := i.localRoutes
 	var routeErr error
-	for index := len(routes) - 1; index >= 0; index-- {
-		err := netlink.RouteDel(&routes[index].route)
+	for _, route := range slices.Backward(routes) {
+		err := netlink.RouteDel(&route.route)
 		if err != nil && !errors.Is(err, unix.ENOENT) && !errors.Is(err, unix.ESRCH) {
 			routeErr = E.Errors(routeErr, err)
 		}
@@ -122,8 +123,8 @@ func addLocalRoutes(prefixes []netip.Prefix) ([]*localRoute, error) {
 	for _, prefix := range prefixes {
 		route, owned, routeErr := addLocalRoute(loopback.Attrs().Index, prefix)
 		if routeErr != nil {
-			for index := len(ownedRoutes) - 1; index >= 0; index-- {
-				_ = netlink.RouteDel(&ownedRoutes[index].route)
+			for _, ownedRoute := range slices.Backward(ownedRoutes) {
+				_ = netlink.RouteDel(&ownedRoute.route)
 			}
 			return nil, routeErr
 		}

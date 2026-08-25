@@ -74,7 +74,11 @@ func TestCgroupIPv6ProbeDebounceAndCancellation(t *testing.T) {
 		t.Fatal("debounced IPv6 probe did not run")
 	}
 	inbound.lifecycleAccess.Lock()
+	probePending := inbound.cgroupIPv6Probe.timer != nil
 	inbound.lifecycleAccess.Unlock()
+	if probePending {
+		t.Fatal("debounced IPv6 probe did not finish")
+	}
 	select {
 	case <-probes:
 		t.Fatal("superseded IPv6 probe was not canceled")

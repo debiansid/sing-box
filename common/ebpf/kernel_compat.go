@@ -58,7 +58,7 @@ func detectLPMTrieKernelSafety() lpmTrieKernelSafety {
 }
 
 func knownUnsafeLPMTrieRelease(release string) bool {
-	version := strings.SplitN(release, "-", 2)[0]
+	version, _, _ := strings.Cut(release, "-")
 	parts := strings.Split(version, ".")
 	if len(parts) < 3 {
 		return false

@@ -42,6 +42,7 @@ func (s *sharedNetwork) NewConnection(ctx context.Context, conn net.Conn, metada
 		metadata.Destination = M.SocksaddrFromNetIP(tokenDestination)
 		metadata.SourceMACAddress = net.HardwareAddr(sourceMAC[:])
 		_ = interfaceIndex
+		ctx = adapter.WithSharedNetworkContext(ctx)
 		s.inbound.routeConnection(ctx, conn, metadata, onClose)
 		return
 	}
@@ -68,6 +69,7 @@ func (s *sharedNetwork) NewConnection(ctx context.Context, conn net.Conn, metada
 	metadata.Source = M.SocksaddrFromNetIP(client)
 	metadata.Destination = M.SocksaddrFromNetIP(original.Destination)
 	metadata.SourceMACAddress = original.SourceMAC
+	ctx = adapter.WithSharedNetworkContext(ctx)
 	onClose = N.AppendClose(onClose, func(error) {
 		s.releaseFlow(flow)
 	})
@@ -186,6 +188,7 @@ func (s *sharedNetwork) NewPacket(buffer *buf.Buffer, oob []byte, source M.Socks
 }
 
 func (s *sharedNetwork) NewPacketConnectionEx(ctx context.Context, conn N.PacketConn, source M.Socksaddr, destination M.Socksaddr, onClose N.CloseHandlerFunc) {
+	ctx = adapter.WithSharedNetworkContext(ctx)
 	metadata := adapter.InboundContext{
 		Inbound:     s.inbound.Tag(),
 		InboundType: s.inbound.Type(),
