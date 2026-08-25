@@ -51,7 +51,7 @@ jobs:
             SING_BOX_EBPF_INTEGRATION=1 \
             SING_BOX_EBPF_INTEGRATION_CGROUP="$cgroup_path" \
             go test -v -count=1 \
-              -run 'Test(CgroupBackendProgramLoad|SharedNetwork(SharedMap|Standalone)ProgramLoad)Integration' \
+              -run 'Test(CgroupBackendProgramLoad|SharedNetwork(SharedMap|Standalone)ProgramLoad|SharedNetworkProgramRun)Integration' \
               -tags with_ebpf,ebpf_integration \
               ./common/ebpf 2>&1 | tee -a verifier.log
 

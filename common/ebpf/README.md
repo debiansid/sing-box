@@ -268,6 +268,12 @@ sudo -E SING_BOX_EBPF_SHARED_INTEGRATION=1 \
   -run 'TestSharedNetwork(DataPath|TCPChurn)Integration' ./protocol/ebpf
 ```
 
+`TestSharedNetworkProgramRunIntegration` executes the loaded sched_cls ingress
+program through kernel `BPF_PROG_TEST_RUN`. It validates policy priority,
+address/port rewriting, IPv4 and TCP checksums, first/later fragment state, and
+fail-closed handling for missing fragment state and truncated selected packets.
+The verifier workflow runs this test with root privileges.
+
 `TestSharedNetworkTCPChurnIntegration` creates 5000 short TCP connections with
 128 workers and validates lookup, generation retention, reply, and cleanup for
 every accepted connection. The common-package generation cleanup test also
