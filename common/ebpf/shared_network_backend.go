@@ -84,6 +84,11 @@ type SharedNetworkBackend struct {
 	excludeSourceIPv6   []netip.Prefix
 	includeSourceMAC    []MACAddress
 	excludeSourceMAC    []MACAddress
+	separateBypassCIDR  bool
+}
+
+func (b *SharedNetworkBackend) IndependentBypassCIDR() bool {
+	return b != nil && b.separateBypassCIDR
 }
 
 func PrepareSharedNetwork(cgroupBackend *CgroupBackend, config SharedNetworkConfig) (*SharedNetworkBackend, error) {
@@ -150,7 +155,8 @@ func PrepareSharedNetwork(cgroupBackend *CgroupBackend, config SharedNetworkConf
 	}
 	var bypassIPv4Map *CiliumEBPF.Map
 	var bypassIPv6Map *CiliumEBPF.Map
-	if cgroupBackend != nil {
+	sharedCgroupMapsLocked := cgroupBackend != nil && !config.SeparateBypassCIDR
+	if sharedCgroupMapsLocked {
 		cgroupBackend.access.RLock()
 		if err := cgroupBackend.health.requireUsable(cgroupBackend.runtime != nil); err != nil {
 			cgroupBackend.access.RUnlock()
@@ -167,7 +173,7 @@ func PrepareSharedNetwork(cgroupBackend *CgroupBackend, config SharedNetworkConf
 		bypassIPv4Map,
 		bypassIPv6Map,
 	)
-	if cgroupBackend != nil {
+	if sharedCgroupMapsLocked {
 		cgroupBackend.access.RUnlock()
 	}
 	if err != nil {
@@ -199,14 +205,15 @@ func PrepareSharedNetwork(cgroupBackend *CgroupBackend, config SharedNetworkConf
 		bypassIPv6MapFD = bypassIPv6Map.FD()
 	}
 	backend := &SharedNetworkBackend{
-		mapCapacity:     config.MapCapacity,
-		runtime:         runtimeState,
-		statsMapFD:      runtimeState.stats_map_fd,
-		bypassIPv4Map:   bypassIPv4Map,
-		bypassIPv6Map:   bypassIPv6Map,
-		bypassIPv4MapFD: bypassIPv4MapFD,
-		bypassIPv6MapFD: bypassIPv6MapFD,
-		flowReleaseWake: make(chan struct{}, 1),
+		mapCapacity:        config.MapCapacity,
+		runtime:            runtimeState,
+		statsMapFD:         runtimeState.stats_map_fd,
+		bypassIPv4Map:      bypassIPv4Map,
+		bypassIPv6Map:      bypassIPv6Map,
+		bypassIPv4MapFD:    bypassIPv4MapFD,
+		bypassIPv6MapFD:    bypassIPv6MapFD,
+		flowReleaseWake:    make(chan struct{}, 1),
+		separateBypassCIDR: config.SeparateBypassCIDR,
 	}
 	backend.control.ListenerPort = config.ListenerPort
 	backend.control.DNSMode = config.DNSMode

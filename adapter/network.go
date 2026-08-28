@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/netip"
 	"strings"
+	"syscall"
 	"time"
 
 	C "github.com/sagernet/sing-box/constant"
@@ -35,6 +36,16 @@ type NetworkManager interface {
 	WIFIState() WIFIState
 	UpdateWIFIState(ctx context.Context)
 	ResetNetwork(ctx context.Context)
+}
+
+// SocketProtectContextFunc is the context-aware form of a socket protection
+// callback. It lets callers keep platform VPN protection for core/endpoint
+// sockets while selecting a different route for an inbound flow.
+type SocketProtectContextFunc func(context.Context, string, string, syscall.RawConn) error
+
+type SocketProtectContextManager interface {
+	RegisterSocketProtectContextFunc(SocketProtectContextFunc) error
+	SocketProtectFuncContext() SocketProtectContextFunc
 }
 
 type NetworkOptions struct {

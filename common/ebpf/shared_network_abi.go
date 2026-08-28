@@ -53,6 +53,7 @@ type SharedNetworkConfig struct {
 	ExcludeSourceMAC     []MACAddress
 	MapCapacity          SharedNetworkMapCapacities
 	UDPTimeout           time.Duration
+	SeparateBypassCIDR   bool
 }
 
 type MACAddress [6]byte

@@ -51,6 +51,7 @@ func (s *sharedNetwork) NewConnection(ctx context.Context, conn net.Conn, metada
 	metadata.Source = M.SocksaddrFromNetIP(client)
 	metadata.Destination = M.SocksaddrFromNetIP(original.Destination)
 	metadata.SourceMACAddress = original.SourceMAC
+	ctx = adapter.WithSharedNetworkContext(ctx)
 	onClose = N.AppendClose(onClose, func(error) {
 		s.releaseFlow(flow)
 	})
@@ -148,6 +149,7 @@ func (s *sharedNetwork) NewPacket(buffer *buf.Buffer, oob []byte, source M.Socks
 }
 
 func (s *sharedNetwork) NewPacketConnectionEx(ctx context.Context, conn N.PacketConn, source M.Socksaddr, destination M.Socksaddr, onClose N.CloseHandlerFunc) {
+	ctx = adapter.WithSharedNetworkContext(ctx)
 	metadata := adapter.InboundContext{
 		Inbound:     s.inbound.Tag(),
 		InboundType: s.inbound.Type(),
@@ -161,7 +163,7 @@ func (s *sharedNetwork) NewPacketConnectionEx(ctx context.Context, conn N.Packet
 }
 
 func (s *sharedNetwork) preparePacketConnection(source M.Socksaddr, destination M.Socksaddr, _ any) (bool, context.Context, N.PacketWriter, N.CloseHandlerFunc) {
-	ctx := log.ContextWithNewID(s.inbound.ctx)
+	ctx := adapter.WithSharedNetworkContext(log.ContextWithNewID(s.inbound.ctx))
 	client := source.AddrPort()
 	clientState := s.udpClientTable.loadOrCreate(client)
 	writer := &sharedPacketWriter{

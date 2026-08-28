@@ -92,6 +92,102 @@ func TestNormalizeSharedNetworkOptions(t *testing.T) {
 	}
 }
 
+func TestNormalizeExcludeInterfaces(t *testing.T) {
+	defaults, err := normalizeExcludeInterfaces(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(defaults) != len(defaultExcludeInterfacePatterns) {
+		t.Fatalf("unexpected default excluded interfaces: %v", defaults)
+	}
+	for index, pattern := range defaultExcludeInterfacePatterns {
+		if defaults[index] != pattern {
+			t.Fatalf("unexpected default excluded interfaces: %v", defaults)
+		}
+	}
+
+	excluded, err := normalizeExcludeInterfaces([]string{" tun0 ", "tun+", "tun+"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(excluded) != 3 || excluded[0] != "tun0" || excluded[1] != "tun+" || excluded[2] != "ipsec+" {
+		t.Fatalf("unexpected excluded interfaces: %v", excluded)
+	}
+	_, err = normalizeExcludeInterfaces([]string{" "})
+	if err == nil {
+		t.Fatal("expected an empty excluded interface to be rejected")
+	}
+}
+
+func TestIsDefaultRoute(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		route netlink.Route
+		want  bool
+	}{
+		{
+			name:  "implicit IPv4 default",
+			route: netlink.Route{Table: 1088, Type: unix.RTN_UNICAST},
+			want:  true,
+		},
+		{
+			name: "explicit IPv4 default",
+			route: netlink.Route{
+				Table: 1088,
+				Type:  unix.RTN_UNICAST,
+				Dst:   &net.IPNet{IP: net.IPv4zero, Mask: net.CIDRMask(0, 32)},
+			},
+			want: true,
+		},
+		{
+			name: "explicit IPv6 default",
+			route: netlink.Route{
+				Table: 1088,
+				Type:  unix.RTN_UNICAST,
+				Dst:   &net.IPNet{IP: net.IPv6zero, Mask: net.CIDRMask(0, 128)},
+			},
+			want: true,
+		},
+		{
+			name: "non-default route",
+			route: netlink.Route{
+				Table: 1088,
+				Type:  unix.RTN_UNICAST,
+				Dst:   &net.IPNet{IP: net.IPv4(10, 0, 0, 0), Mask: net.CIDRMask(8, 32)},
+			},
+		},
+		{
+			name:  "local table",
+			route: netlink.Route{Table: unix.RT_TABLE_LOCAL, Type: unix.RTN_UNICAST},
+		},
+		{
+			name:  "unreachable default",
+			route: netlink.Route{Table: 1088, Type: unix.RTN_UNREACHABLE},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := isDefaultRoute(test.route); got != test.want {
+				t.Fatalf("isDefaultRoute(%+v) = %v, want %v", test.route, got, test.want)
+			}
+		})
+	}
+}
+
+func TestPacketCountIncreased(t *testing.T) {
+	if packetCountIncreased(interfacePacketCount{rx: 10, tx: 20}, interfacePacketCount{rx: 10, tx: 20}) {
+		t.Fatal("unchanged packet counters reported activity")
+	}
+	if !packetCountIncreased(interfacePacketCount{rx: 10, tx: 20}, interfacePacketCount{rx: 11, tx: 20}) {
+		t.Fatal("rx packet increment was not detected")
+	}
+	if !packetCountIncreased(interfacePacketCount{rx: 10, tx: 20}, interfacePacketCount{rx: 10, tx: 21}) {
+		t.Fatal("tx packet increment was not detected")
+	}
+	if packetCountIncreased(interfacePacketCount{rx: 10, tx: 20}, interfacePacketCount{rx: 0, tx: 0}) {
+		t.Fatal("counter reset reported activity")
+	}
+}
+
 func TestNormalizeSharedNetworkOptionsKeepsTCPriority(t *testing.T) {
 	options, err := normalizeSharedNetworkOptions(option.EBPFSharedOptions{
 		Interface: []string{"ap0"},
@@ -127,6 +223,24 @@ func TestNormalizeSharedNetworkOptionsRejectsInvalid(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected an invalid source CIDR to be rejected")
+	}
+}
+
+func TestIsInterfaceExcluded(t *testing.T) {
+	patterns := []string{"tun0", "wg+"}
+	for _, test := range []struct {
+		name     string
+		excluded bool
+	}{
+		{"tun0", true},
+		{"Tun0", true},
+		{"wg0", true},
+		{"WG-office", true},
+		{"wlan0", false},
+	} {
+		if excluded := isInterfaceExcluded(test.name, patterns); excluded != test.excluded {
+			t.Fatalf("isInterfaceExcluded(%q) = %v, want %v", test.name, excluded, test.excluded)
+		}
 	}
 }
 

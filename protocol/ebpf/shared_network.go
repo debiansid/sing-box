@@ -30,6 +30,7 @@ const (
 type sharedNetwork struct {
 	inbound           *Inbound
 	interfaces        []string
+	excludeInterfaces []string
 	sharedBackend     *ECommon.SharedNetworkBackend
 	tcManager         *sharedTCManager
 	listeners         internalListenerSet
@@ -60,10 +61,11 @@ func newSharedNetwork(inbound *Inbound, options option.EBPFSharedOptions) *share
 			len(options.IncludeMACAddress) > 0 || len(options.ExcludeMACAddress) > 0,
 	)
 	shared := &sharedNetwork{
-		inbound:     inbound,
-		interfaces:  append([]string(nil), options.Interface...),
-		mapCapacity: mapCapacity,
-		tcPriority:  tcPriority,
+		inbound:           inbound,
+		interfaces:        append([]string(nil), options.Interface...),
+		excludeInterfaces: append([]string(nil), inbound.excludeInterface...),
+		mapCapacity:       mapCapacity,
+		tcPriority:        tcPriority,
 	}
 	shared.udpNat = udpnat.New(shared, shared.preparePacketConnection, inbound.udpTimeout, false)
 	return shared
@@ -87,13 +89,14 @@ func (s *sharedNetwork) Start(cgroupBackend *ECommon.CgroupBackend) error {
 		prepareBackend: func() (*ECommon.SharedNetworkBackend, error) {
 			return s.prepareBackend(cgroupBackend)
 		},
-		onReady:        s.sharedNetworkReady,
-		logger:         s.inbound.logger,
-		interfaces:     s.interfaces,
-		enableIPv4:     s.inbound.redirectIPv4Prefix.IsValid(),
-		priority:       s.tcPriority,
-		networkMonitor: s.inbound.networkManager.NetworkMonitor(),
-		attachments:    make(map[string]*sharedTCAttachment),
+		onReady:           s.sharedNetworkReady,
+		logger:            s.inbound.logger,
+		interfaces:        s.interfaces,
+		excludeInterfaces: s.excludeInterfaces,
+		enableIPv4:        s.inbound.redirectIPv4Prefix.IsValid(),
+		priority:          s.tcPriority,
+		networkMonitor:    s.inbound.networkManager.NetworkMonitor(),
+		attachments:       make(map[string]*sharedTCAttachment),
 	}
 	if err := s.tcManager.Start(); err != nil {
 		return E.Errors(err, s.Close())
@@ -124,38 +127,31 @@ func (s *sharedNetwork) prepareBackend(cgroupBackend *ECommon.CgroupBackend) (*E
 		ExcludeSourceMAC:     s.inbound.sharedNetworkExcludeMAC,
 		MapCapacity:          s.mapCapacity,
 		UDPTimeout:           s.inbound.udpTimeout,
+		SeparateBypassCIDR:   true,
 	})
 	if err != nil {
 		return nil, err
 	}
-	if cgroupBackend == nil {
-		s.inbound.bypassRuleSetAccess.Lock()
-		policy := s.inbound.bypassRuleSetPolicy
-		_, err = backend.UpdateCompiledBypassCIDR(policy)
-		if err != nil {
-			s.inbound.bypassRuleSetAccess.Unlock()
-			closeErr := backend.Close()
-			return nil, E.Errors(err, closeErr)
-		}
-		s.inbound.bypassRuleSetDirty = false
-		s.setSharedBackend(backend)
+	s.inbound.bypassRuleSetAccess.Lock()
+	_, err = backend.UpdateCompiledBypassCIDR(s.inbound.bypassRuleSetPolicy)
+	if err != nil {
 		s.inbound.bypassRuleSetAccess.Unlock()
-	} else {
-		ipv4Count, ipv6Count := cgroupBackend.BypassCIDRCount()
-		if err = backend.SetBypassCIDRState(ipv4Count, ipv6Count); err != nil {
-			closeErr := backend.Close()
-			return nil, E.Errors(err, closeErr)
-		}
-		s.setSharedBackend(backend)
+		closeErr := backend.Close()
+		return nil, E.Errors(err, closeErr)
 	}
+	s.inbound.bypassRuleSetDirty = false
+	s.setSharedBackend(backend)
+	s.inbound.bypassRuleSetAccess.Unlock()
 	return backend, nil
 }
 
 func (s *sharedNetwork) sharedNetworkReady() {
 	s.startFlowJanitor()
-	bypassMapSource := "local_cgroup"
-	if s.inbound.cgroupBackendInstance() == nil {
-		bypassMapSource = "standalone"
+	bypassMapSource := "standalone"
+	if backend := s.sharedBackendInstance(); backend != nil && backend.IndependentBypassCIDR() {
+		bypassMapSource = "independent"
+	} else if s.inbound.cgroupBackendInstance() != nil {
+		bypassMapSource = "local_cgroup"
 	}
 	s.inbound.logger.Info(
 		"eBPF shared-network TC interception ready: downstream_interfaces=[", s.tcManager.InterfaceString(),

@@ -150,6 +150,9 @@ func TestValidateScopedOptions(t *testing.T) {
 	if err := validateSharedOptions(false, option.EBPFSharedOptions{Interface: []string{"ap0"}}); err == nil {
 		t.Fatal("expected shared-only options to be rejected")
 	}
+	if err := validateLocalOptions(false, option.EBPFLocalOptions{ExcludeInterface: []string{"tun0"}}); err == nil {
+		t.Fatal("expected local excluded-interface option to be rejected")
+	}
 	if err := validateSharedOptions(false, option.EBPFSharedOptions{IPv6Mode: sharedIPv6ModeOff}); err == nil {
 		t.Fatal("expected shared IPv6 mode to be rejected without shared mode")
 	}
@@ -439,6 +442,26 @@ func TestLocalInterfacePrefixes(t *testing.T) {
 	}
 	if !slices.Equal(prefixes, expected) {
 		t.Fatalf("unexpected local interface prefixes: %v", prefixes)
+	}
+}
+
+func TestVPNBypassKeepsSharedPolicy(t *testing.T) {
+	basePolicy, err := ECommon.CompileBypassCIDRPolicy([]netip.Prefix{
+		netip.MustParsePrefix("192.0.2.0/24"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	vpnPolicy, err := ECommon.CompileBypassCIDRPolicy(fullVPNBypassPrefixes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cgroupPolicy, sharedPolicy := effectiveBypassPolicies(basePolicy, vpnPolicy, true)
+	if ipv4, ipv6 := cgroupPolicy.Count(); ipv4 != 1 || ipv6 != 1 {
+		t.Fatalf("unexpected active VPN cgroup policy count: ipv4=%d ipv6=%d", ipv4, ipv6)
+	}
+	if ipv4, ipv6 := sharedPolicy.Count(); ipv4 != 1 || ipv6 != 0 {
+		t.Fatalf("VPN bypass replaced shared policy: ipv4=%d ipv6=%d", ipv4, ipv6)
 	}
 }
 

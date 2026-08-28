@@ -3,10 +3,13 @@
 package ebpf
 
 import (
+	"context"
 	"strings"
+	"syscall"
 
 	"github.com/sagernet/sing-box/adapter"
 	ECommon "github.com/sagernet/sing-box/common/ebpf"
+	"github.com/sagernet/sing/common/control"
 	E "github.com/sagernet/sing/common/exceptions"
 )
 
@@ -16,19 +19,17 @@ func (i *Inbound) Start(stage adapter.StartStage) error {
 		if err := i.selectRedirectPrefixes(); err != nil {
 			return err
 		}
-		if i.cgroupEnabled && i.androidUIDOptions == nil {
-			if err := i.prepareCgroupBackend(); err != nil {
-				return err
-			}
-		}
 		if i.sharedNetworkEnabled {
 			i.sharedNetwork = newSharedNetwork(i, i.sharedNetworkOptions)
 		}
 	case adapter.StartStateStart:
-		if i.cgroupEnabled && i.androidUIDOptions != nil {
-			if err := i.resolveAndroidUIDPolicy(); err != nil {
-				return combineStartError(E.Cause(err, "resolve Android UID policy"), i.cleanupStartFailure())
+		if i.cgroupEnabled {
+			if i.androidUIDOptions != nil {
+				if err := i.resolveAndroidUIDPolicy(); err != nil {
+					return combineStartError(E.Cause(err, "resolve Android UID policy"), i.cleanupStartFailure())
+				}
 			}
+			i.detectCloudflareUID()
 			if err := i.prepareCgroupBackend(); err != nil {
 				return combineStartError(err, i.cleanupStartFailure())
 			}
@@ -86,6 +87,7 @@ func (i *Inbound) Start(stage adapter.StartStage) error {
 				", uid_policy={include_configured:", i.cgroupPolicy.IncludeUIDConfigured,
 				", include:[", formatUIDRanges(i.cgroupPolicy.IncludeUID), "]",
 				", exclude:[", formatUIDRanges(i.cgroupPolicy.ExcludeUID), "]}",
+				", preserve_vpn_uid=", i.preserveVPNUID,
 				", bypass_cidr={ipv4:", bypassIPv4Count, ", ipv6:", bypassIPv6Count, "}",
 			)
 			i.logger.Debug(
@@ -128,12 +130,29 @@ func (i *Inbound) prepareCgroupBackend() error {
 		MapCapacity:   i.cgroupMapCapacity,
 		UDPTimeout:    i.udpTimeout,
 		Policy:        policy,
+		PreserveUID:   i.preserveVPNUID,
 	})
 	if err != nil {
 		return err
 	}
 	i.setCgroupBackend(backend)
-	if err = adapter.RegisterSocketProtectFunc(i.networkManager, backend.SocketProtectFunc()); err != nil {
+	backendProtectFunc := backend.SocketProtectFunc()
+	protectFunc := func(ctx context.Context, network, address string, conn syscall.RawConn) error {
+		if adapter.IsSharedNetworkContext(ctx) {
+			return backendProtectFunc(network, address, conn)
+		}
+		return control.Append(i.networkManager.ProtectFunc(), backendProtectFunc)(network, address, conn)
+	}
+	var registerErr error
+	if contextManager, supported := i.networkManager.(adapter.SocketProtectContextManager); supported {
+		registerErr = contextManager.RegisterSocketProtectContextFunc(protectFunc)
+	} else {
+		registerErr = adapter.RegisterSocketProtectFunc(
+			i.networkManager,
+			control.Append(i.networkManager.ProtectFunc(), backendProtectFunc),
+		)
+	}
+	if err = registerErr; err != nil {
 		closeErr := backend.Close()
 		if backend.IsClosed() {
 			i.setCgroupBackend(nil)

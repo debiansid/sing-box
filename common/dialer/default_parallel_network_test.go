@@ -7,14 +7,31 @@ import (
 	"net"
 	"net/netip"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
+	"github.com/sagernet/sing-box/adapter"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestUDPListenerControlUsesContextProtector(t *testing.T) {
+	var protectedContext context.Context
+	dialer := &DefaultDialer{
+		socketProtectContext: func(ctx context.Context, _ string, _ string, _ syscall.RawConn) error {
+			protectedContext = ctx
+			return nil
+		},
+	}
+	listenerControl, egressEnabled := dialer.UDPListenerControl()
+	require.False(t, egressEnabled)
+	require.NoError(t, listenerControl("udp", "example.com:443", nil))
+	require.NotNil(t, protectedContext)
+	require.False(t, adapter.IsSharedNetworkContext(protectedContext))
+}
 
 type concurrentTestDialer struct {
 	behaviors map[netip.Addr]concurrentTestBehavior

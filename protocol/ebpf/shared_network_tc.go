@@ -35,6 +35,7 @@ type sharedTCManager struct {
 	onReady           func()
 	logger            sharedNetworkLogger
 	interfaces        []string
+	excludeInterfaces []string
 	enableIPv4        bool
 	priority          uint16
 	access            sync.Mutex
@@ -131,6 +132,9 @@ func (m *sharedTCManager) reconcile() (err error) {
 	}()
 	desired := make(map[string]netlink.Link, len(m.interfaces))
 	for _, interfaceName := range m.interfaces {
+		if isInterfaceExcluded(interfaceName, m.excludeInterfaces) {
+			continue
+		}
 		link, linkErr := netlink.LinkByName(interfaceName)
 		if isSharedNetworkLinkNotFound(linkErr) {
 			continue
@@ -516,4 +520,20 @@ func (m *sharedTCManager) closeAttachments() error {
 		delete(m.attachments, name)
 	}
 	return closeErr
+}
+
+func isInterfaceExcluded(interfaceName string, excludePatterns []string) bool {
+	lowerName := strings.ToLower(interfaceName)
+	for _, pattern := range excludePatterns {
+		lowerPattern := strings.ToLower(pattern)
+		if strings.HasSuffix(lowerPattern, "+") || strings.HasSuffix(lowerPattern, "*") {
+			prefix := strings.TrimRight(lowerPattern, "+*")
+			if strings.HasPrefix(lowerName, prefix) {
+				return true
+			}
+		} else if lowerPattern == lowerName {
+			return true
+		}
+	}
+	return false
 }

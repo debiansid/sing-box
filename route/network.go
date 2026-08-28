@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -31,7 +32,15 @@ import (
 	"golang.org/x/exp/slices"
 )
 
-var _ adapter.NetworkManager = (*NetworkManager)(nil)
+var (
+	_ adapter.NetworkManager              = (*NetworkManager)(nil)
+	_ adapter.SocketProtectContextManager = (*NetworkManager)(nil)
+)
+
+type socketProtectState struct {
+	protectFunc        control.Func
+	protectContextFunc adapter.SocketProtectContextFunc
+}
 
 type NetworkManager struct {
 	ctx                      context.Context
@@ -52,6 +61,7 @@ type NetworkManager struct {
 	endpoint                 adapter.EndpointManager
 	inbound                  adapter.InboundManager
 	outbound                 adapter.OutboundManager
+	socketProtectState       atomic.Pointer[socketProtectState]
 	needWIFIState            bool
 	wifiMonitor              settings.WIFIMonitor
 	wifiState                adapter.WIFIState
@@ -403,6 +413,62 @@ func (r *NetworkManager) ProtectFunc() control.Func {
 		}
 	}
 	return nil
+}
+
+func (r *NetworkManager) RegisterSocketProtectFunc(protectFunc control.Func) error {
+	if protectFunc == nil {
+		return E.New("socket protect function is nil")
+	}
+	if !r.socketProtectState.CompareAndSwap(nil, &socketProtectState{protectFunc: protectFunc}) {
+		return E.New("a socket protect function is already registered")
+	}
+	return nil
+}
+
+func (r *NetworkManager) RegisterSocketProtectContextFunc(protectFunc adapter.SocketProtectContextFunc) error {
+	if protectFunc == nil {
+		return E.New("socket protect function is nil")
+	}
+	if !r.socketProtectState.CompareAndSwap(nil, &socketProtectState{protectContextFunc: protectFunc}) {
+		return E.New("a socket protect function is already registered")
+	}
+	return nil
+}
+
+func (r *NetworkManager) UnregisterSocketProtectFunc() {
+	r.socketProtectState.Store(nil)
+}
+
+func (r *NetworkManager) SocketProtectFunc() control.Func {
+	return func(network string, address string, conn syscall.RawConn) error {
+		state := r.socketProtectState.Load()
+		if state == nil {
+			return nil
+		}
+		if state.protectFunc != nil {
+			return state.protectFunc(network, address, conn)
+		}
+		if state.protectContextFunc != nil {
+			return state.protectContextFunc(context.Background(), network, address, conn)
+		}
+		return nil
+	}
+}
+
+func (r *NetworkManager) SocketProtectFuncContext() adapter.SocketProtectContextFunc {
+	return func(ctx context.Context, network, address string, conn syscall.RawConn) error {
+		state := r.socketProtectState.Load()
+		if state != nil {
+			if state.protectContextFunc != nil {
+				return state.protectContextFunc(ctx, network, address, conn)
+			}
+			return state.protectFunc(network, address, conn)
+		}
+		if protectFunc := r.ProtectFunc(); protectFunc != nil {
+			return protectFunc(network, address, conn)
+		}
+		return nil
+	}
 }
 
 func (r *NetworkManager) DefaultOptions() adapter.NetworkOptions {

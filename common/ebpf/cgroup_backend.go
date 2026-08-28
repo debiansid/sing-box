@@ -132,6 +132,10 @@ type CgroupBackend struct {
 	dnsMode                        DNSMode
 	bypassPrivateAddress           bool
 	udpTimeoutSeconds              uint32
+	preserveUID                    uint32
+	listenerPort                   uint16
+	selfTGID                       uint32
+	preserveUIDActive              bool
 }
 
 func PrepareCgroup(config CgroupConfig) (*CgroupBackend, error) {
@@ -279,6 +283,7 @@ func PrepareCgroup(config CgroupConfig) (*CgroupBackend, error) {
 		dnsMode:              policy.DNSMode,
 		bypassPrivateAddress: policy.BypassPrivateAddress,
 		udpTimeoutSeconds:    udpTimeoutSeconds,
+		preserveUID:          config.PreserveUID,
 	}
 	if config.AutoIPv6 {
 		if _, err = backend.updateIPv6AvailableLocked(config.IPv6Available); err != nil {
@@ -291,4 +296,26 @@ func PrepareCgroup(config CgroupConfig) (*CgroupBackend, error) {
 		return nil, E.Cause(err, "populate UID policy eBPF map")
 	}
 	return backend, nil
+}
+
+// SetPreserveUIDActive keeps the VPN endpoint UID intercepted while the
+// remainder of the system uses the active VPN's full bypass policy.
+func (b *CgroupBackend) SetPreserveUIDActive(active bool) error {
+	if b == nil {
+		return errBackendClosed
+	}
+	b.access.Lock()
+	defer b.access.Unlock()
+	if b.preserveUID == 0 || b.preserveUIDActive == active {
+		return nil
+	}
+	if err := b.health.requireUsable(b.runtime != nil); err != nil {
+		return err
+	}
+	b.preserveUIDActive = active
+	if err := b.updateCgroupControl(b.listenerPort, b.selfTGID); err != nil {
+		b.preserveUIDActive = !active
+		return err
+	}
+	return nil
 }

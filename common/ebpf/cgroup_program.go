@@ -243,6 +243,8 @@ func (b *CgroupBackend) cgroupProgramSection(slot int, tgidMode bool) string {
 }
 
 func (b *CgroupBackend) updateCgroupControl(listenerPort uint16, selfTGID uint32) error {
+	b.listenerPort = listenerPort
+	b.selfTGID = selfTGID
 	var flags uint32
 	if b.runtime.enable_tcp {
 		flags |= cgroupFlagTCP
@@ -259,7 +261,7 @@ func (b *CgroupBackend) updateCgroupControl(listenerPort uint16, selfTGID uint32
 	if b.bypassPrivateAddress {
 		flags |= cgroupFlagBypassPrivateAddress
 	}
-	if b.runtime.uid_policy {
+	if b.runtime.uid_policy && (b.preserveUID == 0 || b.preserveUIDActive) {
 		flags |= cgroupFlagUIDPolicy
 	}
 	if b.runtime.uid_default_bypass {
