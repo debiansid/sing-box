@@ -3,6 +3,7 @@ package rule
 import (
 	"io"
 	"strings"
+	"sync/atomic"
 
 	"github.com/sagernet/sing-box/adapter"
 	C "github.com/sagernet/sing-box/constant"
@@ -10,7 +11,30 @@ import (
 	F "github.com/sagernet/sing/common/format"
 )
 
+type abstractRule struct {
+	disabled atomic.Bool
+	uuid     string
+}
+
+func (r *abstractRule) Disabled() bool {
+	return r.disabled.Load()
+}
+
+func (r *abstractRule) UUID() string {
+	return r.uuid
+}
+
+func (r *abstractRule) ChangeStatus() {
+	for {
+		disabled := r.disabled.Load()
+		if r.disabled.CompareAndSwap(disabled, !disabled) {
+			return
+		}
+	}
+}
+
 type abstractDefaultRule struct {
+	abstractRule
 	items                   []RuleItem
 	sourceAddressItems      []RuleItem
 	sourcePortItems         []RuleItem
@@ -20,12 +44,17 @@ type abstractDefaultRule struct {
 	allItems                []RuleItem
 	ruleSetItem             *RuleSetItem
 	domainMatchStrategy     C.DomainMatchStrategy
+	ruleCount               uint64
 	invert                  bool
 	action                  adapter.RuleAction
 }
 
 func (r *abstractDefaultRule) Type() string {
 	return C.RuleTypeDefault
+}
+
+func (r *abstractDefaultRule) RuleCount() uint64 {
+	return r.ruleCount
 }
 
 func (r *abstractDefaultRule) Start() error {
@@ -161,15 +190,21 @@ func (r *abstractDefaultRule) String() string {
 }
 
 type abstractLogicalRule struct {
+	abstractRule
 	rules               []adapter.HeadlessRule
 	mode                string
 	domainMatchStrategy C.DomainMatchStrategy
 	invert              bool
 	action              adapter.RuleAction
+	ruleCount           uint64
 }
 
 func (r *abstractLogicalRule) Type() string {
 	return C.RuleTypeLogical
+}
+
+func (r *abstractLogicalRule) RuleCount() uint64 {
+	return r.ruleCount
 }
 
 func (r *abstractLogicalRule) Start() error {
