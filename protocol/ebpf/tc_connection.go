@@ -103,7 +103,10 @@ func (i *Inbound) newTCPacket(
 	if assignment.Path == commonEBPF.TCPathShared && assignment.SourceMACValid != 0 {
 		sourceMAC = net.HardwareAddr(assignment.SourceMAC[:])
 	}
-	i.udpClientTable.setDirectBinding(client, destination, sourceMAC, assignment.SocketCookie)
+	if !i.udpClientTable.setDirectBinding(client, destination, sourceMAC, assignment.SocketCookie, assignment.Path) {
+		i.udpWarnings.originalDestination.warn(i.logger, "reject TC eBPF UDP assignment with conflicting path for ", client)
+		return
+	}
 	i.udpNat.NewPacket([][]byte{buffer.Bytes()}, source, M.SocksaddrFromNetIP(destination), nil)
 }
 
@@ -134,10 +137,15 @@ func (i *Inbound) prepareTCPacketConnection(
 	ctx := log.ContextWithNewID(i.ctx)
 	client := source.AddrPort()
 	clientState := i.udpClientTable.loadOrCreate(client)
+	ctx = udpSessionContext(ctx, clientState, i.vpnPayloadEnabled())
 	writer := &tcPacketWriter{inbound: i, client: client, clientState: clientState}
 	return true, ctx, writer, func(error) {
 		i.udpClientTable.delete(client, clientState)
 	}
+}
+
+func udpSessionContext(ctx context.Context, clientState *udpClientState, vpnPayloadEnabled bool) context.Context {
+	return tcPathContext(ctx, clientState.tcPath(), vpnPayloadEnabled)
 }
 
 type tcPacketWriter struct {

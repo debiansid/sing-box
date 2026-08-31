@@ -28,6 +28,7 @@ type udpClientState struct {
 	access          sync.RWMutex
 	sourceMAC       net.HardwareAddr
 	socketCookie    uint64
+	path            uint8
 	bindings        map[netip.AddrPort]udpRedirectBinding
 	replyAliasCount uint16
 	closed          bool
@@ -73,15 +74,21 @@ func (t *udpClientTable) setDirectBinding(
 	destination netip.AddrPort,
 	sourceMAC net.HardwareAddr,
 	socketCookie uint64,
-) {
+	path uint8,
+) bool {
 	state := t.loadOrCreate(client)
 	state.access.Lock()
 	defer state.access.Unlock()
+	if state.path != 0 && state.path != path {
+		return false
+	}
 	if len(sourceMAC) > 0 {
 		state.sourceMAC = append(state.sourceMAC[:0], sourceMAC...)
 	}
 	state.socketCookie = socketCookie
+	state.path = path
 	state.bindings[destination] = udpRedirectBinding{}
+	return true
 }
 
 func (t *udpClientTable) setDirectReplyBinding(
@@ -232,4 +239,10 @@ func (s *udpClientState) processSocketCookie() uint64 {
 	s.access.RLock()
 	defer s.access.RUnlock()
 	return s.socketCookie
+}
+
+func (s *udpClientState) tcPath() uint8 {
+	s.access.RLock()
+	defer s.access.RUnlock()
+	return s.path
 }

@@ -4,9 +4,13 @@ package ebpf
 
 import (
 	"bytes"
+	"context"
 	"net"
 	"net/netip"
 	"testing"
+
+	"github.com/sagernet/sing-box/adapter"
+	commonEBPF "github.com/sagernet/sing-box/common/ebpf"
 )
 
 func TestUDPDirectBinding(t *testing.T) {
@@ -14,7 +18,9 @@ func TestUDPDirectBinding(t *testing.T) {
 	client := netip.MustParseAddrPort("192.0.2.10:53000")
 	destination := netip.MustParseAddrPort("1.1.1.1:53")
 	sourceMAC := net.HardwareAddr{0x02, 0, 0, 0, 0, 1}
-	table.setDirectBinding(client, destination, sourceMAC, 42)
+	if !table.setDirectBinding(client, destination, sourceMAC, 42, commonEBPF.TCPathShared) {
+		t.Fatal("direct binding was rejected")
+	}
 	state, loaded := table.load(client)
 	if !loaded {
 		t.Fatal("client state was not created")
@@ -27,6 +33,42 @@ func TestUDPDirectBinding(t *testing.T) {
 	}
 	if state.processSocketCookie() != 42 {
 		t.Fatalf("unexpected process socket cookie: %d", state.processSocketCookie())
+	}
+	if state.tcPath() != commonEBPF.TCPathShared {
+		t.Fatalf("unexpected TC path: %d", state.tcPath())
+	}
+	ctx := udpSessionContext(context.Background(), state, true)
+	if !adapter.IsVPNPayloadContext(ctx) {
+		t.Fatal("shared UDP session did not receive VPN payload intent")
+	}
+	if adapter.IsVPNPayloadContext(udpSessionContext(context.Background(), state, false)) {
+		t.Fatal("disabled Android VPN capability produced UDP payload intent")
+	}
+	if !table.setDirectBinding(client, netip.MustParseAddrPort("8.8.8.8:53"), sourceMAC, 42, commonEBPF.TCPathShared) {
+		t.Fatal("later datagram with the same path was rejected")
+	}
+	if !adapter.IsVPNPayloadContext(ctx) || state.tcPath() != commonEBPF.TCPathShared {
+		t.Fatal("later datagram lost UDP session ownership")
+	}
+}
+
+func TestUDPDirectBindingRejectsConflictingPath(t *testing.T) {
+	var table udpClientTable
+	client := netip.MustParseAddrPort("192.0.2.10:53000")
+	sharedDestination := netip.MustParseAddrPort("1.1.1.1:53")
+	deliveryDestination := netip.MustParseAddrPort("8.8.8.8:53")
+	if !table.setDirectBinding(client, sharedDestination, nil, 42, commonEBPF.TCPathShared) {
+		t.Fatal("shared binding was rejected")
+	}
+	if table.setDirectBinding(client, deliveryDestination, nil, 84, commonEBPF.TCPathDelivery) {
+		t.Fatal("conflicting path silently replaced UDP session ownership")
+	}
+	state, _ := table.load(client)
+	if state.tcPath() != commonEBPF.TCPathShared || state.processSocketCookie() != 42 {
+		t.Fatal("conflicting path changed existing UDP session metadata")
+	}
+	if _, loaded := state.redirectBinding(deliveryDestination); loaded {
+		t.Fatal("conflicting destination was added to the existing UDP session")
 	}
 }
 
@@ -115,7 +157,9 @@ func TestUDPDirectReplyBindingChecksGeneration(t *testing.T) {
 	client := netip.MustParseAddrPort("192.0.2.10:53000")
 	base := netip.MustParseAddrPort("1.1.1.1:53")
 	reply := netip.MustParseAddrPort("8.8.8.8:53")
-	table.setDirectBinding(client, base, nil, 0)
+	if !table.setDirectBinding(client, base, nil, 0, commonEBPF.TCPathShared) {
+		t.Fatal("direct binding was rejected")
+	}
 	state, _ := table.load(client)
 	if !table.setDirectReplyBinding(client, state, reply) {
 		t.Fatal("reply binding was not installed")
