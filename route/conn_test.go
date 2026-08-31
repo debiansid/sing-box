@@ -192,10 +192,11 @@ func TestConnectionManagerAdvanceGenerationClosesPreviousOnly(t *testing.T) {
 
 	ordinaryG2 := &connectionTestCloser{Conn: netConnPipe(t)}
 	manager.TrackConn(ordinaryG2)
-	manager.AdvanceGeneration()
-	require.Equal(t, int32(1), ordinaryG2.closeCount.Load())
+	manager.CloseGeneration(1)
+	require.Equal(t, int32(0), ordinaryG2.closeCount.Load(), "stale G1 close must not affect G2")
 	require.Equal(t, int32(0), vpnPayload.closeCount.Load())
 	manager.CloseAll()
+	require.Equal(t, int32(1), ordinaryG2.closeCount.Load())
 	require.Equal(t, int32(1), vpnPayload.closeCount.Load())
 }
 
