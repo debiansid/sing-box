@@ -17,7 +17,7 @@ func (i *Inbound) Start(stage adapter.StartStage) error {
 	case adapter.StartStateInitialize:
 		if i.localEnabled {
 			if err := i.startSelfBypass(); err != nil {
-				i.logger.Debug("eBPF cgroup socket tracking unavailable; using socket-cookie registration: ", err)
+				i.logger.Debug("eBPF cgroup self-bypass unavailable; using socket-cookie registration: ", err)
 			}
 		}
 		return nil
@@ -142,7 +142,7 @@ func (i *Inbound) startTCInbound() error {
 				return "none"
 			}
 			if i.selfBypassCgroup {
-				return "cgroup_socket_cookie"
+				return i.selfBypass.Mode().String()
 			}
 			return "userspace_socket_cookie"
 		}(),
@@ -187,7 +187,11 @@ func (i *Inbound) startSelfBypass() error {
 	if i.selfBypass == nil || i.selfBypassCgroup {
 		return nil
 	}
-	if err := i.selfBypass.AttachCgroup(); err != nil {
+	if err := i.selfBypass.AttachCgroup(commonEBPF.SelfBypassCgroupConfig{
+		EnableTCP:  i.enableTCP,
+		EnableUDP:  i.enableUDP,
+		EnableIPv6: i.localIPv6,
+	}); err != nil {
 		return err
 	}
 	i.selfBypassCgroup = true
