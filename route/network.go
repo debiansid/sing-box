@@ -63,6 +63,9 @@ type NetworkManager struct {
 	interfaceUpdateAccess    sync.Mutex
 	interfaceUpdateCancel    context.CancelFunc
 	interfaceUpdateRunAccess sync.Mutex
+	defaultInterfaceName     string
+	defaultInterfaceIndex    int
+	defaultInterfaceKnown    bool
 	powerUpdateAccess        sync.Mutex
 	powerUpdateCancel        context.CancelFunc
 	started                  bool
@@ -484,7 +487,7 @@ func (r *NetworkManager) UpdateWIFIState(ctx context.Context) {
 
 func (r *NetworkManager) ResetNetwork(ctx context.Context) {
 	if r.connectionManager != nil {
-		r.connectionManager.CloseAll()
+		r.connectionManager.AdvanceGeneration()
 	}
 
 	for _, endpoint := range r.endpoint.Endpoints() {
@@ -512,7 +515,17 @@ func (r *NetworkManager) ResetNetwork(ctx context.Context) {
 }
 
 func (r *NetworkManager) notifyInterfaceUpdate(defaultInterface *control.Interface, flags int) {
+	if defaultInterface != nil && r.interfaceMonitor != nil && common.Contains(r.interfaceMonitor.MyInterfaces(), defaultInterface.Name) {
+		return
+	}
 	if defaultInterface == nil {
+		r.interfaceUpdateAccess.Lock()
+		previousCancel := r.interfaceUpdateCancel
+		r.interfaceUpdateCancel = nil
+		r.interfaceUpdateAccess.Unlock()
+		if previousCancel != nil {
+			previousCancel()
+		}
 		r.pauseManager.NetworkPause()
 		r.logger.Error("missing default interface")
 		return
@@ -573,10 +586,24 @@ func (r *NetworkManager) updateInterface(ctx context.Context, defaultInterface *
 	if ctx.Err() != nil {
 		return
 	}
+	interfaceChanged := r.commitDefaultInterface(defaultInterface)
 	if !r.started {
 		return
 	}
+	if !interfaceChanged {
+		return
+	}
 	r.ResetNetwork(ctx)
+}
+
+func (r *NetworkManager) commitDefaultInterface(defaultInterface *control.Interface) bool {
+	changed := !r.defaultInterfaceKnown ||
+		r.defaultInterfaceName != defaultInterface.Name ||
+		r.defaultInterfaceIndex != defaultInterface.Index
+	r.defaultInterfaceName = defaultInterface.Name
+	r.defaultInterfaceIndex = defaultInterface.Index
+	r.defaultInterfaceKnown = true
+	return changed
 }
 
 func (r *NetworkManager) notifyWindowsPowerEvent(event int) {

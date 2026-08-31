@@ -387,16 +387,17 @@ func (b *backendLinux) syncEgress() {
 	default:
 	}
 	b.updateClampLocked()
-	flushBridgeRouteTable(b.routeTable)
+	families := activeBridgeFamilies(b.inet6Port)
+	if err := resetBridgeRouteTable(b.routeTable, families); err != nil {
+		b.logger.Debug(E.Cause(err, "reset pinned bridge egress routes"))
+		return
+	}
 	link, err := netlink.LinkByName(b.boundInterface)
 	if err != nil {
-		for _, family := range activeBridgeFamilies(b.inet6Port) {
-			blackholeBridgeDefault(b.routeTable, family)
-		}
 		b.logger.Debug("pinned egress ", b.boundInterface, " absent, dropping forwarded traffic")
 		return
 	}
-	for _, family := range activeBridgeFamilies(b.inet6Port) {
+	for _, family := range families {
 		b.syncEgressFamily(family, link.Attrs().Index)
 	}
 }
@@ -432,7 +433,6 @@ func (b *backendLinux) syncEgressFamily(family int, linkIndex int) {
 			return
 		}
 	}
-	blackholeBridgeDefault(b.routeTable, family)
 }
 
 func (b *backendLinux) updateClamp() {

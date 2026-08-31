@@ -48,6 +48,7 @@ type tcInterfaceAttachment struct {
 	interfaceIndex int
 	framing        commonEBPF.TCLinkFraming
 	role           tcInterfaceRole
+	generation     uint64
 	lock           io.Closer
 	lockOwned      bool
 	localFilter    *netlink.BpfFilter
@@ -72,16 +73,17 @@ type tcSysctlState struct {
 }
 
 type tcDataPlane struct {
-	access                sync.Mutex
-	backend               *commonEBPF.TCBackend
-	routing               *tcPolicyRouting
-	delivery              *tcDeliveryLink
-	attachments           []*tcInterfaceAttachment
-	localInterface        string
-	sharedInterfaces      []string
-	hostAddresses         []netip.Addr
-	sharedSourceMACPolicy bool
-	priority              uint16
+	access                   sync.Mutex
+	backend                  *commonEBPF.TCBackend
+	routing                  *tcPolicyRouting
+	delivery                 *tcDeliveryLink
+	attachments              []*tcInterfaceAttachment
+	localInterface           string
+	sharedInterfaces         []string
+	hostAddresses            []netip.Addr
+	sharedSourceMACPolicy    bool
+	priority                 uint16
+	nextAttachmentGeneration uint64
 }
 
 func startTCDataPlane(
@@ -117,6 +119,7 @@ func startTCDataPlane(
 	if err != nil {
 		return cleanup(err)
 	}
+	dataPlane.refreshAttachmentGenerations(attachments, nil, nil)
 	dataPlane.attachments = attachments
 	dataPlane.localInterface = localInterface
 	dataPlane.sharedInterfaces = slices.Clone(sharedInterfaces)
@@ -171,12 +174,24 @@ func (d *tcDataPlane) deliveryName() string {
 	return d.delivery.deliveryName
 }
 
-func (d *tcDataPlane) reconcile(localInterface string, sharedInterfaces []string, hostAddresses []netip.Addr) error {
+func (d *tcDataPlane) reconcile(
+	localInterface string,
+	sharedInterfaces []string,
+	hostAddresses []netip.Addr,
+) (map[uint64]struct{}, error) {
 	if d == nil {
-		return nil
+		return nil, nil
 	}
 	d.access.Lock()
 	defer d.access.Unlock()
+	previousGenerations := attachmentGenerationSet(d.attachments)
+	if err := d.reconcileLocked(localInterface, sharedInterfaces, hostAddresses); err != nil {
+		return nil, err
+	}
+	return invalidatedAttachmentGenerations(previousGenerations, d.attachments), nil
+}
+
+func (d *tcDataPlane) reconcileLocked(localInterface string, sharedInterfaces []string, hostAddresses []netip.Addr) error {
 	if d.backend == nil {
 		return E.New("TC eBPF data plane is closed")
 	}
@@ -185,8 +200,10 @@ func (d *tcDataPlane) reconcile(localInterface string, sharedInterfaces []string
 		return err
 	}
 	current := make(map[string]*tcInterfaceAttachment, len(d.attachments))
+	previousAttachments := make(map[string]*tcInterfaceAttachment, len(d.attachments))
 	for _, attachment := range d.attachments {
 		current[attachment.interfaceName] = attachment
+		previousAttachments[attachment.interfaceName] = attachment
 	}
 	names := make([]string, 0, len(desired))
 	for interfaceName := range desired {
@@ -334,6 +351,7 @@ func (d *tcDataPlane) reconcile(localInterface string, sharedInterfaces []string
 			attachment.lockOwned = true
 		}
 	}
+	d.refreshAttachmentGenerations(attachments, previousAttachments, previousRoles)
 	d.attachments = attachments
 	if localInterface != "" {
 		d.localInterface = localInterface
@@ -341,6 +359,74 @@ func (d *tcDataPlane) reconcile(localInterface string, sharedInterfaces []string
 	d.sharedInterfaces = slices.Clone(sharedInterfaces)
 	d.hostAddresses = slices.Clone(hostAddresses)
 	return closeErr
+}
+
+func attachmentGenerationSet(attachments []*tcInterfaceAttachment) map[uint64]struct{} {
+	generations := make(map[uint64]struct{}, len(attachments))
+	for _, attachment := range attachments {
+		if attachment.generation != 0 {
+			generations[attachment.generation] = struct{}{}
+		}
+	}
+	return generations
+}
+
+func invalidatedAttachmentGenerations(
+	previous map[uint64]struct{},
+	attachments []*tcInterfaceAttachment,
+) map[uint64]struct{} {
+	for _, attachment := range attachments {
+		delete(previous, attachment.generation)
+	}
+	if len(previous) == 0 {
+		return nil
+	}
+	return previous
+}
+
+func (d *tcDataPlane) refreshAttachmentGenerations(
+	attachments []*tcInterfaceAttachment,
+	previousAttachments map[string]*tcInterfaceAttachment,
+	previousRoles map[string]tcInterfaceRole,
+) {
+	for _, attachment := range attachments {
+		previous := previousAttachments[attachment.interfaceName]
+		if previous == attachment && attachment.generation != 0 && previousRoles[attachment.interfaceName] == attachment.role {
+			continue
+		}
+		d.nextAttachmentGeneration++
+		if d.nextAttachmentGeneration == 0 {
+			d.nextAttachmentGeneration++
+		}
+		attachment.generation = d.nextAttachmentGeneration
+	}
+}
+
+func (d *tcDataPlane) udpAttachmentGeneration(path uint8, assignmentInterfaceIndex uint32) (uint64, bool) {
+	if d == nil {
+		return 0, false
+	}
+	d.access.Lock()
+	defer d.access.Unlock()
+	return d.udpAttachmentGenerationLocked(path, assignmentInterfaceIndex)
+}
+
+func (d *tcDataPlane) udpAttachmentGenerationLocked(path uint8, assignmentInterfaceIndex uint32) (uint64, bool) {
+	for _, attachment := range d.attachments {
+		switch path {
+		case commonEBPF.TCPathShared:
+			if attachment.role.shared && uint32(attachment.interfaceIndex) == assignmentInterfaceIndex {
+				return attachment.generation, attachment.generation != 0
+			}
+		case commonEBPF.TCPathDelivery:
+			if attachment.role.local {
+				return attachment.generation, attachment.generation != 0
+			}
+		default:
+			return 0, false
+		}
+	}
+	return 0, false
 }
 
 func (d *tcDataPlane) desiredAttachmentState(localInterface string, sharedInterfaces []string) (map[string]tcAttachmentState, error) {

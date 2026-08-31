@@ -448,8 +448,12 @@ func tcFlags(config TCConfig, uidPolicy bool, uidDefaultBypass bool) uint32 {
 }
 
 func (b *TCBackend) updateControlLocked() error {
+	return b.updateControlValueLocked(b.control)
+}
+
+func (b *TCBackend) updateControlValueLocked(control tcControl) error {
 	key := uint32(0)
-	if err := updateMap(b.controlMapFD, unsafe.Pointer(&key), unsafe.Pointer(&b.control)); err != nil {
+	if err := updateMap(b.controlMapFD, unsafe.Pointer(&key), unsafe.Pointer(&control)); err != nil {
 		return eBPFOperationError("update TC eBPF control", err)
 	}
 	return nil
@@ -567,33 +571,64 @@ func (b *TCBackend) UpdateCompiledBypassCIDR(policy BypassCIDRPolicy) (bool, err
 	if b.runtime == nil {
 		return false, errBackendClosed
 	}
-	changed, err := replaceDualStackCIDRPolicy(
-		b.runtime.maps["tc_bypass_ipv4"],
-		b.runtime.maps["tc_bypass_ipv6"],
+	committed, control, changed, err := updateBypassCIDRPolicyTransaction(
 		dualStackCIDRPrefixes{b.bypassIPv4, b.bypassIPv6},
 		dualStackCIDRPrefixes(policy),
-		"TC ",
-		"bypass CIDR",
+		b.control,
+		func(current, next dualStackCIDRPrefixes) (bool, error) {
+			return replaceDualStackCIDRPolicy(
+				b.runtime.maps["tc_bypass_ipv4"],
+				b.runtime.maps["tc_bypass_ipv6"],
+				current,
+				next,
+				"TC ",
+				"bypass CIDR",
+			)
+		},
+		b.updateControlValueLocked,
 	)
 	if err != nil {
 		return false, err
 	}
-	b.bypassIPv4 = slices.Clone(policy.ipv4)
-	b.bypassIPv6 = slices.Clone(policy.ipv6)
-	if len(b.bypassIPv4) > 0 {
-		b.control.Flags |= 1 << 8
-	} else {
-		b.control.Flags &^= 1 << 8
-	}
-	if len(b.bypassIPv6) > 0 {
-		b.control.Flags |= 1 << 9
-	} else {
-		b.control.Flags &^= 1 << 9
-	}
-	if err = b.updateControlLocked(); err != nil {
-		return false, err
-	}
+	b.bypassIPv4 = committed.ipv4
+	b.bypassIPv6 = committed.ipv6
+	b.control = control
 	return changed, nil
+}
+
+func updateBypassCIDRPolicyTransaction(
+	current dualStackCIDRPrefixes,
+	next dualStackCIDRPrefixes,
+	control tcControl,
+	replace func(current, next dualStackCIDRPrefixes) (bool, error),
+	updateControl func(tcControl) error,
+) (dualStackCIDRPrefixes, tcControl, bool, error) {
+	changed, err := replace(current, next)
+	if err != nil {
+		return current, control, false, err
+	}
+	nextControl := control
+	if len(next.ipv4) > 0 {
+		nextControl.Flags |= 1 << 8
+	} else {
+		nextControl.Flags &^= 1 << 8
+	}
+	if len(next.ipv6) > 0 {
+		nextControl.Flags |= 1 << 9
+	} else {
+		nextControl.Flags &^= 1 << 9
+	}
+	if err = updateControl(nextControl); err != nil {
+		rollbackErr := error(nil)
+		if changed {
+			_, rollbackErr = replace(next, current)
+		}
+		if rollbackErr != nil {
+			rollbackErr = E.Cause(rollbackErr, "rollback TC bypass CIDR maps after control update")
+		}
+		return current, control, false, policyUpdateError(err, rollbackErr)
+	}
+	return dualStackCIDRPrefixes{slices.Clone(next.ipv4), slices.Clone(next.ipv6)}, nextControl, changed, nil
 }
 
 func (b *TCBackend) UpdateHostAddresses(addresses []netip.Addr) error {

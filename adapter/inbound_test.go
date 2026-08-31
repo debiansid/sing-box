@@ -1,6 +1,7 @@
 package adapter
 
 import (
+	"context"
 	"net"
 	"net/netip"
 	"testing"
@@ -8,6 +9,14 @@ import (
 	"github.com/miekg/dns"
 	"github.com/stretchr/testify/require"
 )
+
+func TestVPNPayloadContext(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	require.False(t, IsVPNPayloadContext(ctx))
+	require.True(t, IsVPNPayloadContext(ContextWithVPNPayload(ctx)))
+}
 
 func TestDNSResponseAddressesUnmapsHTTPSIPv4Hints(t *testing.T) {
 	t.Parallel()

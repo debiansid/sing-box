@@ -11,6 +11,7 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	commonEBPF "github.com/sagernet/sing-box/common/ebpf"
 	"github.com/sagernet/sing-box/common/process"
+	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing/common/buf"
 	"github.com/sagernet/sing/common/control"
@@ -44,7 +45,34 @@ func (i *Inbound) newTCConnection(
 	if assignment.Path == commonEBPF.TCPathShared && assignment.SourceMACValid != 0 {
 		metadata.SourceMACAddress = net.HardwareAddr(assignment.SourceMAC[:])
 	}
+	ctx = tcPathContext(ctx, assignment.Path, i.vpnPayloadEnabled())
 	i.router.RouteConnectionEx(ctx, conn, metadata, onClose)
+}
+
+type vpnPayloadPlatform interface {
+	UsePlatformAutoDetectInterfaceControl() bool
+}
+
+type vpnPayloadMonitor interface {
+	AndroidVPNEnabled() bool
+	MyInterfaces() []string
+}
+
+func vpnPayloadEnabledForPlatform(isAndroid bool, platform vpnPayloadPlatform, monitor vpnPayloadMonitor) bool {
+	return isAndroid &&
+		platform != nil && platform.UsePlatformAutoDetectInterfaceControl() &&
+		monitor != nil && (monitor.AndroidVPNEnabled() || len(monitor.MyInterfaces()) > 0)
+}
+
+func (i *Inbound) vpnPayloadEnabled() bool {
+	return vpnPayloadEnabledForPlatform(C.IsAndroid, i.platformInterface, i.networkManager.InterfaceMonitor())
+}
+
+func tcPathContext(ctx context.Context, path uint8, vpnPayloadEnabled bool) context.Context {
+	if vpnPayloadEnabled && path == commonEBPF.TCPathShared {
+		return adapter.ContextWithVPNPayload(ctx)
+	}
+	return ctx
 }
 
 func (i *Inbound) newTCPacket(
@@ -75,8 +103,23 @@ func (i *Inbound) newTCPacket(
 	if assignment.Path == commonEBPF.TCPathShared && assignment.SourceMACValid != 0 {
 		sourceMAC = net.HardwareAddr(assignment.SourceMAC[:])
 	}
-	i.udpClientTable.setDirectBinding(client, destination, sourceMAC, assignment.SocketCookie)
-	i.udpNat.NewPacket([][]byte{buffer.Bytes()}, source, M.SocksaddrFromNetIP(destination), nil)
+	clientState, attachmentLoaded, accepted := i.setUDPDirectBinding(
+		client,
+		destination,
+		sourceMAC,
+		assignment.SocketCookie,
+		assignment.Path,
+		assignment.InterfaceIndex,
+	)
+	if !attachmentLoaded {
+		i.udpWarnings.originalDestination.warn(i.logger, "resolve TC eBPF UDP attachment generation for ", client)
+		return
+	}
+	if !accepted {
+		i.udpWarnings.originalDestination.warn(i.logger, "reject TC eBPF UDP assignment with conflicting path or attachment generation for ", client)
+		return
+	}
+	i.udpNat.NewPacket([][]byte{buffer.Bytes()}, source, M.SocksaddrFromNetIP(destination), clientState)
 }
 
 func (i *Inbound) lookupProcessInfo(socketCookie uint64) *adapter.ConnectionOwner {
@@ -102,24 +145,55 @@ func (i *Inbound) lookupProcessInfo(socketCookie uint64) *adapter.ConnectionOwne
 func (i *Inbound) prepareTCPacketConnection(
 	source M.Socksaddr,
 	_ M.Socksaddr,
+	clientState *udpClientState,
 ) (bool, context.Context, N.PacketWriter, N.CloseHandlerFunc) {
 	ctx := log.ContextWithNewID(i.ctx)
 	client := source.AddrPort()
-	clientState := i.udpClientTable.loadOrCreate(client)
-	writer := &tcPacketWriter{inbound: i, client: client, clientState: clientState}
-	return true, ctx, writer, func(error) {
-		i.udpClientTable.delete(client, clientState)
+	sessionID, loaded := i.udpClientTable.beginSession(client, clientState)
+	if !loaded {
+		return false, nil, nil, nil
 	}
+	ctx = udpSessionContext(ctx, clientState, i.vpnPayloadEnabled())
+	ctx = context.WithValue(ctx, udpSessionContextKey{}, udpSessionReference{
+		client:    client,
+		state:     clientState,
+		sessionID: sessionID,
+	})
+	writer := &tcPacketWriter{inbound: i, client: client, clientState: clientState, sessionID: sessionID}
+	return true, ctx, writer, func(error) {
+		i.udpClientTable.endSession(client, clientState, sessionID)
+	}
+}
+
+type udpSessionContextKey struct{}
+
+type udpSessionReference struct {
+	client    netip.AddrPort
+	state     *udpClientState
+	sessionID uint64
+}
+
+func udpSessionFromContext(ctx context.Context) (udpSessionReference, bool) {
+	session, loaded := ctx.Value(udpSessionContextKey{}).(udpSessionReference)
+	return session, loaded
+}
+
+func udpSessionContext(ctx context.Context, clientState *udpClientState, vpnPayloadEnabled bool) context.Context {
+	return tcPathContext(ctx, clientState.tcPath(), vpnPayloadEnabled)
 }
 
 type tcPacketWriter struct {
 	inbound     *Inbound
 	client      netip.AddrPort
 	clientState *udpClientState
+	sessionID   uint64
 }
 
 func (w *tcPacketWriter) WritePacket(buffer *buf.Buffer, destination M.Socksaddr) error {
 	defer buffer.Release()
+	if !w.inbound.udpClientTable.sessionActive(w.client, w.clientState, w.sessionID) {
+		return net.ErrClosed
+	}
 	destinationAddress := destination.AddrPort()
 	_, loaded := w.clientState.redirectBinding(destinationAddress)
 	if !loaded {
@@ -129,6 +203,7 @@ func (w *tcPacketWriter) WritePacket(buffer *buf.Buffer, destination M.Socksaddr
 		installed := w.inbound.udpClientTable.setDirectReplyBinding(
 			w.client,
 			w.clientState,
+			w.sessionID,
 			destinationAddress,
 		)
 		if !installed {
@@ -145,6 +220,38 @@ func (w *tcPacketWriter) WritePacket(buffer *buf.Buffer, destination M.Socksaddr
 	}
 	_, err = socket.WriteToUDPAddrPort(buffer.Bytes(), w.client)
 	return err
+}
+
+func (i *Inbound) setUDPDirectBinding(
+	client netip.AddrPort,
+	destination netip.AddrPort,
+	sourceMAC net.HardwareAddr,
+	socketCookie uint64,
+	path uint8,
+	assignmentInterfaceIndex uint32,
+) (*udpClientState, bool, bool) {
+	i.tcDataPlaneAccess.RLock()
+	defer i.tcDataPlaneAccess.RUnlock()
+	if i.tcDataPlane == nil {
+		return nil, false, false
+	}
+	// Publish the client state while the attachment generation is stable so a
+	// successful reconcile cannot miss a late old-generation session.
+	i.tcDataPlane.access.Lock()
+	defer i.tcDataPlane.access.Unlock()
+	attachmentGeneration, loaded := i.tcDataPlane.udpAttachmentGenerationLocked(path, assignmentInterfaceIndex)
+	if !loaded {
+		return nil, false, false
+	}
+	state, accepted := i.udpClientTable.setDirectBinding(
+		client,
+		destination,
+		sourceMAC,
+		socketCookie,
+		path,
+		attachmentGeneration,
+	)
+	return state, true, accepted
 }
 
 func (i *Inbound) newTCUDPReplySocket(source netip.AddrPort) (*net.UDPConn, error) {
