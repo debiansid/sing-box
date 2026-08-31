@@ -184,6 +184,12 @@ type inboundContextKey struct{}
 
 type dnsTransportTagKey struct{}
 
+type socketRouteIntentKey struct{}
+
+type socketRouteIntent uint8
+
+const socketRouteIntentVPNPayload socketRouteIntent = 1
+
 func ContextWithDNSTransportTag(ctx context.Context, transportTag string) context.Context {
 	return context.WithValue(ctx, (*dnsTransportTagKey)(nil), transportTag)
 }
@@ -191,6 +197,15 @@ func ContextWithDNSTransportTag(ctx context.Context, transportTag string) contex
 func DNSTransportTagFromContext(ctx context.Context) (string, bool) {
 	transportTag, loaded := ctx.Value((*dnsTransportTagKey)(nil)).(string)
 	return transportTag, loaded
+}
+
+func ContextWithVPNPayload(ctx context.Context) context.Context {
+	return context.WithValue(ctx, (*socketRouteIntentKey)(nil), socketRouteIntentVPNPayload)
+}
+
+func IsVPNPayloadContext(ctx context.Context) bool {
+	intent, loaded := ctx.Value((*socketRouteIntentKey)(nil)).(socketRouteIntent)
+	return loaded && intent == socketRouteIntentVPNPayload
 }
 
 func WithContext(ctx context.Context, inboundContext *InboundContext) context.Context {
