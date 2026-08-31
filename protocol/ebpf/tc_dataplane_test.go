@@ -198,3 +198,57 @@ func TestUDPAttachmentGenerationResolution(t *testing.T) {
 		t.Fatal("unknown shared ifindex resolved an attachment generation")
 	}
 }
+
+func TestInvalidatedAttachmentGenerations(t *testing.T) {
+	testCases := []struct {
+		name        string
+		previous    []uint64
+		current     []uint64
+		invalidated []uint64
+	}{
+		{name: "unchanged", previous: []uint64{7, 8}, current: []uint64{7, 8}},
+		{name: "health repair", previous: []uint64{7}, current: []uint64{7}},
+		{name: "local replacement", previous: []uint64{7, 8}, current: []uint64{8, 9}, invalidated: []uint64{7}},
+		{name: "shared removal", previous: []uint64{7, 8}, current: []uint64{7}, invalidated: []uint64{8}},
+		{name: "ifindex replacement", previous: []uint64{7}, current: []uint64{8}, invalidated: []uint64{7}},
+		{name: "framing replacement", previous: []uint64{7}, current: []uint64{8}, invalidated: []uint64{7}},
+		{name: "role replacement", previous: []uint64{7}, current: []uint64{8}, invalidated: []uint64{7}},
+		{name: "addition", previous: []uint64{7}, current: []uint64{7, 8}},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			previous := make(map[uint64]struct{}, len(testCase.previous))
+			for _, generation := range testCase.previous {
+				previous[generation] = struct{}{}
+			}
+			attachments := make([]*tcInterfaceAttachment, 0, len(testCase.current))
+			for _, generation := range testCase.current {
+				attachments = append(attachments, &tcInterfaceAttachment{generation: generation})
+			}
+			invalidated := invalidatedAttachmentGenerations(previous, attachments)
+			if len(invalidated) != len(testCase.invalidated) {
+				t.Fatalf("unexpected invalidated generations: %v", invalidated)
+			}
+			for _, generation := range testCase.invalidated {
+				if _, loaded := invalidated[generation]; !loaded {
+					t.Fatalf("generation %d was not invalidated: %v", generation, invalidated)
+				}
+			}
+		})
+	}
+}
+
+func TestTCReconcileFailureDoesNotInvalidateGenerations(t *testing.T) {
+	attachment := &tcInterfaceAttachment{generation: 7}
+	dataPlane := &tcDataPlane{attachments: []*tcInterfaceAttachment{attachment}}
+	invalidated, err := dataPlane.reconcile("", nil, nil)
+	if err == nil {
+		t.Fatal("closed data plane reconcile unexpectedly succeeded")
+	}
+	if len(invalidated) != 0 {
+		t.Fatalf("failed reconcile invalidated attachment generations: %v", invalidated)
+	}
+	if dataPlane.attachments[0] != attachment || attachment.generation != 7 {
+		t.Fatal("failed reconcile changed the committed attachment state")
+	}
+}

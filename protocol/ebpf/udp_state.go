@@ -179,6 +179,36 @@ func (t *udpClientTable) endSession(client netip.AddrPort, expected *udpClientSt
 	expected.closeLocked()
 }
 
+func (t *udpClientTable) invalidateAttachmentGenerations(generations map[uint64]struct{}) error {
+	if len(generations) == 0 {
+		return nil
+	}
+	var closers []io.Closer
+	for shardIndex := range t.clientShards {
+		shard := &t.clientShards[shardIndex]
+		shard.access.Lock()
+		for client, state := range shard.clients {
+			state.access.Lock()
+			_, invalidated := generations[state.attachmentGeneration]
+			if invalidated {
+				delete(shard.clients, client)
+				if state.sessionCloser != nil {
+					closers = append(closers, state.sessionCloser)
+				}
+				state.closeLocked()
+			}
+			state.access.Unlock()
+		}
+		shard.access.Unlock()
+	}
+	// A closer may synchronously run onClose and re-enter the client table.
+	var closeErr error
+	for _, closer := range closers {
+		closeErr = errors.Join(closeErr, closer.Close())
+	}
+	return closeErr
+}
+
 func (s *udpClientState) requestSessionClose(sessionID uint64) error {
 	s.access.Lock()
 	if s.closed || s.sessionID != sessionID || s.sessionClosing {
@@ -290,15 +320,6 @@ func (p *udpReplySocketPool) shardIndex(source netip.AddrPort) int {
 
 func (p *udpReplySocketPool) close() error {
 	if !p.closed.CompareAndSwap(false, true) {
-		return nil
-	}
-	return p.closeSockets()
-}
-
-// reset closes sockets tied to the previous network path while keeping the
-// pool usable for the next interface generation.
-func (p *udpReplySocketPool) reset() error {
-	if p == nil || p.closed.Load() {
 		return nil
 	}
 	return p.closeSockets()

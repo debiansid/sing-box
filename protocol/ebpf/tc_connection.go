@@ -103,19 +103,18 @@ func (i *Inbound) newTCPacket(
 	if assignment.Path == commonEBPF.TCPathShared && assignment.SourceMACValid != 0 {
 		sourceMAC = net.HardwareAddr(assignment.SourceMAC[:])
 	}
-	attachmentGeneration, loaded := i.udpAttachmentGeneration(assignment.Path, assignment.InterfaceIndex)
-	if !loaded {
-		i.udpWarnings.originalDestination.warn(i.logger, "resolve TC eBPF UDP attachment generation for ", client)
-		return
-	}
-	clientState, accepted := i.udpClientTable.setDirectBinding(
+	clientState, attachmentLoaded, accepted := i.setUDPDirectBinding(
 		client,
 		destination,
 		sourceMAC,
 		assignment.SocketCookie,
 		assignment.Path,
-		attachmentGeneration,
+		assignment.InterfaceIndex,
 	)
+	if !attachmentLoaded {
+		i.udpWarnings.originalDestination.warn(i.logger, "resolve TC eBPF UDP attachment generation for ", client)
+		return
+	}
 	if !accepted {
 		i.udpWarnings.originalDestination.warn(i.logger, "reject TC eBPF UDP assignment with conflicting path or attachment generation for ", client)
 		return
@@ -223,13 +222,36 @@ func (w *tcPacketWriter) WritePacket(buffer *buf.Buffer, destination M.Socksaddr
 	return err
 }
 
-func (i *Inbound) udpAttachmentGeneration(path uint8, assignmentInterfaceIndex uint32) (uint64, bool) {
+func (i *Inbound) setUDPDirectBinding(
+	client netip.AddrPort,
+	destination netip.AddrPort,
+	sourceMAC net.HardwareAddr,
+	socketCookie uint64,
+	path uint8,
+	assignmentInterfaceIndex uint32,
+) (*udpClientState, bool, bool) {
 	i.tcDataPlaneAccess.RLock()
 	defer i.tcDataPlaneAccess.RUnlock()
 	if i.tcDataPlane == nil {
-		return 0, false
+		return nil, false, false
 	}
-	return i.tcDataPlane.udpAttachmentGeneration(path, assignmentInterfaceIndex)
+	// Publish the client state while the attachment generation is stable so a
+	// successful reconcile cannot miss a late old-generation session.
+	i.tcDataPlane.access.Lock()
+	defer i.tcDataPlane.access.Unlock()
+	attachmentGeneration, loaded := i.tcDataPlane.udpAttachmentGenerationLocked(path, assignmentInterfaceIndex)
+	if !loaded {
+		return nil, false, false
+	}
+	state, accepted := i.udpClientTable.setDirectBinding(
+		client,
+		destination,
+		sourceMAC,
+		socketCookie,
+		path,
+		attachmentGeneration,
+	)
+	return state, true, accepted
 }
 
 func (i *Inbound) newTCUDPReplySocket(source netip.AddrPort) (*net.UDPConn, error) {

@@ -174,12 +174,24 @@ func (d *tcDataPlane) deliveryName() string {
 	return d.delivery.deliveryName
 }
 
-func (d *tcDataPlane) reconcile(localInterface string, sharedInterfaces []string, hostAddresses []netip.Addr) error {
+func (d *tcDataPlane) reconcile(
+	localInterface string,
+	sharedInterfaces []string,
+	hostAddresses []netip.Addr,
+) (map[uint64]struct{}, error) {
 	if d == nil {
-		return nil
+		return nil, nil
 	}
 	d.access.Lock()
 	defer d.access.Unlock()
+	previousGenerations := attachmentGenerationSet(d.attachments)
+	if err := d.reconcileLocked(localInterface, sharedInterfaces, hostAddresses); err != nil {
+		return nil, err
+	}
+	return invalidatedAttachmentGenerations(previousGenerations, d.attachments), nil
+}
+
+func (d *tcDataPlane) reconcileLocked(localInterface string, sharedInterfaces []string, hostAddresses []netip.Addr) error {
 	if d.backend == nil {
 		return E.New("TC eBPF data plane is closed")
 	}
@@ -349,6 +361,29 @@ func (d *tcDataPlane) reconcile(localInterface string, sharedInterfaces []string
 	return closeErr
 }
 
+func attachmentGenerationSet(attachments []*tcInterfaceAttachment) map[uint64]struct{} {
+	generations := make(map[uint64]struct{}, len(attachments))
+	for _, attachment := range attachments {
+		if attachment.generation != 0 {
+			generations[attachment.generation] = struct{}{}
+		}
+	}
+	return generations
+}
+
+func invalidatedAttachmentGenerations(
+	previous map[uint64]struct{},
+	attachments []*tcInterfaceAttachment,
+) map[uint64]struct{} {
+	for _, attachment := range attachments {
+		delete(previous, attachment.generation)
+	}
+	if len(previous) == 0 {
+		return nil
+	}
+	return previous
+}
+
 func (d *tcDataPlane) refreshAttachmentGenerations(
 	attachments []*tcInterfaceAttachment,
 	previousAttachments map[string]*tcInterfaceAttachment,
@@ -373,6 +408,10 @@ func (d *tcDataPlane) udpAttachmentGeneration(path uint8, assignmentInterfaceInd
 	}
 	d.access.Lock()
 	defer d.access.Unlock()
+	return d.udpAttachmentGenerationLocked(path, assignmentInterfaceIndex)
+}
+
+func (d *tcDataPlane) udpAttachmentGenerationLocked(path uint8, assignmentInterfaceIndex uint32) (uint64, bool) {
 	for _, attachment := range d.attachments {
 		switch path {
 		case commonEBPF.TCPathShared:
