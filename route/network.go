@@ -484,7 +484,7 @@ func (r *NetworkManager) UpdateWIFIState(ctx context.Context) {
 
 func (r *NetworkManager) ResetNetwork(ctx context.Context) {
 	if r.connectionManager != nil {
-		r.connectionManager.CloseAll()
+		r.connectionManager.AdvanceGeneration()
 	}
 
 	for _, endpoint := range r.endpoint.Endpoints() {

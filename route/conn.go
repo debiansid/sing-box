@@ -97,6 +97,30 @@ func (m *ConnectionManager) CloseGeneration(generation uint64) {
 	}
 }
 
+func (m *ConnectionManager) AdvanceGeneration() uint64 {
+	m.access.Lock()
+	previousGeneration := m.currentGeneration
+	m.currentGeneration++
+	if m.currentGeneration == unboundConnectionGeneration {
+		m.currentGeneration++
+	}
+	currentGeneration := m.currentGeneration
+	var closers []io.Closer
+	for element := m.connections.Front(); element != nil; {
+		nextElement := element.Next()
+		if element.Value.generation == previousGeneration {
+			closers = append(closers, element.Value.closer)
+			m.connections.Remove(element)
+		}
+		element = nextElement
+	}
+	m.access.Unlock()
+	for _, closer := range closers {
+		common.Close(closer)
+	}
+	return currentGeneration
+}
+
 func (m *ConnectionManager) CloseAll() {
 	m.access.Lock()
 	var closers []io.Closer

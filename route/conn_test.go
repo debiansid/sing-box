@@ -175,6 +175,30 @@ func TestConnectionManagerSetGenerationRejectsUnboundGeneration(t *testing.T) {
 	require.Equal(t, uint64(2), manager.CurrentGeneration())
 }
 
+func TestConnectionManagerAdvanceGenerationClosesPreviousOnly(t *testing.T) {
+	t.Parallel()
+
+	manager := NewConnectionManager(log.NewNOPFactory().NewLogger("connection"))
+	ordinaryG1 := &connectionTestCloser{Conn: netConnPipe(t)}
+	manager.TrackConn(ordinaryG1)
+	vpnPayload := &connectionTestCloser{Conn: netConnPipe(t)}
+	manager.TrackConnWithContext(adapter.ContextWithVPNPayload(context.Background()), vpnPayload)
+
+	require.Equal(t, uint64(2), manager.AdvanceGeneration())
+	require.Equal(t, int32(1), ordinaryG1.closeCount.Load())
+	require.Equal(t, int32(0), vpnPayload.closeCount.Load())
+	require.Equal(t, uint64(2), manager.CurrentGeneration())
+	require.Equal(t, 1, manager.Count())
+
+	ordinaryG2 := &connectionTestCloser{Conn: netConnPipe(t)}
+	manager.TrackConn(ordinaryG2)
+	manager.AdvanceGeneration()
+	require.Equal(t, int32(1), ordinaryG2.closeCount.Load())
+	require.Equal(t, int32(0), vpnPayload.closeCount.Load())
+	manager.CloseAll()
+	require.Equal(t, int32(1), vpnPayload.closeCount.Load())
+}
+
 func netConnPipe(t *testing.T) net.Conn {
 	t.Helper()
 	conn, peer := net.Pipe()

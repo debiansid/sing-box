@@ -13,6 +13,7 @@ type ConnectionManager interface {
 	CloseAll()
 	CloseGeneration(generation uint64)
 	CurrentGeneration() uint64
+	AdvanceGeneration() uint64
 	SetGeneration(generation uint64)
 	TrackConn(conn net.Conn) net.Conn
 	TrackConnWithContext(ctx context.Context, conn net.Conn) net.Conn
