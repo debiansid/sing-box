@@ -39,6 +39,10 @@ type DefaultDialer struct {
 	udpAddr4               string
 	udpAddr6               string
 	netns                  string
+	dialerControl          control.Func
+	listenerControl        control.Func
+	payloadDialerControl   control.Func
+	payloadListenerControl control.Func
 	autoDetectBindFunc     control.Func
 	connectionManager      adapter.ConnectionManager
 	networkManager         adapter.NetworkManager
@@ -68,6 +72,8 @@ func NewDefault(ctx context.Context, options option.DialerOptions) (*DefaultDial
 		fallbackNetworkType    []C.InterfaceType
 		networkFallbackDelay   time.Duration
 		autoDetectBindFunc     control.Func
+		payloadDialerControl   control.Func
+		payloadListenerControl control.Func
 	)
 	if networkManager != nil {
 		interfaceFinder = networkManager.InterfaceFinder()
@@ -81,13 +87,18 @@ func NewDefault(ctx context.Context, options option.DialerOptions) (*DefaultDial
 		bindFunc := control.BindToInterface(interfaceFinder, options.BindInterface, -1)
 		dialer.Control = control.Append(dialer.Control, bindFunc)
 		listener.Control = control.Append(listener.Control, bindFunc)
+		payloadDialerControl = control.Append(payloadDialerControl, bindFunc)
+		payloadListenerControl = control.Append(payloadListenerControl, bindFunc)
 	}
 	if options.RoutingMark > 0 {
 		if !C.IsLinux {
 			return nil, E.New("`routing_mark` is only supported on Linux")
 		}
-		dialer.Control = control.Append(dialer.Control, setMarkWrapper(networkManager, uint32(options.RoutingMark), false))
-		listener.Control = control.Append(listener.Control, setMarkWrapper(networkManager, uint32(options.RoutingMark), false))
+		markFunc := setMarkWrapper(networkManager, uint32(options.RoutingMark), false)
+		dialer.Control = control.Append(dialer.Control, markFunc)
+		listener.Control = control.Append(listener.Control, markFunc)
+		payloadDialerControl = control.Append(payloadDialerControl, markFunc)
+		payloadListenerControl = control.Append(payloadListenerControl, markFunc)
 	}
 	disableDefaultBind := options.BindInterface != "" || options.Inet4BindAddress != nil || options.Inet6BindAddress != nil
 	if disableDefaultBind || options.TCPFastOpen {
@@ -130,28 +141,38 @@ func NewDefault(ctx context.Context, options option.DialerOptions) (*DefaultDial
 			}
 		}
 		if options.RoutingMark == 0 && defaultOptions.RoutingMark != 0 {
-			dialer.Control = control.Append(dialer.Control, setMarkWrapper(networkManager, defaultOptions.RoutingMark, true))
-			listener.Control = control.Append(listener.Control, setMarkWrapper(networkManager, defaultOptions.RoutingMark, true))
+			markFunc := setMarkWrapper(networkManager, defaultOptions.RoutingMark, true)
+			dialer.Control = control.Append(dialer.Control, markFunc)
+			listener.Control = control.Append(listener.Control, markFunc)
+			payloadDialerControl = control.Append(payloadDialerControl, markFunc)
+			payloadListenerControl = control.Append(payloadListenerControl, markFunc)
 		}
 	}
 	if networkManager != nil {
 		markFunc := networkManager.AutoRedirectOutputMarkFunc()
 		dialer.Control = control.Append(dialer.Control, markFunc)
 		listener.Control = control.Append(listener.Control, markFunc)
+		payloadDialerControl = control.Append(payloadDialerControl, markFunc)
+		payloadListenerControl = control.Append(payloadListenerControl, markFunc)
 		dialer.Control, listener.Control = appendEBPFSelfBypass(networkManager, dialer.Control, listener.Control)
+		payloadDialerControl, payloadListenerControl = appendEBPFSelfBypass(networkManager, payloadDialerControl, payloadListenerControl)
 	}
 	if options.ReuseAddr {
 		listener.Control = control.Append(listener.Control, control.ReuseAddr())
+		payloadListenerControl = control.Append(payloadListenerControl, control.ReuseAddr())
 	}
 	if options.ProtectPath != "" {
 		dialer.Control = control.Append(dialer.Control, control.ProtectPath(options.ProtectPath))
 		listener.Control = control.Append(listener.Control, control.ProtectPath(options.ProtectPath))
+		payloadDialerControl = control.Append(payloadDialerControl, control.ProtectPath(options.ProtectPath))
+		payloadListenerControl = control.Append(payloadListenerControl, control.ProtectPath(options.ProtectPath))
 	}
 	if options.BindAddressNoPort {
 		if !C.IsLinux {
 			return nil, E.New("`bind_address_no_port` is only supported on Linux")
 		}
 		dialer.Control = control.Append(dialer.Control, control.BindAddressNoPort())
+		payloadDialerControl = control.Append(payloadDialerControl, control.BindAddressNoPort())
 	}
 	if options.ConnectTimeout != 0 {
 		dialer.Timeout = time.Duration(options.ConnectTimeout)
@@ -190,8 +211,11 @@ func NewDefault(ctx context.Context, options option.DialerOptions) (*DefaultDial
 		udpFragment = options.UDPFragmentDefault
 	}
 	if !udpFragment {
-		dialer.Control = control.Append(dialer.Control, control.DisableUDPFragment())
-		listener.Control = control.Append(listener.Control, control.DisableUDPFragment())
+		disableUDPFragment := control.DisableUDPFragment()
+		dialer.Control = control.Append(dialer.Control, disableUDPFragment)
+		listener.Control = control.Append(listener.Control, disableUDPFragment)
+		payloadDialerControl = control.Append(payloadDialerControl, disableUDPFragment)
+		payloadListenerControl = control.Append(payloadListenerControl, disableUDPFragment)
 	}
 	var (
 		dialer4    = dialer
@@ -235,6 +259,10 @@ func NewDefault(ctx context.Context, options option.DialerOptions) (*DefaultDial
 		udpAddr4:               udpAddr4,
 		udpAddr6:               udpAddr6,
 		netns:                  options.NetNs,
+		dialerControl:          dialer.Control,
+		listenerControl:        listener.Control,
+		payloadDialerControl:   payloadDialerControl,
+		payloadListenerControl: payloadListenerControl,
 		autoDetectBindFunc:     autoDetectBindFunc,
 		connectionManager:      connectionManager,
 		networkManager:         networkManager,
@@ -271,29 +299,48 @@ func (d *DefaultDialer) DialContext(ctx context.Context, network string, address
 	} else if address.IsDomain() {
 		return nil, E.New("domain not resolved")
 	}
-	if d.networkStrategy == nil {
-		conn, err := listener.ListenNetworkNamespace[net.Conn](ctx, d.netns, func() (net.Conn, error) {
-			switch N.NetworkName(network) {
-			case N.NetworkUDP:
-				if !address.IsIPv6() {
-					return d.udpDialer4.DialContext(ctx, network, address.String())
-				} else {
-					return d.udpDialer6.DialContext(ctx, network, address.String())
-				}
-			}
-			if !address.IsIPv6() {
-				return DialSlowContext(&d.dialer4, ctx, network, address)
-			} else {
-				return DialSlowContext(&d.dialer6, ctx, network, address)
-			}
-		})
+	if d.networkStrategy == nil || adapter.IsVPNPayloadContext(ctx) {
+		conn, err := d.dialContextPlain(ctx, network, address)
 		return d.trackConn(ctx, address, conn, err)
 	} else {
 		return d.DialParallelInterface(ctx, network, address, d.networkStrategy, d.networkType, d.fallbackNetworkType, d.networkFallbackDelay)
 	}
 }
 
+func (d *DefaultDialer) dialContextPlain(ctx context.Context, network string, address M.Socksaddr) (net.Conn, error) {
+	conn, err := listener.ListenNetworkNamespace[net.Conn](ctx, d.netns, func() (net.Conn, error) {
+		controlFunc := d.dialerControl
+		if adapter.IsVPNPayloadContext(ctx) {
+			controlFunc = d.payloadDialerControl
+		}
+		switch N.NetworkName(network) {
+		case N.NetworkUDP:
+			if !address.IsIPv6() {
+				dialer := d.udpDialer4
+				dialer.Control = controlFunc
+				return dialer.DialContext(ctx, network, address.String())
+			}
+			dialer := d.udpDialer6
+			dialer.Control = controlFunc
+			return dialer.DialContext(ctx, network, address.String())
+		}
+		if !address.IsIPv6() {
+			dialer := d.dialer4
+			dialer.Dialer.Control = controlFunc
+			return DialSlowContext(&dialer, ctx, network, address)
+		}
+		dialer := d.dialer6
+		dialer.Dialer.Control = controlFunc
+		return DialSlowContext(&dialer, ctx, network, address)
+	})
+	return conn, err
+}
+
 func (d *DefaultDialer) DialParallelInterface(ctx context.Context, network string, address M.Socksaddr, strategy *C.NetworkStrategy, interfaceType []C.InterfaceType, fallbackInterfaceType []C.InterfaceType, fallbackDelay time.Duration) (net.Conn, error) {
+	if adapter.IsVPNPayloadContext(ctx) {
+		conn, err := d.dialContextPlain(ctx, network, address)
+		return d.trackConn(ctx, address, conn, err)
+	}
 	if strategy == nil {
 		strategy = d.networkStrategy
 	}
@@ -342,9 +389,21 @@ func (d *DefaultDialer) DialParallelInterface(ctx context.Context, network strin
 }
 
 func (d *DefaultDialer) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
-	if d.networkStrategy == nil {
-		packetConn, err := listener.ListenNetworkNamespace[net.PacketConn](ctx, d.netns, func() (net.PacketConn, error) {
-			listenConfig := d.udpListener
+	if d.networkStrategy == nil || adapter.IsVPNPayloadContext(ctx) {
+		packetConn, err := d.listenPacketPlain(ctx, destination)
+		return d.trackPacketConn(ctx, destination, packetConn, err)
+	} else {
+		return d.ListenSerialInterfacePacket(ctx, destination, d.networkStrategy, d.networkType, d.fallbackNetworkType, d.networkFallbackDelay)
+	}
+}
+
+func (d *DefaultDialer) listenPacketPlain(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
+	return listener.ListenNetworkNamespace[net.PacketConn](ctx, d.netns, func() (net.PacketConn, error) {
+		listenConfig := d.udpListener
+		if adapter.IsVPNPayloadContext(ctx) {
+			listenConfig.Control = d.payloadListenerControl
+		} else {
+			listenConfig.Control = d.listenerControl
 			if d.autoDetectBindFunc != nil {
 				listenConfig.Control = control.Append(listenConfig.Control, func(network, address string, conn syscall.RawConn) error {
 					if destination.Addr.IsValid() {
@@ -353,18 +412,15 @@ func (d *DefaultDialer) ListenPacket(ctx context.Context, destination M.Socksadd
 					return d.autoDetectBindFunc(network, address, conn)
 				})
 			}
-			if destination.IsIPv6() {
-				return listenConfig.ListenPacket(ctx, N.NetworkUDP, d.udpAddr6)
-			} else if destination.IsIPv4() && !destination.Addr.IsUnspecified() {
-				return listenConfig.ListenPacket(ctx, N.NetworkUDP+"4", d.udpAddr4)
-			} else {
-				return listenConfig.ListenPacket(ctx, N.NetworkUDP, d.udpAddr4)
-			}
-		})
-		return d.trackPacketConn(ctx, destination, packetConn, err)
-	} else {
-		return d.ListenSerialInterfacePacket(ctx, destination, d.networkStrategy, d.networkType, d.fallbackNetworkType, d.networkFallbackDelay)
-	}
+		}
+		if destination.IsIPv6() {
+			return listenConfig.ListenPacket(ctx, N.NetworkUDP, d.udpAddr6)
+		} else if destination.IsIPv4() && !destination.Addr.IsUnspecified() {
+			return listenConfig.ListenPacket(ctx, N.NetworkUDP+"4", d.udpAddr4)
+		} else {
+			return listenConfig.ListenPacket(ctx, N.NetworkUDP, d.udpAddr4)
+		}
+	})
 }
 
 func (d *DefaultDialer) DialerForICMPDestination(destination netip.Addr) net.Dialer {
@@ -376,6 +432,9 @@ func (d *DefaultDialer) DialerForICMPDestination(destination netip.Addr) net.Dia
 }
 
 func (d *DefaultDialer) ListenSerialInterfacePacket(ctx context.Context, destination M.Socksaddr, strategy *C.NetworkStrategy, interfaceType []C.InterfaceType, fallbackInterfaceType []C.InterfaceType, fallbackDelay time.Duration) (net.PacketConn, error) {
+	if adapter.IsVPNPayloadContext(ctx) {
+		return d.ListenPacket(ctx, destination)
+	}
 	if strategy == nil {
 		strategy = d.networkStrategy
 	}
