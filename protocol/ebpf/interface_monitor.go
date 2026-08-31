@@ -215,6 +215,9 @@ func (i *Inbound) updateTCInterfaces(ctx context.Context) {
 	if ctx.Err() != nil {
 		return
 	}
+	if err := i.retryBypassRuleSetPolicy(); err != nil {
+		i.policyWarnings.warn(i.logger, "retry TC eBPF bypass_rule_set policy: ", err)
+	}
 	if err := i.networkManager.UpdateInterfaces(); err != nil {
 		i.interfaceWarnings.inventory.warn(i.logger, "update interfaces for TC eBPF: ", err)
 	}

@@ -84,6 +84,7 @@ type Inbound struct {
 	bypassRuleSet          []adapter.RuleSet
 	bypassRuleSetCallbacks []*list.Element[adapter.RuleSetUpdateCallback]
 	bypassRuleSetStarted   bool
+	bypassRuleSetPolicy    bypassRuleSetPolicyState
 
 	udpClientTable    udpClientTable
 	udpReplySockets   udpReplySocketPool
