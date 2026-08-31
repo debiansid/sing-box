@@ -43,6 +43,7 @@ type DefaultDialer struct {
 	listenerControl        control.Func
 	payloadDialerControl   control.Func
 	payloadListenerControl control.Func
+	payloadBindConflict    string
 	autoDetectBindFunc     control.Func
 	connectionManager      adapter.ConnectionManager
 	networkManager         adapter.NetworkManager
@@ -74,6 +75,7 @@ func NewDefault(ctx context.Context, options option.DialerOptions) (*DefaultDial
 		autoDetectBindFunc     control.Func
 		payloadDialerControl   control.Func
 		payloadListenerControl control.Func
+		payloadBindConflict    string
 	)
 	if networkManager != nil {
 		interfaceFinder = networkManager.InterfaceFinder()
@@ -87,8 +89,7 @@ func NewDefault(ctx context.Context, options option.DialerOptions) (*DefaultDial
 		bindFunc := control.BindToInterface(interfaceFinder, options.BindInterface, -1)
 		dialer.Control = control.Append(dialer.Control, bindFunc)
 		listener.Control = control.Append(listener.Control, bindFunc)
-		payloadDialerControl = control.Append(payloadDialerControl, bindFunc)
-		payloadListenerControl = control.Append(payloadListenerControl, bindFunc)
+		payloadBindConflict = "`bind_interface`"
 	}
 	if options.RoutingMark > 0 {
 		if !C.IsLinux {
@@ -113,6 +114,7 @@ func NewDefault(ctx context.Context, options option.DialerOptions) (*DefaultDial
 			bindFunc := control.BindToInterface(networkManager.InterfaceFinder(), defaultOptions.BindInterface, -1)
 			dialer.Control = control.Append(dialer.Control, bindFunc)
 			listener.Control = control.Append(listener.Control, bindFunc)
+			payloadBindConflict = "`route.default_interface`"
 		} else if networkManager.AutoDetectInterface() && !disableDefaultBind {
 			if platformInterface != nil && platformInterface.UsePlatformNetworkInterfaces() {
 				networkStrategy = (*C.NetworkStrategy)(options.NetworkStrategy)
@@ -263,6 +265,7 @@ func NewDefault(ctx context.Context, options option.DialerOptions) (*DefaultDial
 		listenerControl:        listener.Control,
 		payloadDialerControl:   payloadDialerControl,
 		payloadListenerControl: payloadListenerControl,
+		payloadBindConflict:    payloadBindConflict,
 		autoDetectBindFunc:     autoDetectBindFunc,
 		connectionManager:      connectionManager,
 		networkManager:         networkManager,
@@ -298,6 +301,9 @@ func (d *DefaultDialer) DialContext(ctx context.Context, network string, address
 		return nil, E.New("invalid address")
 	} else if address.IsDomain() {
 		return nil, E.New("domain not resolved")
+	}
+	if err := d.checkVPNPayloadBindConflict(ctx); err != nil {
+		return nil, err
 	}
 	if d.networkStrategy == nil || adapter.IsVPNPayloadContext(ctx) {
 		conn, err := d.dialContextPlain(ctx, network, address)
@@ -337,6 +343,9 @@ func (d *DefaultDialer) dialContextPlain(ctx context.Context, network string, ad
 }
 
 func (d *DefaultDialer) DialParallelInterface(ctx context.Context, network string, address M.Socksaddr, strategy *C.NetworkStrategy, interfaceType []C.InterfaceType, fallbackInterfaceType []C.InterfaceType, fallbackDelay time.Duration) (net.Conn, error) {
+	if err := d.checkVPNPayloadBindConflict(ctx); err != nil {
+		return nil, err
+	}
 	if adapter.IsVPNPayloadContext(ctx) {
 		conn, err := d.dialContextPlain(ctx, network, address)
 		return d.trackConn(ctx, address, conn, err)
@@ -389,6 +398,9 @@ func (d *DefaultDialer) DialParallelInterface(ctx context.Context, network strin
 }
 
 func (d *DefaultDialer) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
+	if err := d.checkVPNPayloadBindConflict(ctx); err != nil {
+		return nil, err
+	}
 	if d.networkStrategy == nil || adapter.IsVPNPayloadContext(ctx) {
 		packetConn, err := d.listenPacketPlain(ctx, destination)
 		return d.trackPacketConn(ctx, destination, packetConn, err)
@@ -432,6 +444,9 @@ func (d *DefaultDialer) DialerForICMPDestination(destination netip.Addr) net.Dia
 }
 
 func (d *DefaultDialer) ListenSerialInterfacePacket(ctx context.Context, destination M.Socksaddr, strategy *C.NetworkStrategy, interfaceType []C.InterfaceType, fallbackInterfaceType []C.InterfaceType, fallbackDelay time.Duration) (net.PacketConn, error) {
+	if err := d.checkVPNPayloadBindConflict(ctx); err != nil {
+		return nil, err
+	}
 	if adapter.IsVPNPayloadContext(ctx) {
 		return d.ListenPacket(ctx, destination)
 	}
@@ -465,6 +480,13 @@ func (d *DefaultDialer) ListenSerialInterfacePacket(ctx context.Context, destina
 		}
 	}
 	return d.trackPacketConn(ctx, destination, packetConn, nil)
+}
+
+func (d *DefaultDialer) checkVPNPayloadBindConflict(ctx context.Context) error {
+	if adapter.IsVPNPayloadContext(ctx) && d.payloadBindConflict != "" {
+		return E.New(d.payloadBindConflict, " is conflict with `VPN_PAYLOAD`")
+	}
+	return nil
 }
 
 func (d *DefaultDialer) UDPListenerControl() (control.Func, bool) {

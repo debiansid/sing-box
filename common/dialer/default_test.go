@@ -99,3 +99,45 @@ func TestDefaultDialerOrdinarySocketControlsUnchanged(t *testing.T) {
 	require.Equal(t, int32(1), ordinaryCalls.Load())
 	require.Zero(t, payloadCalls.Load())
 }
+
+func TestDefaultDialerVPNPayloadExplicitBindConflicts(t *testing.T) {
+	t.Parallel()
+	address := M.SocksaddrFrom(netip.MustParseAddr("127.0.0.1"), 443)
+	for _, conflict := range []string{"`bind_interface`", "`route.default_interface`"} {
+		t.Run(conflict, func(t *testing.T) {
+			dialer := newControlTestDialer(new(atomic.Int32), new(atomic.Int32))
+			dialer.payloadBindConflict = conflict
+			ctx := adapter.ContextWithVPNPayload(context.Background())
+
+			_, err := dialer.DialParallelInterface(ctx, N.NetworkTCP, address, adapterNetworkStrategy(C.NetworkStrategyHybrid), nil, nil, 0)
+			require.EqualError(t, err, conflict+" is conflict with `VPN_PAYLOAD`")
+
+			_, err = dialer.ListenSerialInterfacePacket(ctx, M.Socksaddr{}, adapterNetworkStrategy(C.NetworkStrategyHybrid), nil, nil, 0)
+			require.EqualError(t, err, conflict+" is conflict with `VPN_PAYLOAD`")
+		})
+	}
+}
+
+func TestDefaultDialerOrdinaryExplicitBindRemainsAllowed(t *testing.T) {
+	t.Parallel()
+	var ordinaryCalls, payloadCalls atomic.Int32
+	dialer := newControlTestDialer(&ordinaryCalls, &payloadCalls)
+	dialer.payloadBindConflict = "`bind_interface`"
+	dialer.networkStrategy = nil
+
+	server, err := net.Listen("tcp4", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer server.Close()
+	go func() {
+		conn, acceptErr := server.Accept()
+		if acceptErr == nil {
+			conn.Close()
+		}
+	}()
+	address := M.SocksaddrFrom(netip.MustParseAddr("127.0.0.1"), uint16(server.Addr().(*net.TCPAddr).Port))
+	conn, err := dialer.DialContext(context.Background(), N.NetworkTCP, address)
+	require.NoError(t, err)
+	require.NoError(t, conn.Close())
+	require.Equal(t, int32(1), ordinaryCalls.Load())
+	require.Zero(t, payloadCalls.Load())
+}
