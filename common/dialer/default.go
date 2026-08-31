@@ -503,7 +503,7 @@ func (d *DefaultDialer) trackConn(ctx context.Context, destination M.Socksaddr, 
 		return conn, err
 	}
 	if d.connectionManager != nil {
-		conn = d.connectionManager.TrackConn(conn)
+		conn = d.connectionManager.TrackConnWithContext(ctx, conn)
 	}
 	if d.powerManager != nil {
 		recorder := d.powerManager.Recorder()
@@ -525,7 +525,7 @@ func (d *DefaultDialer) trackPacketConn(ctx context.Context, destination M.Socks
 		return conn, err
 	}
 	if d.connectionManager != nil {
-		conn = d.connectionManager.TrackPacketConn(conn)
+		conn = d.connectionManager.TrackPacketConnWithContext(ctx, conn)
 	}
 	if d.powerManager != nil {
 		recorder := d.powerManager.Recorder()

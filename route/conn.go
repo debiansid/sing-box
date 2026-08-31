@@ -31,14 +31,23 @@ import (
 var _ adapter.ConnectionManager = (*ConnectionManager)(nil)
 
 type ConnectionManager struct {
-	logger      logger.ContextLogger
-	access      sync.Mutex
-	connections list.List[io.Closer]
+	logger            logger.ContextLogger
+	access            sync.Mutex
+	connections       list.List[*connectionEntry]
+	currentGeneration uint64
 }
+
+type connectionEntry struct {
+	closer     io.Closer
+	generation uint64
+}
+
+const unboundConnectionGeneration uint64 = 0
 
 func NewConnectionManager(logger logger.ContextLogger) *ConnectionManager {
 	return &ConnectionManager{
-		logger: logger,
+		logger:            logger,
+		currentGeneration: 1,
 	}
 }
 
@@ -50,12 +59,50 @@ func (m *ConnectionManager) Count() int {
 	return m.connections.Len()
 }
 
+func (m *ConnectionManager) CurrentGeneration() uint64 {
+	m.access.Lock()
+	generation := m.currentGeneration
+	m.access.Unlock()
+	return generation
+}
+
+func (m *ConnectionManager) SetGeneration(generation uint64) {
+	if generation == unboundConnectionGeneration {
+		return
+	}
+	m.access.Lock()
+	if generation > m.currentGeneration {
+		m.currentGeneration = generation
+	}
+	m.access.Unlock()
+}
+
+func (m *ConnectionManager) CloseGeneration(generation uint64) {
+	if generation == unboundConnectionGeneration {
+		return
+	}
+	m.access.Lock()
+	var closers []io.Closer
+	for element := m.connections.Front(); element != nil; {
+		nextElement := element.Next()
+		if element.Value.generation == generation {
+			closers = append(closers, element.Value.closer)
+			m.connections.Remove(element)
+		}
+		element = nextElement
+	}
+	m.access.Unlock()
+	for _, closer := range closers {
+		common.Close(closer)
+	}
+}
+
 func (m *ConnectionManager) CloseAll() {
 	m.access.Lock()
 	var closers []io.Closer
 	for element := m.connections.Front(); element != nil; {
 		nextElement := element.Next()
-		closers = append(closers, element.Value)
+		closers = append(closers, element.Value.closer)
 		m.connections.Remove(element)
 		element = nextElement
 	}
@@ -71,8 +118,21 @@ func (m *ConnectionManager) Close() error {
 }
 
 func (m *ConnectionManager) TrackConn(conn net.Conn) net.Conn {
+	return m.trackConn(conn, false)
+}
+
+func (m *ConnectionManager) TrackConnWithContext(ctx context.Context, conn net.Conn) net.Conn {
+	return m.trackConn(conn, adapter.IsVPNPayloadContext(ctx))
+}
+
+func (m *ConnectionManager) trackConn(conn net.Conn, unbound bool) net.Conn {
 	m.access.Lock()
-	element := m.connections.PushBack(conn)
+	generation := m.currentGeneration
+	if unbound {
+		generation = unboundConnectionGeneration
+	}
+	entry := &connectionEntry{closer: conn, generation: generation}
+	element := m.connections.PushBack(entry)
 	m.access.Unlock()
 	return &trackedConn{
 		Conn:    conn,
@@ -82,8 +142,21 @@ func (m *ConnectionManager) TrackConn(conn net.Conn) net.Conn {
 }
 
 func (m *ConnectionManager) TrackPacketConn(conn net.PacketConn) net.PacketConn {
+	return m.trackPacketConn(conn, false)
+}
+
+func (m *ConnectionManager) TrackPacketConnWithContext(ctx context.Context, conn net.PacketConn) net.PacketConn {
+	return m.trackPacketConn(conn, adapter.IsVPNPayloadContext(ctx))
+}
+
+func (m *ConnectionManager) trackPacketConn(conn net.PacketConn, unbound bool) net.PacketConn {
 	m.access.Lock()
-	element := m.connections.PushBack(conn)
+	generation := m.currentGeneration
+	if unbound {
+		generation = unboundConnectionGeneration
+	}
+	entry := &connectionEntry{closer: conn, generation: generation}
+	element := m.connections.PushBack(entry)
 	m.access.Unlock()
 	return &trackedPacketConn{
 		PacketConn: conn,
@@ -395,7 +468,7 @@ func (m *ConnectionManager) packetConnectionCopy(ctx context.Context, source N.P
 type trackedConn struct {
 	net.Conn
 	manager *ConnectionManager
-	element *list.Element[io.Closer]
+	element *list.Element[*connectionEntry]
 }
 
 func (c *trackedConn) Close() error {
@@ -420,7 +493,7 @@ func (c *trackedConn) WriterReplaceable() bool {
 type trackedPacketConn struct {
 	net.PacketConn
 	manager *ConnectionManager
-	element *list.Element[io.Closer]
+	element *list.Element[*connectionEntry]
 }
 
 func (c *trackedPacketConn) ReadPacket(buffer *buf.Buffer) (M.Socksaddr, error) {
