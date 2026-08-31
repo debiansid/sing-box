@@ -11,6 +11,7 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	commonEBPF "github.com/sagernet/sing-box/common/ebpf"
 	"github.com/sagernet/sing-box/common/process"
+	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing/common/buf"
 	"github.com/sagernet/sing/common/control"
@@ -44,7 +45,34 @@ func (i *Inbound) newTCConnection(
 	if assignment.Path == commonEBPF.TCPathShared && assignment.SourceMACValid != 0 {
 		metadata.SourceMACAddress = net.HardwareAddr(assignment.SourceMAC[:])
 	}
+	ctx = tcPathContext(ctx, assignment.Path, i.vpnPayloadEnabled())
 	i.router.RouteConnectionEx(ctx, conn, metadata, onClose)
+}
+
+type vpnPayloadPlatform interface {
+	UsePlatformAutoDetectInterfaceControl() bool
+}
+
+type vpnPayloadMonitor interface {
+	AndroidVPNEnabled() bool
+	MyInterfaces() []string
+}
+
+func vpnPayloadEnabledForPlatform(isAndroid bool, platform vpnPayloadPlatform, monitor vpnPayloadMonitor) bool {
+	return isAndroid &&
+		platform != nil && platform.UsePlatformAutoDetectInterfaceControl() &&
+		monitor != nil && (monitor.AndroidVPNEnabled() || len(monitor.MyInterfaces()) > 0)
+}
+
+func (i *Inbound) vpnPayloadEnabled() bool {
+	return vpnPayloadEnabledForPlatform(C.IsAndroid, i.platformInterface, i.networkManager.InterfaceMonitor())
+}
+
+func tcPathContext(ctx context.Context, path uint8, vpnPayloadEnabled bool) context.Context {
+	if vpnPayloadEnabled && path == commonEBPF.TCPathShared {
+		return adapter.ContextWithVPNPayload(ctx)
+	}
+	return ctx
 }
 
 func (i *Inbound) newTCPacket(
