@@ -410,41 +410,25 @@ func (b *TCBackend) SetRoutingMark(mark uint32) error {
 }
 
 func tcFlags(config TCConfig, uidPolicy bool, uidDefaultBypass bool) uint32 {
-	var flags uint32
-	if config.EnableIPv4 {
-		flags |= tcFlagIPv4
-	}
-	if config.EnableLocalIPv6 {
-		flags |= tcFlagLocalIPv6
-	}
-	if config.EnableSharedIPv6 {
-		flags |= tcFlagSharedIPv6
-	}
-	if config.EnableTCP {
-		flags |= tcFlagTCP
-	}
-	if config.EnableUDP {
-		flags |= tcFlagUDP
-	}
-	if uidPolicy {
-		flags |= 1 << 4
-	}
-	if uidDefaultBypass {
-		flags |= 1 << 5
-	}
-	if config.LocalPolicy.BypassPrivateAddress {
-		flags |= 1 << 6
-	}
-	if config.SharedBypassPrivate {
-		flags |= 1 << 7
-	}
-	if len(config.LocalBypassPort) > 0 {
-		flags |= tcFlagLocalBypassPort
-	}
-	if len(config.SharedBypassPort) > 0 {
-		flags |= tcFlagSharedBypassPort
-	}
-	return flags
+	return policyVector{
+		EnableTCP:           config.EnableTCP,
+		EnableUDP:           config.EnableUDP,
+		EnableIPv4:          config.EnableIPv4,
+		EnableLocalIPv6:     config.EnableLocalIPv6,
+		EnableSharedIPv6:    config.EnableSharedIPv6,
+		UIDPolicy:           uidPolicy,
+		UIDDefaultBypass:    uidDefaultBypass,
+		LocalBypassPrivate:  config.LocalPolicy.BypassPrivateAddress,
+		SharedBypassPrivate: config.SharedBypassPrivate,
+		LocalBypassPort:     len(config.LocalBypassPort) > 0,
+		SharedBypassPort:    len(config.SharedBypassPort) > 0,
+		FakeIPIPv4:          config.FakeIPIPv4.IsValid(),
+		FakeIPIPv6:          config.FakeIPIPv6.IsValid(),
+		IncludeSource:       len(config.IncludeSourceCIDR) > 0,
+		ExcludeSource:       len(config.ExcludeSourceCIDR) > 0,
+		IncludeSourceMAC:    len(config.IncludeSourceMAC) > 0,
+		ExcludeSourceMAC:    len(config.ExcludeSourceMAC) > 0,
+	}.tcFlags()
 }
 
 func (b *TCBackend) updateControlLocked() error {

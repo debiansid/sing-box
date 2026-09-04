@@ -287,33 +287,21 @@ func (b *SharedNetworkBackend) updatePolicyFlagsLocked() error {
 	// retain their decision until the normal TCP/UDP cache lifetime ends.
 	bypassFlowCacheFlag := b.control.Flags & sharedNetworkFlagBypassFlowCache
 	b.control.Flags &^= sharedNetworkPolicyFlags
-	b.control.Flags |= bypassFlowCacheFlag
-	if len(b.hostIPv4) != 0 {
-		b.control.Flags |= sharedNetworkFlagHostIPv4
+	vector := policyVector{
+		HostIPv4:         len(b.hostIPv4) != 0,
+		HostIPv6:         len(b.hostIPv6) != 0,
+		BypassIPv4:       b.bypassIPv4Count != 0,
+		BypassIPv6:       b.bypassIPv6Count != 0,
+		IncludeSource:    len(b.includeSourceIPv4) != 0 || len(b.includeSourceIPv6) != 0,
+		ExcludeSource:    len(b.excludeSourceIPv4) != 0 || len(b.excludeSourceIPv6) != 0,
+		IncludeSourceMAC: len(b.includeSourceMAC) != 0,
+		ExcludeSourceMAC: len(b.excludeSourceMAC) != 0,
+		BypassFlowCache:  bypassFlowCacheFlag != 0,
 	}
-	if len(b.hostIPv6) != 0 {
-		b.control.Flags |= sharedNetworkFlagHostIPv6
+	policyFlags := vector.sharedFlags() & sharedNetworkPolicyFlags
+	if sharedNetworkBypassFlowCacheRequired(policyFlags) {
+		policyFlags |= sharedNetworkFlagBypassFlowCache
 	}
-	if b.bypassIPv4Count != 0 {
-		b.control.Flags |= sharedNetworkFlagBypassIPv4
-	}
-	if b.bypassIPv6Count != 0 {
-		b.control.Flags |= sharedNetworkFlagBypassIPv6
-	}
-	if len(b.includeSourceIPv4) != 0 || len(b.includeSourceIPv6) != 0 {
-		b.control.Flags |= sharedNetworkFlagIncludeSource
-	}
-	if len(b.excludeSourceIPv4) != 0 || len(b.excludeSourceIPv6) != 0 {
-		b.control.Flags |= sharedNetworkFlagExcludeSource
-	}
-	if len(b.includeSourceMAC) != 0 {
-		b.control.Flags |= sharedNetworkFlagIncludeSourceMAC
-	}
-	if len(b.excludeSourceMAC) != 0 {
-		b.control.Flags |= sharedNetworkFlagExcludeSourceMAC
-	}
-	if sharedNetworkBypassFlowCacheRequired(b.control.Flags) {
-		b.control.Flags |= sharedNetworkFlagBypassFlowCache
-	}
+	b.control.Flags |= policyFlags
 	return b.updateControl()
 }

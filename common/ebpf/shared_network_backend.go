@@ -201,32 +201,32 @@ func PrepareSharedNetwork(cgroupBackend *CgroupBackend, config SharedNetworkConf
 	backend.control.ListenerPort = config.ListenerPort
 	backend.control.DNSMode = config.DNSMode
 	backend.control.UDPTimeoutSeconds = udpTimeoutSeconds
-	if config.EnableTCP {
-		backend.control.Flags |= sharedNetworkFlagTCP
-	}
-	if config.EnableUDP {
-		backend.control.Flags |= sharedNetworkFlagUDP
-	}
-	if config.BypassPrivateAddress {
-		backend.control.Flags |= sharedNetworkFlagBypassPrivateAddress
-	}
+	backend.control.Flags = (policyVector{
+		EnableTCP:           config.EnableTCP,
+		EnableUDP:           config.EnableUDP,
+		EnableIPv4:          redirectIPv4.IsValid(),
+		EnableSharedIPv6:    redirectIPv6.IsValid(),
+		SharedBypassPrivate: config.BypassPrivateAddress,
+		IncludeSource:       len(config.IncludeSourceCIDR) > 0,
+		ExcludeSource:       len(config.ExcludeSourceCIDR) > 0,
+		IncludeSourceMAC:    len(config.IncludeSourceMAC) > 0,
+		ExcludeSourceMAC:    len(config.ExcludeSourceMAC) > 0,
+		FakeIPIPv4:          fakeIPIPv4.IsValid(),
+		FakeIPIPv6:          fakeIPIPv6.IsValid(),
+	}).sharedFlags()
 	if redirectIPv4.IsValid() {
-		backend.control.Flags |= sharedNetworkFlagIPv4
 		backend.control.TokenIPv4Prefix = redirectIPv4.Addr().As4()
 		backend.control.TokenIPv4PrefixBits = uint8(redirectIPv4.Bits())
 	}
 	if redirectIPv6.IsValid() {
-		backend.control.Flags |= sharedNetworkFlagIPv6
 		backend.control.TokenIPv6Prefix = redirectIPv6.Addr().As16()
 		backend.control.TokenIPv6PrefixBits = uint8(redirectIPv6.Bits())
 	}
 	if fakeIPIPv4.IsValid() {
-		backend.control.Flags |= sharedNetworkFlagFakeIPIPv4
 		backend.control.FakeIPIPv4Prefix = fakeIPIPv4.Addr().As4()
 		backend.control.FakeIPIPv4Mask = prefixMask4(fakeIPIPv4.Bits())
 	}
 	if fakeIPIPv6.IsValid() {
-		backend.control.Flags |= sharedNetworkFlagFakeIPIPv6
 		backend.control.FakeIPIPv6Prefix = fakeIPIPv6.Addr().As16()
 		backend.control.FakeIPIPv6Mask = prefixMask16(fakeIPIPv6.Bits())
 	}
