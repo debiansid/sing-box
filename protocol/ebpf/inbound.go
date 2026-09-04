@@ -78,6 +78,7 @@ type Inbound struct {
 	sharedDNSMode            string
 	localIPv6                bool
 	localPolicy              commonEBPF.LocalPolicy
+	compiledPolicy           commonEBPF.CompiledPolicy
 	androidUIDOptions        *androidUIDOptions
 	sharedOptions            option.EBPFSharedOptions
 	sharedEnabled            bool

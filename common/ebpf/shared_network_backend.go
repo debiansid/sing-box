@@ -81,14 +81,9 @@ type SharedNetworkBackend struct {
 func PrepareSharedNetwork(cgroupBackend *CgroupBackend, config SharedNetworkConfig) (*SharedNetworkBackend, error) {
 	redirectIPv4 := config.RedirectIPv4
 	redirectIPv6 := config.RedirectIPv6
-	fakeIPIPv4, err := normalizeAddressPrefix("IPv4 FakeIP range", config.FakeIPIPv4, true)
-	if err != nil {
-		return nil, err
-	}
-	fakeIPIPv6, err := normalizeAddressPrefix("IPv6 FakeIP range", config.FakeIPIPv6, false)
-	if err != nil {
-		return nil, err
-	}
+	policy := config.Policy
+	fakeIPIPv4 := policy.fakeIPIPv4
+	fakeIPIPv6 := policy.fakeIPIPv6
 	for name, capacity := range map[string]uint32{
 		"shared-network proxy":  config.MapCapacity.Proxy,
 		"shared-network bypass": config.MapCapacity.Bypass,
@@ -97,8 +92,8 @@ func PrepareSharedNetwork(cgroupBackend *CgroupBackend, config SharedNetworkConf
 			return nil, err
 		}
 	}
-	if len(config.IncludeSourceMAC) > maxSharedSourceMACPolicyEntries ||
-		len(config.ExcludeSourceMAC) > maxSharedSourceMACPolicyEntries {
+	if len(policy.includeSourceMAC) > maxSharedSourceMACPolicyEntries ||
+		len(policy.excludeSourceMAC) > maxSharedSourceMACPolicyEntries {
 		return nil, E.New("shared-network source MAC policy exceeds eBPF map capacity")
 	}
 	if config.ListenerPort == 0 {
@@ -153,8 +148,8 @@ func PrepareSharedNetwork(cgroupBackend *CgroupBackend, config SharedNetworkConf
 	err = prepareSharedNetworkRuntime(
 		runtimeState,
 		config.MapCapacity,
-		len(config.IncludeSourceMAC),
-		len(config.ExcludeSourceMAC),
+		len(policy.includeSourceMAC),
+		len(policy.excludeSourceMAC),
 		bypassIPv4Map,
 		bypassIPv6Map,
 	)
@@ -199,18 +194,18 @@ func PrepareSharedNetwork(cgroupBackend *CgroupBackend, config SharedNetworkConf
 		flowWake:        make(chan struct{}, 1),
 	}
 	backend.control.ListenerPort = config.ListenerPort
-	backend.control.DNSMode = config.DNSMode
+	backend.control.DNSMode = policy.sharedDNSMode
 	backend.control.UDPTimeoutSeconds = udpTimeoutSeconds
 	backend.control.Flags = (policyVector{
 		EnableTCP:           config.EnableTCP,
 		EnableUDP:           config.EnableUDP,
 		EnableIPv4:          redirectIPv4.IsValid(),
 		EnableSharedIPv6:    redirectIPv6.IsValid(),
-		SharedBypassPrivate: config.BypassPrivateAddress,
-		IncludeSource:       len(config.IncludeSourceCIDR) > 0,
-		ExcludeSource:       len(config.ExcludeSourceCIDR) > 0,
-		IncludeSourceMAC:    len(config.IncludeSourceMAC) > 0,
-		ExcludeSourceMAC:    len(config.ExcludeSourceMAC) > 0,
+		SharedBypassPrivate: policy.sharedBypassPrivate,
+		IncludeSource:       len(policy.includeSource.ipv4)+len(policy.includeSource.ipv6) > 0,
+		ExcludeSource:       len(policy.excludeSource.ipv4)+len(policy.excludeSource.ipv6) > 0,
+		IncludeSourceMAC:    len(policy.includeSourceMAC) > 0,
+		ExcludeSourceMAC:    len(policy.excludeSourceMAC) > 0,
 		FakeIPIPv4:          fakeIPIPv4.IsValid(),
 		FakeIPIPv6:          fakeIPIPv6.IsValid(),
 	}).sharedFlags()
@@ -230,19 +225,17 @@ func PrepareSharedNetwork(cgroupBackend *CgroupBackend, config SharedNetworkConf
 		backend.control.FakeIPIPv6Prefix = fakeIPIPv6.Addr().As16()
 		backend.control.FakeIPIPv6Mask = prefixMask16(fakeIPIPv6.Bits())
 	}
-	if err = backend.initializeSourceCIDRPolicy(config.IncludeSourceCIDR, config.ExcludeSourceCIDR); err != nil {
+	if err = backend.initializeSourceCIDRPolicy(policy.includeSource, policy.excludeSource); err != nil {
 		_ = backend.Close()
 		return nil, err
 	}
-	if err = backend.initializeSourceMACPolicy(config.IncludeSourceMAC, config.ExcludeSourceMAC); err != nil {
+	if err = backend.initializeSourceMACPolicy(policy.includeSourceMAC, policy.excludeSourceMAC); err != nil {
 		_ = backend.Close()
 		return nil, err
 	}
 	if err = populatePortPolicyMap(
 		backend.runtime.maps["shared_bypass_port"],
-		config.BypassPort,
-		config.EnableTCP,
-		config.EnableUDP,
+		policy.sharedBypassPortEntries,
 	); err != nil {
 		_ = backend.Close()
 		return nil, E.Cause(err, "populate shared packet-rewrite port bypass policy")

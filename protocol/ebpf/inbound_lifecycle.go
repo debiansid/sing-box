@@ -42,6 +42,27 @@ func (i *Inbound) startInbound() error {
 			return E.Cause(err, "resolve Android UID policy")
 		}
 	}
+	policy := i.localPolicy
+	policy.EnableBypassCIDR = i.localCgroupEnabled()
+	compiledPolicy, err := commonEBPF.CompilePolicy(commonEBPF.PolicyConfig{
+		EnableTCP:           i.enableTCP,
+		EnableUDP:           i.enableUDP,
+		Local:               policy,
+		SharedDNSMode:       toCommonDNSMode(i.sharedDNSMode),
+		SharedBypassPrivate: i.sharedBypassPrivate,
+		FakeIPIPv4:          i.fakeIPIPv4Prefix,
+		FakeIPIPv6:          i.fakeIPIPv6Prefix,
+		IncludeSourceCIDR:   i.sharedOptions.IncludeSourceCIDR,
+		ExcludeSourceCIDR:   i.sharedOptions.ExcludeSourceCIDR,
+		IncludeSourceMAC:    i.sharedIncludeMAC,
+		ExcludeSourceMAC:    i.sharedExcludeMAC,
+		LocalBypassPort:     i.localBypassPort,
+		SharedBypassPort:    i.sharedBypassPort,
+	})
+	if err != nil {
+		return E.Cause(err, "compile eBPF policy")
+	}
+	i.compiledPolicy = compiledPolicy
 	if err := i.checkKernelCapabilities(); err != nil {
 		return err
 	}
@@ -86,30 +107,19 @@ func (i *Inbound) startInbound() error {
 		}
 	}
 	backendConfig := commonEBPF.TCConfig{
-		ListenerPort:        i.listeners.selectedPort(),
-		EnableLocal:         localTCEnabled,
-		EnableShared:        sharedSocketAssignEnabled,
-		EnableIPv4:          true,
-		EnableLocalIPv6:     i.localIPv6,
-		EnableSharedIPv6:    i.sharedIPv6,
-		EnableTCP:           i.enableTCP,
-		EnableUDP:           i.enableUDP,
-		LocalPolicy:         i.localPolicy,
-		SharedDNSMode:       toCommonDNSMode(i.sharedDNSMode),
-		SharedBypassPrivate: i.sharedBypassPrivate,
-		FakeIPIPv4:          i.fakeIPIPv4Prefix,
-		FakeIPIPv6:          i.fakeIPIPv6Prefix,
-		IncludeSourceCIDR:   i.sharedOptions.IncludeSourceCIDR,
-		ExcludeSourceCIDR:   i.sharedOptions.ExcludeSourceCIDR,
-		IncludeSourceMAC:    i.sharedIncludeMAC,
-		ExcludeSourceMAC:    i.sharedExcludeMAC,
-		SelfBypassMap:       i.selfBypass.Map(),
-		LocalBypassPort:     i.localBypassPort,
-		SharedBypassPort:    i.sharedBypassPort,
-		TrackProcess:        i.processTracker != nil,
+		ListenerPort:     i.listeners.selectedPort(),
+		EnableLocal:      localTCEnabled,
+		EnableShared:     sharedSocketAssignEnabled,
+		EnableIPv4:       true,
+		EnableLocalIPv6:  i.localIPv6,
+		EnableSharedIPv6: i.sharedIPv6,
+		EnableTCP:        i.enableTCP,
+		EnableUDP:        i.enableUDP,
+		Policy:           i.compiledPolicy,
+		SelfBypassMap:    i.selfBypass.Map(),
+		TrackProcess:     i.processTracker != nil,
 	}
 	var backend *commonEBPF.TCBackend
-	var err error
 	if localTCEnabled || sharedSocketAssignEnabled {
 		backend, err = commonEBPF.PrepareTC(backendConfig)
 	}
@@ -456,8 +466,6 @@ func (i *Inbound) closeResources() error {
 }
 
 func (i *Inbound) prepareCgroupBackend() error {
-	policy := i.localPolicy
-	policy.EnableBypassCIDR = true
 	backend, err := commonEBPF.PrepareCgroup(commonEBPF.CgroupConfig{
 		Path:          i.cgroupPath,
 		EnableTCP:     i.enableTCP,
@@ -465,13 +473,10 @@ func (i *Inbound) prepareCgroupBackend() error {
 		EnableIPv6:    i.cgroupIPv6Enabled(),
 		RedirectIPv4:  i.redirectIPv4Prefix,
 		RedirectIPv6:  i.redirectIPv6Prefix,
-		FakeIPIPv4:    i.fakeIPIPv4Prefix,
-		FakeIPIPv6:    i.fakeIPIPv6Prefix,
 		MapCapacity:   commonEBPF.DefaultCgroupMapCapacity(),
 		UDPTimeout:    i.udpTimeout,
-		Policy:        policy,
+		Policy:        i.compiledPolicy,
 		SelfBypassMap: i.selfBypass.Map(),
-		BypassPort:    i.localBypassPort,
 	})
 	if err != nil {
 		return err

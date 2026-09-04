@@ -39,15 +39,15 @@ func TestTCABI(t *testing.T) {
 }
 
 func TestTCIPv6PathFlags(t *testing.T) {
-	localFlags := tcFlags(TCConfig{EnableLocalIPv6: true}, false, false)
+	localFlags := tcFlags(TCConfig{EnableLocalIPv6: true}, CompiledPolicy{})
 	if localFlags&tcFlagLocalIPv6 == 0 || localFlags&tcFlagSharedIPv6 != 0 {
 		t.Fatalf("unexpected local IPv6 flags: %#x", localFlags)
 	}
-	sharedFlags := tcFlags(TCConfig{EnableSharedIPv6: true}, false, false)
+	sharedFlags := tcFlags(TCConfig{EnableSharedIPv6: true}, CompiledPolicy{})
 	if sharedFlags&tcFlagLocalIPv6 != 0 || sharedFlags&tcFlagSharedIPv6 == 0 {
 		t.Fatalf("unexpected shared IPv6 flags: %#x", sharedFlags)
 	}
-	hybridFlags := tcFlags(TCConfig{EnableLocalIPv6: true, EnableSharedIPv6: true}, false, false)
+	hybridFlags := tcFlags(TCConfig{EnableLocalIPv6: true, EnableSharedIPv6: true}, CompiledPolicy{})
 	if hybridFlags&(tcFlagLocalIPv6|tcFlagSharedIPv6) != tcFlagLocalIPv6|tcFlagSharedIPv6 {
 		t.Fatalf("unexpected hybrid IPv6 flags: %#x", hybridFlags)
 	}

@@ -56,29 +56,19 @@ const (
 )
 
 type TCConfig struct {
-	ListenerPort        uint16
-	EnableLocal         bool
-	EnableShared        bool
-	EnableIPv4          bool
-	EnableLocalIPv6     bool
-	EnableSharedIPv6    bool
-	EnableTCP           bool
-	EnableUDP           bool
-	DeliveryInterface   uint32
-	LocalPolicy         LocalPolicy
-	SharedDNSMode       DNSMode
-	SharedBypassPrivate bool
-	FakeIPIPv4          netip.Prefix
-	FakeIPIPv6          netip.Prefix
-	IncludeSourceCIDR   []netip.Prefix
-	ExcludeSourceCIDR   []netip.Prefix
-	IncludeSourceMAC    []MACAddress
-	ExcludeSourceMAC    []MACAddress
-	RoutingMark         uint32
-	SelfBypassMap       *CiliumEBPF.Map
-	LocalBypassPort     []PortRange
-	SharedBypassPort    []PortRange
-	TrackProcess        bool
+	ListenerPort      uint16
+	EnableLocal       bool
+	EnableShared      bool
+	EnableIPv4        bool
+	EnableLocalIPv6   bool
+	EnableSharedIPv6  bool
+	EnableTCP         bool
+	EnableUDP         bool
+	DeliveryInterface uint32
+	Policy            CompiledPolicy
+	RoutingMark       uint32
+	SelfBypassMap     *CiliumEBPF.Map
+	TrackProcess      bool
 }
 
 type PortRange struct {
@@ -166,33 +156,13 @@ func prepareTC(config TCConfig, forceLegacyTCP bool) (*TCBackend, error) {
 	if config.RoutingMark == 0 {
 		config.RoutingMark = DefaultTCRoutingMark
 	}
-	uidEntries, uidDefaultBypass, err := compileUIDPolicy(config.LocalPolicy)
-	if err != nil {
-		return nil, err
-	}
-	fakeIPIPv4, err := normalizeAddressPrefix("IPv4 FakeIP range", config.FakeIPIPv4, true)
-	if err != nil {
-		return nil, err
-	}
-	fakeIPIPv6, err := normalizeAddressPrefix("IPv6 FakeIP range", config.FakeIPIPv6, false)
-	if err != nil {
-		return nil, err
-	}
-	includeIPv4, includeIPv6, err := compileBypassCIDRPolicy(config.IncludeSourceCIDR)
-	if err != nil {
-		return nil, E.Cause(err, "compile TC eBPF include source CIDR policy")
-	}
-	excludeIPv4, excludeIPv6, err := compileBypassCIDRPolicy(config.ExcludeSourceCIDR)
-	if err != nil {
-		return nil, E.Cause(err, "compile TC eBPF exclude source CIDR policy")
-	}
-	if len(includeIPv4) > maxSharedSourceCIDRPolicyEntries || len(includeIPv6) > maxSharedSourceCIDRPolicyEntries ||
-		len(excludeIPv4) > maxSharedSourceCIDRPolicyEntries || len(excludeIPv6) > maxSharedSourceCIDRPolicyEntries {
-		return nil, E.New("TC eBPF source CIDR policy exceeds map capacity")
-	}
-	if len(config.IncludeSourceMAC) > maxSharedSourceMACPolicyEntries || len(config.ExcludeSourceMAC) > maxSharedSourceMACPolicyEntries {
-		return nil, E.New("TC eBPF source MAC policy exceeds map capacity")
-	}
+	policy := config.Policy
+	var err error
+	uidEntries := policy.uidEntries
+	fakeIPIPv4 := policy.fakeIPIPv4
+	fakeIPIPv6 := policy.fakeIPIPv6
+	includeIPv4, includeIPv6 := policy.includeSource.ipv4, policy.includeSource.ipv6
+	excludeIPv4, excludeIPv6 := policy.excludeSource.ipv4, policy.excludeSource.ipv6
 	if err = checkLPMTriePolicyCompatibility(
 		"TC eBPF UID and source CIDR",
 		len(uidEntries)+len(includeIPv4)+len(includeIPv6)+len(excludeIPv4)+len(excludeIPv6),
@@ -211,8 +181,8 @@ func prepareTC(config TCConfig, forceLegacyTCP bool) (*TCBackend, error) {
 		"tc_include_source_ipv6": {name: "sb_tc_insrc6", mapType: CiliumEBPF.LPMTrie, maxEntries: max(uint32(len(includeIPv6)), 1), flags: bpfFlagNoPrealloc},
 		"tc_exclude_source_ipv4": {name: "sb_tc_exsrc4", mapType: CiliumEBPF.LPMTrie, maxEntries: max(uint32(len(excludeIPv4)), 1), flags: bpfFlagNoPrealloc},
 		"tc_exclude_source_ipv6": {name: "sb_tc_exsrc6", mapType: CiliumEBPF.LPMTrie, maxEntries: max(uint32(len(excludeIPv6)), 1), flags: bpfFlagNoPrealloc},
-		"tc_include_source_mac":  {name: "sb_tc_insmac", mapType: CiliumEBPF.Hash, maxEntries: sourceMACMapCapacity(len(config.IncludeSourceMAC))},
-		"tc_exclude_source_mac":  {name: "sb_tc_exsmac", mapType: CiliumEBPF.Hash, maxEntries: sourceMACMapCapacity(len(config.ExcludeSourceMAC))},
+		"tc_include_source_mac":  {name: "sb_tc_insmac", mapType: CiliumEBPF.Hash, maxEntries: sourceMACMapCapacity(len(policy.includeSourceMAC))},
+		"tc_exclude_source_mac":  {name: "sb_tc_exsmac", mapType: CiliumEBPF.Hash, maxEntries: sourceMACMapCapacity(len(policy.excludeSourceMAC))},
 		"tc_host_ipv4":           {name: "sb_tc_host4", mapType: CiliumEBPF.Hash, maxEntries: maxHostAddressPolicyEntries},
 		"tc_host_ipv6":           {name: "sb_tc_host6", mapType: CiliumEBPF.Hash, maxEntries: maxHostAddressPolicyEntries},
 		"tc_local_bypass_port":   {name: "sb_tc_lport", mapType: CiliumEBPF.Hash, maxEntries: tcPortPolicyCapacity},
@@ -233,12 +203,12 @@ func prepareTC(config TCConfig, forceLegacyTCP bool) (*TCBackend, error) {
 		return nil, err
 	}
 	controlValue := tcControl{
-		Flags:             tcFlags(config, len(uidEntries) > 0 || uidDefaultBypass, uidDefaultBypass),
+		Flags:             tcFlags(config, policy),
 		DeliveryInterface: config.DeliveryInterface,
 		RoutingMark:       config.RoutingMark,
 		ListenerPort:      config.ListenerPort,
-		LocalDNSMode:      config.LocalPolicy.DNSMode,
-		SharedDNSMode:     config.SharedDNSMode,
+		LocalDNSMode:      policy.local.DNSMode,
+		SharedDNSMode:     policy.sharedDNSMode,
 	}
 	if len(includeIPv4)+len(includeIPv6) > 0 {
 		controlValue.Flags |= 1 << 12
@@ -246,10 +216,10 @@ func prepareTC(config TCConfig, forceLegacyTCP bool) (*TCBackend, error) {
 	if len(excludeIPv4)+len(excludeIPv6) > 0 {
 		controlValue.Flags |= 1 << 13
 	}
-	if len(config.IncludeSourceMAC) > 0 {
+	if len(policy.includeSourceMAC) > 0 {
 		controlValue.Flags |= 1 << 14
 	}
-	if len(config.ExcludeSourceMAC) > 0 {
+	if len(policy.excludeSourceMAC) > 0 {
 		controlValue.Flags |= 1 << 15
 	}
 	if fakeIPIPv4.IsValid() {
@@ -278,11 +248,11 @@ func prepareTC(config TCConfig, forceLegacyTCP bool) (*TCBackend, error) {
 		_ = backend.Close()
 		return nil, E.Cause(err, "populate TC eBPF UID policy")
 	}
-	if err = populatePortPolicyMap(maps["tc_local_bypass_port"], config.LocalBypassPort, config.EnableTCP, config.EnableUDP); err != nil {
+	if err = populatePortPolicyMap(maps["tc_local_bypass_port"], policy.localBypassPortEntries); err != nil {
 		_ = backend.Close()
 		return nil, E.Cause(err, "populate TC eBPF local port bypass policy")
 	}
-	if err = populatePortPolicyMap(maps["tc_shared_bypass_port"], config.SharedBypassPort, config.EnableTCP, config.EnableUDP); err != nil {
+	if err = populatePortPolicyMap(maps["tc_shared_bypass_port"], policy.sharedBypassPortEntries); err != nil {
 		_ = backend.Close()
 		return nil, E.Cause(err, "populate TC eBPF shared port bypass policy")
 	}
@@ -306,11 +276,11 @@ func prepareTC(config TCConfig, forceLegacyTCP bool) (*TCBackend, error) {
 			return nil, err
 		}
 	}
-	if err = populateSourceMACPolicy(maps["tc_include_source_mac"], config.IncludeSourceMAC); err != nil {
+	if err = populateSourceMACPolicy(maps["tc_include_source_mac"], policy.includeSourceMAC); err != nil {
 		_ = backend.Close()
 		return nil, E.Cause(err, "populate TC eBPF include source MAC policy")
 	}
-	if err = populateSourceMACPolicy(maps["tc_exclude_source_mac"], config.ExcludeSourceMAC); err != nil {
+	if err = populateSourceMACPolicy(maps["tc_exclude_source_mac"], policy.excludeSourceMAC); err != nil {
 		_ = backend.Close()
 		return nil, E.Cause(err, "populate TC eBPF exclude source MAC policy")
 	}
@@ -409,25 +379,25 @@ func (b *TCBackend) SetRoutingMark(mark uint32) error {
 	return nil
 }
 
-func tcFlags(config TCConfig, uidPolicy bool, uidDefaultBypass bool) uint32 {
+func tcFlags(config TCConfig, policy CompiledPolicy) uint32 {
 	return policyVector{
 		EnableTCP:           config.EnableTCP,
 		EnableUDP:           config.EnableUDP,
 		EnableIPv4:          config.EnableIPv4,
 		EnableLocalIPv6:     config.EnableLocalIPv6,
 		EnableSharedIPv6:    config.EnableSharedIPv6,
-		UIDPolicy:           uidPolicy,
-		UIDDefaultBypass:    uidDefaultBypass,
-		LocalBypassPrivate:  config.LocalPolicy.BypassPrivateAddress,
-		SharedBypassPrivate: config.SharedBypassPrivate,
-		LocalBypassPort:     len(config.LocalBypassPort) > 0,
-		SharedBypassPort:    len(config.SharedBypassPort) > 0,
-		FakeIPIPv4:          config.FakeIPIPv4.IsValid(),
-		FakeIPIPv6:          config.FakeIPIPv6.IsValid(),
-		IncludeSource:       len(config.IncludeSourceCIDR) > 0,
-		ExcludeSource:       len(config.ExcludeSourceCIDR) > 0,
-		IncludeSourceMAC:    len(config.IncludeSourceMAC) > 0,
-		ExcludeSourceMAC:    len(config.ExcludeSourceMAC) > 0,
+		UIDPolicy:           len(policy.uidEntries) > 0 || policy.uidDefaultBypass,
+		UIDDefaultBypass:    policy.uidDefaultBypass,
+		LocalBypassPrivate:  policy.local.BypassPrivateAddress,
+		SharedBypassPrivate: policy.sharedBypassPrivate,
+		LocalBypassPort:     len(policy.localBypassPortEntries) > 0,
+		SharedBypassPort:    len(policy.sharedBypassPortEntries) > 0,
+		FakeIPIPv4:          policy.fakeIPIPv4.IsValid(),
+		FakeIPIPv6:          policy.fakeIPIPv6.IsValid(),
+		IncludeSource:       len(policy.includeSource.ipv4)+len(policy.includeSource.ipv6) > 0,
+		ExcludeSource:       len(policy.excludeSource.ipv4)+len(policy.excludeSource.ipv6) > 0,
+		IncludeSourceMAC:    len(policy.includeSourceMAC) > 0,
+		ExcludeSourceMAC:    len(policy.excludeSourceMAC) > 0,
 	}.tcFlags()
 }
 

@@ -11,22 +11,11 @@ import (
 	CiliumEBPF "github.com/cilium/ebpf"
 )
 
-func (b *SharedNetworkBackend) initializeSourceCIDRPolicy(include, exclude []netip.Prefix) error {
-	includeIPv4, includeIPv6, err := compileBypassCIDRPolicy(include)
-	if err != nil {
-		return E.Cause(err, "compile shared-network include source CIDR policy")
-	}
-	excludeIPv4, excludeIPv6, err := compileBypassCIDRPolicy(exclude)
-	if err != nil {
-		return E.Cause(err, "compile shared-network exclude source CIDR policy")
-	}
-	if len(includeIPv4) > maxSharedSourceCIDRPolicyEntries ||
-		len(includeIPv6) > maxSharedSourceCIDRPolicyEntries ||
-		len(excludeIPv4) > maxSharedSourceCIDRPolicyEntries ||
-		len(excludeIPv6) > maxSharedSourceCIDRPolicyEntries {
-		return E.New("shared-network source CIDR policy exceeds eBPF map capacity")
-	}
-	if err = checkLPMTriePolicyCompatibility(
+func (b *SharedNetworkBackend) initializeSourceCIDRPolicy(include, exclude dualStackCIDRPrefixes) error {
+	var err error
+	includeIPv4, includeIPv6 := include.ipv4, include.ipv6
+	excludeIPv4, excludeIPv6 := exclude.ipv4, exclude.ipv6
+	if err := checkLPMTriePolicyCompatibility(
 		"shared-network source CIDR",
 		len(includeIPv4)+len(includeIPv6)+len(excludeIPv4)+len(excludeIPv6),
 	); err != nil {
