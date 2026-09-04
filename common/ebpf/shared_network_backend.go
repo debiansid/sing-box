@@ -470,7 +470,7 @@ func (b *SharedNetworkBackend) MapCapacity() SharedNetworkMapCapacities {
 
 // KnownFlowUsage reports flow handles currently retained by userspace. Kernel
 // entries created before userspace observes them are intentionally excluded;
-// the periodic watchdog remains responsible for those invisible orphans.
+// pressure and flow events trigger bounded orphan scans for those entries.
 func (b *SharedNetworkBackend) KnownFlowUsage() MapUsage {
 	if b == nil {
 		return MapUsage{}
