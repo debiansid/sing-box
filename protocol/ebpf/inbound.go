@@ -24,9 +24,6 @@ import (
 )
 
 const (
-	ebpfModeLocal                = "local"
-	ebpfModeShared               = "shared"
-	ebpfModeHybrid               = "hybrid"
 	sharedDataPlaneSocketAssign  = "socket_assign"
 	sharedDataPlanePacketRewrite = "packet_rewrite"
 	dnsModeHijack                = "hijack"
@@ -60,7 +57,6 @@ type Inbound struct {
 	router                   adapter.Router
 	logger                   log.ContextLogger
 	networkManager           adapter.NetworkManager
-	mode                     string
 	localEnabled             bool
 	localDataPlane           string
 	cgroupPath               string
@@ -135,7 +131,7 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 	if err != nil {
 		return nil, err
 	}
-	mode, localEnabled, sharedEnabled := selection.mode, selection.localEnabled, selection.sharedEnabled
+	localEnabled, sharedEnabled := selection.localEnabled, selection.sharedEnabled
 	if err = validateLocalOptions(localEnabled, options.Local); err != nil {
 		return nil, err
 	}
@@ -220,7 +216,6 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 			platform := service.FromContext[adapter.PlatformInterface](ctx)
 			return platform != nil && platform.UsePlatformConnectionOwnerFinder()
 		}(),
-		mode:                mode,
 		localEnabled:        localEnabled,
 		localDataPlane:      localDataPlane,
 		cgroupPath:          cgroupPath,

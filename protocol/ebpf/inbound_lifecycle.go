@@ -182,8 +182,7 @@ func (i *Inbound) startInbound() error {
 	if dataPlane == nil && i.sharedRewrite == nil {
 		cgroupBackend := i.cgroupBackendInstance()
 		i.logger.Debug(
-			"eBPF cgroup active: mode=", i.mode,
-			", network=", network,
+			"eBPF cgroup active: network=", network,
 			", cgroup=", cgroupBackend.CgroupPath(),
 			", ipv6=", i.cgroupIPv6Enabled(),
 			", listeners=[", i.listeners.String(), "]",
@@ -196,8 +195,7 @@ func (i *Inbound) startInbound() error {
 		return nil
 	}
 	i.logger.Debug(
-		"eBPF TC active: mode=", i.mode,
-		", local_data_plane=", func() string {
+		"eBPF TC active: local_data_plane=", func() string {
 			if !i.localEnabled {
 				return "off"
 			}
