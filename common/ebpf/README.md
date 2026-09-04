@@ -13,6 +13,9 @@ and lifecycle owner.
 The runtime has four concrete backend choices: local `tc` or `cgroup`, and
 shared `socket_assign` or `packet_rewrite`. The defaults are local `cgroup` and
 shared `packet_rewrite`; the inbound may enable either path independently.
+`local.endpoint_connected_bypass` is TC-only: enabling it selects local `tc`
+when `local.data_plane` is omitted and rejects an explicit local `cgroup` data
+plane or `local.cgroup_path`.
 `sing-box tools ebpf status` accepts the same choices through
 `--local-data-plane` and `--shared-data-plane`; its `--mode` flags select the
 default local `cgroup` and shared `packet_rewrite` paths.
@@ -108,8 +111,16 @@ The programs first apply path-specific address-family, protocol, fragment,
 service-traffic, and safety gates. FakeIP forces interception before other
 policy. DNS `off` bypasses and DNS `hijack` intercepts before UID or shared source
 policy. DNS `respect_policy` applies UID/source policy first, then intercepts
-before host, private-address, and destination-CIDR bypass. Other traffic applies
-the same source policy followed by those destination bypasses.
+before host, private-address, and destination-CIDR bypass. For local traffic,
+`endpoint_connected_bypass` is evaluated after these FakeIP/DNS rules and before
+ordinary UID, port, host, private-address, and destination-CIDR bypass. Its first
+version has one configuration group: an unmatched flow keeps the original local
+policy, a matched flow is forced into interception while VPN is NOT READY, and
+the same match native-bypasses TC once VPN is READY. Force interception only
+keeps the flow in eBPF-in; normal Router and route-rule/default-outbound
+selection, including `clash_mode`, remains responsible for routing. If the
+configuration is absent or disabled, local selection is unchanged. Other
+traffic applies the original path-specific policy.
 
 Local egress checks the socket-cookie self-bypass map. Shared source CIDR and
 MAC include/exclude policies are evaluated only on the shared path.
@@ -140,6 +151,11 @@ fails before issuing an LPM update. Other kernel capabilities continue to use
 runtime map, program, and helper probes; this version check is limited to the
 LPM update safety exception.
 
+Endpoint CIDRs use dedicated TC-only IPv4/IPv6 LPM tries and endpoint ports use
+a dedicated TC-only hash map. A dynamic control flag records VPN readiness;
+readiness transitions update only that control state and do not rebuild the backend,
+attachments, or static policy maps.
+
 The object is generated for little-endian and big-endian BPF without BTF or
 CO-RE sections. Source and object hashes are recorded in
 `internal/bpfgen/manifest.txt`.
@@ -169,6 +185,14 @@ ifindex, framing, role, and installed filter identity. It also validates policy
 routing and the delivery link after network changes. Missing rules, routes,
 filters, delivery link state, and delivery sysctls are restored without periodic
 polling.
+
+When `endpoint_connected_bypass` is enabled, the same worker also samples
+matching `tun*` and `ipsec*` interfaces once per second. For ordinary TUN, the
+first RX/TX sample only establishes the baseline; a later sample must observe
+RX or TX growth. IPsec becomes ready when it has a non-local-table unicast
+default route. READY is retained while any matching interface remains active
+and is revoked immediately when a sample observes none, so zero active VPN
+interfaces means NOT READY.
 
 Configured shared interfaces that are absent at startup are attached when they
 appear; deleted or recreated interfaces are detached or replaced. A configured

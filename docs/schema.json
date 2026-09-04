@@ -3452,6 +3452,45 @@
       "type": "string",
       "pattern": "^[-+]?(((\\d+(\\.\\d*)?|\\.\\d+)(ns|us|µs|μs|ms|s|m|h|d))+|0)$"
     },
+    "EBPFEndpointConnectedBypassOptions": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "ip_cidr": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
+        },
+        "port": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 65535
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 65535
+              }
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
     "EBPFLocalOptions": {
       "type": "object",
       "properties": {
@@ -3610,6 +3649,9 @@
               }
             }
           ]
+        },
+        "endpoint_connected_bypass": {
+          "$ref": "#/$defs/EBPFEndpointConnectedBypassOptions"
         }
       },
       "additionalProperties": false
