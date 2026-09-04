@@ -233,12 +233,12 @@ func PrepareSharedNetwork(cgroupBackend *CgroupBackend, config SharedNetworkConf
 		_ = backend.Close()
 		return nil, err
 	}
-	if err = populatePortPolicyMap(
-		backend.runtime.maps["shared_bypass_port"],
-		policy.sharedBypassPortEntries,
-	); err != nil {
+	if err = populateCompiledPolicyMaps(policyMapTargets{
+		Scope:      "shared packet-rewrite",
+		SharedPort: backend.runtime.maps["shared_bypass_port"],
+	}, policy); err != nil {
 		_ = backend.Close()
-		return nil, E.Cause(err, "populate shared packet-rewrite port bypass policy")
+		return nil, err
 	}
 	if err := backend.updateControl(); err != nil {
 		_ = backend.Close()

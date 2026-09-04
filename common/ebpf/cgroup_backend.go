@@ -256,13 +256,13 @@ func PrepareCgroup(config CgroupConfig) (*CgroupBackend, error) {
 		bypassPrivateAddress: policy.local.BypassPrivateAddress,
 		udpTimeoutSeconds:    udpTimeoutSeconds,
 	}
-	if err = populateUIDPolicyMap(runtimeState.maps["cgroup_uid_policy"], uidPolicyEntries); err != nil {
+	if err = populateCompiledPolicyMaps(policyMapTargets{
+		Scope:     "cgroup eBPF",
+		UID:       runtimeState.maps["cgroup_uid_policy"],
+		LocalPort: runtimeState.maps["cgroup_bypass_port"],
+	}, policy); err != nil {
 		_ = backend.Close()
-		return nil, E.Cause(err, "populate UID policy eBPF map")
-	}
-	if err = populatePortPolicyMap(runtimeState.maps["cgroup_bypass_port"], policy.localBypassPortEntries); err != nil {
-		_ = backend.Close()
-		return nil, E.Cause(err, "populate cgroup eBPF port bypass policy")
+		return nil, err
 	}
 	return backend, nil
 }

@@ -51,6 +51,82 @@ func populateUIDPolicyMap(mapInstance *CiliumEBPF.Map, entries []uidLPMKey) erro
 	return err
 }
 
+type policyMapTargets struct {
+	Scope             string
+	UID               *CiliumEBPF.Map
+	LocalPort         *CiliumEBPF.Map
+	SharedPort        *CiliumEBPF.Map
+	IncludeSourceIPv4 *CiliumEBPF.Map
+	IncludeSourceIPv6 *CiliumEBPF.Map
+	ExcludeSourceIPv4 *CiliumEBPF.Map
+	ExcludeSourceIPv6 *CiliumEBPF.Map
+	IncludeSourceMAC  *CiliumEBPF.Map
+	ExcludeSourceMAC  *CiliumEBPF.Map
+}
+
+// populateCompiledPolicyMaps initializes only the policy maps that a backend
+// exposes. All maps are new at this point, so a failed operation is rolled
+// back by closing the backend rather than by retaining partial state.
+func populateCompiledPolicyMaps(targets policyMapTargets, policy CompiledPolicy) error {
+	scope := targets.Scope
+	if scope == "" {
+		scope = "eBPF"
+	}
+	if targets.UID != nil {
+		if err := populateUIDPolicyMap(targets.UID, policy.uidEntries); err != nil {
+			return E.Cause(err, "populate ", scope, " UID policy")
+		}
+	}
+	for _, entry := range []struct {
+		name    string
+		mapInst *CiliumEBPF.Map
+		values  []tcPortKey
+	}{
+		{name: "local port", mapInst: targets.LocalPort, values: policy.localBypassPortEntries},
+		{name: "shared port", mapInst: targets.SharedPort, values: policy.sharedBypassPortEntries},
+	} {
+		if entry.mapInst == nil || len(entry.values) == 0 {
+			continue
+		}
+		if err := populatePortPolicyMap(entry.mapInst, entry.values); err != nil {
+			return E.Cause(err, "populate ", scope, " ", entry.name, " bypass policy")
+		}
+	}
+	for _, entry := range []struct {
+		name     string
+		mapInst  *CiliumEBPF.Map
+		prefixes []netip.Prefix
+	}{
+		{name: "include source IPv4", mapInst: targets.IncludeSourceIPv4, prefixes: policy.includeSource.ipv4},
+		{name: "include source IPv6", mapInst: targets.IncludeSourceIPv6, prefixes: policy.includeSource.ipv6},
+		{name: "exclude source IPv4", mapInst: targets.ExcludeSourceIPv4, prefixes: policy.excludeSource.ipv4},
+		{name: "exclude source IPv6", mapInst: targets.ExcludeSourceIPv6, prefixes: policy.excludeSource.ipv6},
+	} {
+		if entry.mapInst == nil || len(entry.prefixes) == 0 {
+			continue
+		}
+		if err := replaceCIDRPolicyMap(entry.mapInst, nil, entry.prefixes); err != nil {
+			return E.Cause(err, "populate ", scope, " ", entry.name, " policy")
+		}
+	}
+	for _, entry := range []struct {
+		name      string
+		mapInst   *CiliumEBPF.Map
+		addresses []MACAddress
+	}{
+		{name: "include source MAC", mapInst: targets.IncludeSourceMAC, addresses: policy.includeSourceMAC},
+		{name: "exclude source MAC", mapInst: targets.ExcludeSourceMAC, addresses: policy.excludeSourceMAC},
+	} {
+		if entry.mapInst == nil || len(entry.addresses) == 0 {
+			continue
+		}
+		if err := populateSourceMACPolicy(entry.mapInst, entry.addresses); err != nil {
+			return E.Cause(err, "populate ", scope, " ", entry.name, " policy")
+		}
+	}
+	return nil
+}
+
 type dualStackCIDRPrefixes struct {
 	ipv4 []netip.Prefix
 	ipv6 []netip.Prefix

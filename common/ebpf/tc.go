@@ -244,45 +244,20 @@ func prepareTC(config TCConfig, forceLegacyTCP bool) (*TCBackend, error) {
 		_ = backend.Close()
 		return nil, err
 	}
-	if err = populateUIDPolicyMap(maps["tc_uid_policy"], uidEntries); err != nil {
+	if err = populateCompiledPolicyMaps(policyMapTargets{
+		Scope:             "TC eBPF",
+		UID:               maps["tc_uid_policy"],
+		LocalPort:         maps["tc_local_bypass_port"],
+		SharedPort:        maps["tc_shared_bypass_port"],
+		IncludeSourceIPv4: maps["tc_include_source_ipv4"],
+		IncludeSourceIPv6: maps["tc_include_source_ipv6"],
+		ExcludeSourceIPv4: maps["tc_exclude_source_ipv4"],
+		ExcludeSourceIPv6: maps["tc_exclude_source_ipv6"],
+		IncludeSourceMAC:  maps["tc_include_source_mac"],
+		ExcludeSourceMAC:  maps["tc_exclude_source_mac"],
+	}, policy); err != nil {
 		_ = backend.Close()
-		return nil, E.Cause(err, "populate TC eBPF UID policy")
-	}
-	if err = populatePortPolicyMap(maps["tc_local_bypass_port"], policy.localBypassPortEntries); err != nil {
-		_ = backend.Close()
-		return nil, E.Cause(err, "populate TC eBPF local port bypass policy")
-	}
-	if err = populatePortPolicyMap(maps["tc_shared_bypass_port"], policy.sharedBypassPortEntries); err != nil {
-		_ = backend.Close()
-		return nil, E.Cause(err, "populate TC eBPF shared port bypass policy")
-	}
-	for _, sourcePolicy := range []struct {
-		ipv4Map string
-		ipv6Map string
-		ipv4    []netip.Prefix
-		ipv6    []netip.Prefix
-		name    string
-	}{
-		{"tc_include_source_ipv4", "tc_include_source_ipv6", includeIPv4, includeIPv6, "include"},
-		{"tc_exclude_source_ipv4", "tc_exclude_source_ipv6", excludeIPv4, excludeIPv6, "exclude"},
-	} {
-		_, err = replaceDualStackCIDRPolicy(
-			maps[sourcePolicy.ipv4Map], maps[sourcePolicy.ipv6Map],
-			dualStackCIDRPrefixes{}, dualStackCIDRPrefixes{sourcePolicy.ipv4, sourcePolicy.ipv6},
-			"TC ", sourcePolicy.name+" source CIDR",
-		)
-		if err != nil {
-			_ = backend.Close()
-			return nil, err
-		}
-	}
-	if err = populateSourceMACPolicy(maps["tc_include_source_mac"], policy.includeSourceMAC); err != nil {
-		_ = backend.Close()
-		return nil, E.Cause(err, "populate TC eBPF include source MAC policy")
-	}
-	if err = populateSourceMACPolicy(maps["tc_exclude_source_mac"], policy.excludeSourceMAC); err != nil {
-		_ = backend.Close()
-		return nil, E.Cause(err, "populate TC eBPF exclude source MAC policy")
+		return nil, err
 	}
 	return backend, nil
 }
