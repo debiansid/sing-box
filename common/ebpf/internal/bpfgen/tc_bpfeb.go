@@ -20,6 +20,9 @@ const (
 	TCMapTcBypassIpv4                          = "tc_bypass_ipv4"
 	TCMapTcBypassIpv6                          = "tc_bypass_ipv6"
 	TCMapTcControl                             = "tc_control"
+	TCMapTcEndpointIpv4                        = "tc_endpoint_ipv4"
+	TCMapTcEndpointIpv6                        = "tc_endpoint_ipv6"
+	TCMapTcEndpointPort                        = "tc_endpoint_port"
 	TCMapTcExcludeSourceIpv4                   = "tc_exclude_source_ipv4"
 	TCMapTcExcludeSourceIpv6                   = "tc_exclude_source_ipv6"
 	TCMapTcExcludeSourceMac                    = "tc_exclude_source_mac"
@@ -113,6 +116,9 @@ type TCMapSpecs struct {
 	TcBypassIpv4        *ebpf.MapSpec `ebpf:"tc_bypass_ipv4"`
 	TcBypassIpv6        *ebpf.MapSpec `ebpf:"tc_bypass_ipv6"`
 	TcControl           *ebpf.MapSpec `ebpf:"tc_control"`
+	TcEndpointIpv4      *ebpf.MapSpec `ebpf:"tc_endpoint_ipv4"`
+	TcEndpointIpv6      *ebpf.MapSpec `ebpf:"tc_endpoint_ipv6"`
+	TcEndpointPort      *ebpf.MapSpec `ebpf:"tc_endpoint_port"`
 	TcExcludeSourceIpv4 *ebpf.MapSpec `ebpf:"tc_exclude_source_ipv4"`
 	TcExcludeSourceIpv6 *ebpf.MapSpec `ebpf:"tc_exclude_source_ipv6"`
 	TcExcludeSourceMac  *ebpf.MapSpec `ebpf:"tc_exclude_source_mac"`
@@ -158,6 +164,9 @@ type TCMaps struct {
 	TcBypassIpv4        *ebpf.Map `ebpf:"tc_bypass_ipv4"`
 	TcBypassIpv6        *ebpf.Map `ebpf:"tc_bypass_ipv6"`
 	TcControl           *ebpf.Map `ebpf:"tc_control"`
+	TcEndpointIpv4      *ebpf.Map `ebpf:"tc_endpoint_ipv4"`
+	TcEndpointIpv6      *ebpf.Map `ebpf:"tc_endpoint_ipv6"`
+	TcEndpointPort      *ebpf.Map `ebpf:"tc_endpoint_port"`
 	TcExcludeSourceIpv4 *ebpf.Map `ebpf:"tc_exclude_source_ipv4"`
 	TcExcludeSourceIpv6 *ebpf.Map `ebpf:"tc_exclude_source_ipv6"`
 	TcExcludeSourceMac  *ebpf.Map `ebpf:"tc_exclude_source_mac"`
@@ -179,6 +188,9 @@ func (m *TCMaps) Close() error {
 		m.TcBypassIpv4,
 		m.TcBypassIpv6,
 		m.TcControl,
+		m.TcEndpointIpv4,
+		m.TcEndpointIpv6,
+		m.TcEndpointPort,
 		m.TcExcludeSourceIpv4,
 		m.TcExcludeSourceIpv6,
 		m.TcExcludeSourceMac,

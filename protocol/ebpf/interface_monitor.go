@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/sagernet/netlink"
 	commonEBPF "github.com/sagernet/sing-box/common/ebpf"
@@ -27,6 +28,7 @@ type tcInterfaceMonitor struct {
 	defaultInterfaceCallback *list.Element[tun.DefaultInterfaceUpdateCallback]
 	defaultInterfaceName     string
 	cancel                   context.CancelFunc
+	done                     chan struct{}
 	updates                  chan struct{}
 }
 
@@ -64,6 +66,7 @@ func (i *Inbound) startTCInterfaceMonitor() error {
 		defaultInterfaceOwned = true
 	}
 	monitorContext, cancel := context.WithCancel(i.ctx)
+	done := make(chan struct{})
 	updates := make(chan struct{}, 1)
 	state := &i.interfaceMonitor
 	state.access.Lock()
@@ -83,12 +86,15 @@ func (i *Inbound) startTCInterfaceMonitor() error {
 	state.defaultInterface = defaultInterfaceMonitor
 	state.defaultInterfaceOwned = defaultInterfaceOwned
 	state.cancel = cancel
+	state.done = done
 	state.updates = updates
 	state.networkCallback = networkMonitor.RegisterCallback(i.notifyTCInterfaceUpdate)
 	state.defaultInterfaceCallback = defaultInterfaceMonitor.RegisterCallback(i.defaultInterfaceUpdated)
 	state.defaultInterfaceName = interfaceName(defaultInterfaceMonitor.DefaultInterface())
 	state.access.Unlock()
-	go i.runTCInterfaceUpdates(monitorContext, updates)
+	i.vpnReady.Store(false)
+	i.vpnInterfacePackets = nil
+	go i.runTCInterfaceUpdates(monitorContext, updates, done)
 	if networkOwned {
 		if err := networkMonitor.Start(); err != nil {
 			return E.Errors(E.Cause(err, "start TC eBPF network monitor"), i.stopTCInterfaceMonitor())
@@ -113,6 +119,7 @@ func (i *Inbound) stopTCInterfaceMonitor() error {
 	defaultInterfaceOwned := state.defaultInterfaceOwned
 	defaultInterfaceCallback := state.defaultInterfaceCallback
 	cancel := state.cancel
+	done := state.done
 	state.network = nil
 	state.networkOwned = false
 	state.networkCallback = nil
@@ -121,6 +128,7 @@ func (i *Inbound) stopTCInterfaceMonitor() error {
 	state.defaultInterfaceCallback = nil
 	state.defaultInterfaceName = ""
 	state.cancel = nil
+	state.done = nil
 	state.updates = nil
 	state.access.Unlock()
 	if networkMonitor == nil {
@@ -142,6 +150,11 @@ func (i *Inbound) stopTCInterfaceMonitor() error {
 	if networkOwned {
 		closeErr = E.Errors(closeErr, networkMonitor.Close())
 	}
+	if done != nil {
+		<-done
+	}
+	i.vpnReady.Store(false)
+	i.vpnInterfacePackets = nil
 	return closeErr
 }
 
@@ -195,13 +208,29 @@ func notifyTCInterfaceUpdate(updates chan<- struct{}) {
 	}
 }
 
-func (i *Inbound) runTCInterfaceUpdates(ctx context.Context, updates <-chan struct{}) {
+const vpnInterfaceWatchInterval = time.Second
+
+func (i *Inbound) runTCInterfaceUpdates(ctx context.Context, updates <-chan struct{}, done chan<- struct{}) {
+	defer close(done)
+	var ticker *time.Ticker
+	var ticks <-chan time.Time
+	if i.endpointConnectedBypass.Enabled {
+		i.syncVPNReadiness()
+		ticker = time.NewTicker(vpnInterfaceWatchInterval)
+		ticks = ticker.C
+		defer ticker.Stop()
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-updates:
 			i.updateTCInterfaces(ctx)
+			if i.endpointConnectedBypass.Enabled {
+				i.syncVPNReadiness()
+			}
+		case <-ticks:
+			i.syncVPNReadiness()
 		}
 	}
 }
