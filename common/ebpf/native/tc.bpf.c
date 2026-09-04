@@ -143,6 +143,20 @@ struct sb_tc_assign_value {
     __u8 source_mac_valid;
 };
 
+_Static_assert(sizeof(struct sb_tc_control) == 72, "sb_tc_control ABI size");
+_Static_assert(__builtin_offsetof(struct sb_tc_control, delivery_ifindex) == 8,
+    "sb_tc_control delivery_ifindex ABI offset");
+_Static_assert(__builtin_offsetof(struct sb_tc_control, routing_mark) == 12,
+    "sb_tc_control routing_mark ABI offset");
+_Static_assert(__builtin_offsetof(struct sb_tc_control, listener_port) == 16,
+    "sb_tc_control listener_port ABI offset");
+_Static_assert(__builtin_offsetof(struct sb_tc_control, fakeip_ipv6_mask) == 54,
+    "sb_tc_control fakeip_ipv6_mask ABI offset");
+_Static_assert(sizeof(struct sb_tc_assign_key) == 44, "sb_tc_assign_key ABI size");
+_Static_assert(sizeof(struct sb_tc_assign_value) == 24, "sb_tc_assign_value ABI size");
+_Static_assert(__builtin_offsetof(struct sb_tc_assign_value, socket_cookie) == 0,
+    "sb_tc_assign_value socket_cookie ABI offset");
+
 struct ethernet_header {
     __u8 destination[6];
     __u8 source[6];

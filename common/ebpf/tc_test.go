@@ -15,6 +15,15 @@ func TestTCABI(t *testing.T) {
 	if offset := unsafe.Offsetof(tcControl{}.RoutingMark); offset != 12 {
 		t.Fatalf("unexpected TC routing mark offset: %d", offset)
 	}
+	if offset := unsafe.Offsetof(tcControl{}.DeliveryInterface); offset != 8 {
+		t.Fatalf("unexpected TC delivery interface offset: %d", offset)
+	}
+	if offset := unsafe.Offsetof(tcControl{}.ListenerPort); offset != 16 {
+		t.Fatalf("unexpected TC listener port offset: %d", offset)
+	}
+	if offset := unsafe.Offsetof(tcControl{}.FakeIPIPv6Mask); offset != 54 {
+		t.Fatalf("unexpected TC IPv6 FakeIP mask offset: %d", offset)
+	}
 	if size := unsafe.Sizeof(tcAssignKey{}); size != 44 {
 		t.Fatalf("unexpected TC assignment key size: %d", size)
 	}
@@ -23,6 +32,9 @@ func TestTCABI(t *testing.T) {
 	}
 	if offset := unsafe.Offsetof(TCAssignment{}.SocketCookie); offset != 0 {
 		t.Fatalf("unexpected TC assignment socket cookie offset: %d", offset)
+	}
+	if offset := unsafe.Offsetof(TCAssignment{}.InterfaceIndex); offset != 8 {
+		t.Fatalf("unexpected TC assignment interface index offset: %d", offset)
 	}
 }
 
