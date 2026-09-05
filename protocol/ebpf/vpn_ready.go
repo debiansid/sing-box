@@ -43,6 +43,10 @@ type vpnReadinessSample struct {
 	ready            bool
 }
 
+type endpointVPNReadyControl interface {
+	SetEndpointVPNReady(ready bool) error
+}
+
 // currentEndpointBypassStatus returns the last readiness state committed to the
 // TC backend. Sampling or control-map failures do not publish an uncommitted
 // transition.
@@ -99,6 +103,10 @@ func (i *Inbound) syncVPNReadiness() {
 // periodic samples and interface events reach this function through the same
 // interface worker before dynamic TC control state is committed.
 func (i *Inbound) transitionVPNReadiness(sample vpnReadinessSample) {
+	i.transitionVPNReadinessWithControl(sample, nil)
+}
+
+func (i *Inbound) transitionVPNReadinessWithControl(sample vpnReadinessSample, control endpointVPNReadyControl) {
 	previous := i.vpnReady.Load()
 	next := reconcileVPNReady(previous, len(sample.activeInterfaces), sample.ready)
 	status := reconcileEndpointBypassStatus(
@@ -113,11 +121,13 @@ func (i *Inbound) transitionVPNReadiness(sample vpnReadinessSample) {
 		i.storeEndpointBypassStatus(status)
 		return
 	}
-	backend := i.tcBackend()
-	if backend == nil {
+	if control == nil {
+		control = i.tcBackend()
+	}
+	if control == nil {
 		return
 	}
-	if err := backend.SetEndpointVPNReady(next); err != nil {
+	if err := control.SetEndpointVPNReady(next); err != nil {
 		i.logger.Error("update eBPF endpoint VPN readiness: ", err)
 		return
 	}

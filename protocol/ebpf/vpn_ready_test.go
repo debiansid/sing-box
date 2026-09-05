@@ -3,14 +3,82 @@
 package ebpf
 
 import (
+	"errors"
 	"net"
 	"testing"
 
 	"github.com/sagernet/netlink"
+	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
 
 	"golang.org/x/sys/unix"
 )
+
+type testEndpointVPNReadyControl struct {
+	updates []bool
+	err     error
+}
+
+func (c *testEndpointVPNReadyControl) SetEndpointVPNReady(ready bool) error {
+	c.updates = append(c.updates, ready)
+	return c.err
+}
+
+func TestVPNReadinessTransitionOnlyControlUpdates(t *testing.T) {
+	inbound := Inbound{
+		logger:                  log.NewNOPFactory().Logger(),
+		endpointConnectedBypass: option.EBPFEndpointConnectedBypassOptions{Enabled: true},
+	}
+	inbound.resetVPNReadinessState()
+	control := &testEndpointVPNReadyControl{}
+	baseline := vpnReadinessSample{activeInterfaces: []string{"tun0"}}
+	inbound.transitionVPNReadinessWithControl(baseline, control)
+	inbound.transitionVPNReadinessWithControl(baseline, control)
+	if len(control.updates) != 0 {
+		t.Fatalf("NOT READY samples updated control state: %v", control.updates)
+	}
+	ready := vpnReadinessSample{
+		activeInterfaces: []string{"tun0"},
+		readyInterface:   "tun0",
+		readyReason:      endpointReadyReasonRXActivity,
+		ready:            true,
+	}
+	inbound.transitionVPNReadinessWithControl(ready, control)
+	inbound.transitionVPNReadinessWithControl(ready, control)
+	if len(control.updates) != 1 || !control.updates[0] {
+		t.Fatalf("READY transition did not produce exactly one control update: %v", control.updates)
+	}
+	disconnected := vpnReadinessSample{}
+	inbound.transitionVPNReadinessWithControl(disconnected, control)
+	inbound.transitionVPNReadinessWithControl(disconnected, control)
+	if len(control.updates) != 2 || control.updates[1] {
+		t.Fatalf("disconnect transition did not produce exactly one control update: %v", control.updates)
+	}
+}
+
+func TestVPNReadinessControlFailureDoesNotCommit(t *testing.T) {
+	inbound := Inbound{
+		logger:                  log.NewNOPFactory().Logger(),
+		endpointConnectedBypass: option.EBPFEndpointConnectedBypassOptions{Enabled: true},
+	}
+	inbound.resetVPNReadinessState()
+	control := &testEndpointVPNReadyControl{err: errors.New("control update failed")}
+	inbound.transitionVPNReadinessWithControl(vpnReadinessSample{
+		activeInterfaces: []string{"ipsec0"},
+		readyInterface:   "ipsec0",
+		readyReason:      endpointReadyReasonIPsecDefaultRoute,
+		ready:            true,
+	}, control)
+	if inbound.vpnReady.Load() {
+		t.Fatal("failed control update advanced committed READY state")
+	}
+	if status := inbound.currentEndpointBypassStatus(); status.VPNReady {
+		t.Fatalf("failed control update published READY status: %+v", status)
+	}
+	if len(control.updates) != 1 || !control.updates[0] {
+		t.Fatalf("unexpected failed control updates: %v", control.updates)
+	}
+}
 
 func TestEndpointBypassStatusSnapshot(t *testing.T) {
 	inbound := Inbound{
