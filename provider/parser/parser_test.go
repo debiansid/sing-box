@@ -13,32 +13,41 @@ import (
 func TestOverrideAnyTLSOptions(t *testing.T) {
 	testCases := []struct {
 		name                   string
-		clientMetadata         string
+		clientMetadata         *string
 		override               *option.OverrideAnyTLSOptions
-		expectedClientMetadata string
+		expectedClientMetadata *string
 	}{
 		{
 			name: "preserve unset",
 		},
 		{
+			name:                   "preserve explicit empty",
+			clientMetadata:         common.Ptr(""),
+			expectedClientMetadata: common.Ptr(""),
+		},
+		{
+			name:     "unset override preserves unset",
+			override: &option.OverrideAnyTLSOptions{},
+		},
+		{
 			name:                   "preserve value",
-			clientMetadata:         "original-client/1.0",
-			expectedClientMetadata: "original-client/1.0",
+			clientMetadata:         common.Ptr("original-client/1.0"),
+			expectedClientMetadata: common.Ptr("original-client/1.0"),
 		},
 		{
 			name:           "clear",
-			clientMetadata: "original-client/1.0",
+			clientMetadata: common.Ptr("original-client/1.0"),
 			override: &option.OverrideAnyTLSOptions{
 				ClientMetadata: common.Ptr(""),
 			},
-			expectedClientMetadata: "",
+			expectedClientMetadata: common.Ptr(""),
 		},
 		{
 			name: "replace",
 			override: &option.OverrideAnyTLSOptions{
 				ClientMetadata: common.Ptr("custom-client/1.0"),
 			},
-			expectedClientMetadata: "custom-client/1.0",
+			expectedClientMetadata: common.Ptr("custom-client/1.0"),
 		},
 	}
 	for _, testCase := range testCases {

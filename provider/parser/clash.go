@@ -92,9 +92,6 @@ func (c *ClashProxy) UnmarshalYAML(value *yaml.Node) error {
 	if err != nil {
 		return err
 	}
-	if anyTLS, ok := options.(*AnyTLSOption); ok && anyTLS.DisableReuse {
-		return E.New("anytls disable-reuse is not supported")
-	}
 	c.Options = options
 	return nil
 }
@@ -541,6 +538,7 @@ func (a *AnyTLSOption) Build() any {
 		IdleSessionCheckInterval:    badoption.Duration(a.IdleSessionCheckInterval),
 		IdleSessionTimeout:          badoption.Duration(a.IdleSessionTimeout),
 		MinIdleSession:              a.MinIdleSession,
+		DisableReuse:                a.DisableReuse,
 	}
 }
 
