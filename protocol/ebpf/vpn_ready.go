@@ -22,6 +22,39 @@ type interfacePacketCount struct {
 	tx uint64
 }
 
+const (
+	endpointReadyReasonIPsecDefaultRoute = "ipsec_default_route"
+	endpointReadyReasonRXActivity        = "rx_activity"
+	endpointReadyReasonTXActivity        = "tx_activity"
+	endpointReadyReasonNoActiveInterface = "no_active_interface"
+)
+
+type endpointBypassStatus struct {
+	Enabled            bool
+	VPNReady           bool
+	ActiveVPNInterface string
+	ReadyReason        string
+}
+
+// currentEndpointBypassStatus returns the last readiness state committed to the
+// TC backend. Sampling or control-map failures do not publish an uncommitted
+// transition.
+func (i *Inbound) currentEndpointBypassStatus() endpointBypassStatus {
+	status := i.endpointStatus.Load()
+	if status == nil {
+		return endpointBypassStatus{Enabled: i.endpointConnectedBypass.Enabled}
+	}
+	return *status
+}
+
+func (i *Inbound) storeEndpointBypassStatus(status endpointBypassStatus) {
+	i.endpointStatus.Store(&status)
+}
+
+func (i *Inbound) resetEndpointBypassStatus() {
+	i.storeEndpointBypassStatus(endpointBypassStatus{Enabled: i.endpointConnectedBypass.Enabled})
+}
+
 func (i *Inbound) syncVPNReadiness() {
 	interfaceNames := findActiveVPNInterfaceNames()
 	if i.vpnInterfacePackets == nil {
@@ -36,10 +69,19 @@ func (i *Inbound) syncVPNReadiness() {
 			delete(i.vpnInterfacePackets, interfaceName)
 		}
 	}
-	_, ready := vpnInterfaceReady(interfaceNames, i.vpnInterfacePackets)
+	readyInterface, readyReason, ready := vpnInterfaceReady(interfaceNames, i.vpnInterfacePackets)
 	previous := i.vpnReady.Load()
 	next := reconcileVPNReady(previous, len(interfaceNames), ready)
+	status := reconcileEndpointBypassStatus(
+		i.currentEndpointBypassStatus(),
+		i.endpointConnectedBypass.Enabled,
+		interfaceNames,
+		readyInterface,
+		readyReason,
+		next,
+	)
 	if previous == next {
+		i.storeEndpointBypassStatus(status)
 		return
 	}
 	backend := i.tcBackend()
@@ -60,11 +102,49 @@ func (i *Inbound) syncVPNReadiness() {
 			return
 		}
 	}
+	i.storeEndpointBypassStatus(status)
 	if next {
 		i.logger.Info("eBPF endpoint-connected bypass ready: VPN interface has traffic or an IPsec default route")
 	} else {
 		i.logger.Info("eBPF endpoint-connected bypass disconnected: no active VPN interface")
 	}
+}
+
+func reconcileEndpointBypassStatus(
+	previous endpointBypassStatus,
+	enabled bool,
+	activeInterfaces []string,
+	sampledInterface string,
+	sampledReason string,
+	vpnReady bool,
+) endpointBypassStatus {
+	status := endpointBypassStatus{
+		Enabled:  enabled,
+		VPNReady: vpnReady,
+	}
+	if !enabled {
+		return status
+	}
+	if len(activeInterfaces) == 0 {
+		status.ReadyReason = endpointReadyReasonNoActiveInterface
+		return status
+	}
+	if sampledInterface != "" {
+		status.ActiveVPNInterface = sampledInterface
+		if vpnReady {
+			status.ReadyReason = sampledReason
+		}
+		return status
+	}
+	if slices.Contains(activeInterfaces, previous.ActiveVPNInterface) {
+		status.ActiveVPNInterface = previous.ActiveVPNInterface
+		if vpnReady && previous.VPNReady {
+			status.ReadyReason = previous.ReadyReason
+		}
+		return status
+	}
+	status.ActiveVPNInterface = activeInterfaces[0]
+	return status
 }
 
 func reconcileVPNReady(previous bool, activeInterfaceCount int, sampledReady bool) bool {
@@ -162,15 +242,25 @@ func getInterfacePacketCount(interfaceName string) (rx uint64, tx uint64, err er
 }
 
 func packetCountIncreased(previous interfacePacketCount, current interfacePacketCount) bool {
-	return current.rx > previous.rx || current.tx > previous.tx
+	return packetCountReadyReason(previous, current) != ""
 }
 
-func vpnInterfaceReady(interfaceNames []string, baseline map[string]interfacePacketCount) (string, bool) {
+func packetCountReadyReason(previous interfacePacketCount, current interfacePacketCount) string {
+	if current.rx > previous.rx {
+		return endpointReadyReasonRXActivity
+	}
+	if current.tx > previous.tx {
+		return endpointReadyReasonTXActivity
+	}
+	return ""
+}
+
+func vpnInterfaceReady(interfaceNames []string, baseline map[string]interfacePacketCount) (string, string, bool) {
 	var tunInterfaces []string
 	for _, interfaceName := range interfaceNames {
 		if strings.HasPrefix(strings.ToLower(interfaceName), "ipsec") {
 			if interfaceHasDefaultRoute(interfaceName) {
-				return interfaceName, true
+				return interfaceName, endpointReadyReasonIPsecDefaultRoute, true
 			}
 		} else {
 			tunInterfaces = append(tunInterfaces, interfaceName)
@@ -184,11 +274,11 @@ func vpnInterfaceReady(interfaceNames []string, baseline map[string]interfacePac
 		current := interfacePacketCount{rx: rx, tx: tx}
 		previous, loaded := baseline[interfaceName]
 		baseline[interfaceName] = current
-		if loaded && packetCountIncreased(previous, current) {
-			return interfaceName, true
+		if reason := packetCountReadyReason(previous, current); loaded && reason != "" {
+			return interfaceName, reason, true
 		}
 	}
-	return "", false
+	return "", "", false
 }
 
 func interfaceHasDefaultRoute(interfaceName string) bool {

@@ -7,9 +7,34 @@ import (
 	"testing"
 
 	"github.com/sagernet/netlink"
+	"github.com/sagernet/sing-box/option"
 
 	"golang.org/x/sys/unix"
 )
+
+func TestEndpointBypassStatusSnapshot(t *testing.T) {
+	inbound := Inbound{
+		endpointConnectedBypass: option.EBPFEndpointConnectedBypassOptions{Enabled: true},
+	}
+	configured := endpointBypassStatus{Enabled: true}
+	if got := inbound.currentEndpointBypassStatus(); got != configured {
+		t.Fatalf("unexpected initial status: got %+v, want %+v", got, configured)
+	}
+	ready := endpointBypassStatus{
+		Enabled:            true,
+		VPNReady:           true,
+		ActiveVPNInterface: "ipsec0",
+		ReadyReason:        endpointReadyReasonIPsecDefaultRoute,
+	}
+	inbound.storeEndpointBypassStatus(ready)
+	if got := inbound.currentEndpointBypassStatus(); got != ready {
+		t.Fatalf("unexpected stored status: got %+v, want %+v", got, ready)
+	}
+	inbound.resetEndpointBypassStatus()
+	if got := inbound.currentEndpointBypassStatus(); got != configured {
+		t.Fatalf("unexpected reset status: got %+v, want %+v", got, configured)
+	}
+}
 
 func TestReconcileVPNReady(t *testing.T) {
 	for _, test := range []struct {
@@ -58,6 +83,115 @@ func TestVPNPacketCountIncrease(t *testing.T) {
 	if !packetCountIncreased(baseline, interfacePacketCount{rx: 11, tx: 20}) ||
 		!packetCountIncreased(baseline, interfacePacketCount{rx: 10, tx: 21}) {
 		t.Fatal("RX/TX increase did not report activity")
+	}
+	if reason := packetCountReadyReason(baseline, interfacePacketCount{rx: 11, tx: 20}); reason != endpointReadyReasonRXActivity {
+		t.Fatalf("unexpected RX readiness reason: %q", reason)
+	}
+	if reason := packetCountReadyReason(baseline, interfacePacketCount{rx: 10, tx: 21}); reason != endpointReadyReasonTXActivity {
+		t.Fatalf("unexpected TX readiness reason: %q", reason)
+	}
+	if reason := packetCountReadyReason(baseline, baseline); reason != "" {
+		t.Fatalf("unchanged counters returned readiness reason: %q", reason)
+	}
+}
+
+func TestReconcileEndpointBypassStatus(t *testing.T) {
+	readyStatus := endpointBypassStatus{
+		Enabled:            true,
+		VPNReady:           true,
+		ActiveVPNInterface: "tun0",
+		ReadyReason:        endpointReadyReasonRXActivity,
+	}
+	for _, test := range []struct {
+		name             string
+		previous         endpointBypassStatus
+		enabled          bool
+		activeInterfaces []string
+		sampledInterface string
+		sampledReason    string
+		vpnReady         bool
+		want             endpointBypassStatus
+	}{
+		{
+			name:             "disabled",
+			enabled:          false,
+			activeInterfaces: []string{"tun0"},
+			want:             endpointBypassStatus{},
+		},
+		{
+			name:    "no active interface",
+			enabled: true,
+			want: endpointBypassStatus{
+				Enabled:     true,
+				ReadyReason: endpointReadyReasonNoActiveInterface,
+			},
+		},
+		{
+			name:             "baseline candidate",
+			enabled:          true,
+			activeInterfaces: []string{"tun0"},
+			want: endpointBypassStatus{
+				Enabled:            true,
+				ActiveVPNInterface: "tun0",
+			},
+		},
+		{
+			name:             "RX establishes readiness",
+			enabled:          true,
+			activeInterfaces: []string{"tun0"},
+			sampledInterface: "tun0",
+			sampledReason:    endpointReadyReasonRXActivity,
+			vpnReady:         true,
+			want:             readyStatus,
+		},
+		{
+			name:             "unchanged active interface retains reason",
+			previous:         readyStatus,
+			enabled:          true,
+			activeInterfaces: []string{"tun0"},
+			vpnReady:         true,
+			want:             readyStatus,
+		},
+		{
+			name:             "replacement candidate has no invented reason",
+			previous:         readyStatus,
+			enabled:          true,
+			activeInterfaces: []string{"tun1"},
+			vpnReady:         true,
+			want: endpointBypassStatus{
+				Enabled:            true,
+				VPNReady:           true,
+				ActiveVPNInterface: "tun1",
+			},
+		},
+		{
+			name:             "IPsec route establishes readiness",
+			enabled:          true,
+			activeInterfaces: []string{"ipsec0"},
+			sampledInterface: "ipsec0",
+			sampledReason:    endpointReadyReasonIPsecDefaultRoute,
+			vpnReady:         true,
+			want: endpointBypassStatus{
+				Enabled:            true,
+				VPNReady:           true,
+				ActiveVPNInterface: "ipsec0",
+				ReadyReason:        endpointReadyReasonIPsecDefaultRoute,
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got := reconcileEndpointBypassStatus(
+				test.previous,
+				test.enabled,
+				test.activeInterfaces,
+				test.sampledInterface,
+				test.sampledReason,
+				test.vpnReady,
+			)
+			if got != test.want {
+				t.Fatalf("unexpected status: got %+v, want %+v", got, test.want)
+			}
+		})
 	}
 }
 
