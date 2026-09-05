@@ -12,8 +12,10 @@ import (
 
 	commonEBPF "github.com/sagernet/sing-box/common/ebpf"
 	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/json/badoption"
+	N "github.com/sagernet/sing/common/network"
 )
 
 func normalizeEnablement(localOption, sharedOption *bool) (bool, bool, error) {
@@ -71,10 +73,20 @@ const (
 func normalizeLocalDataPlane(options option.EBPFLocalOptions) (string, string, error) {
 	dataPlane := options.DataPlane
 	if dataPlane == "" {
-		dataPlane = localDataPlaneCgroup
+		if options.EndpointConnectedBypass.Enabled {
+			dataPlane = localDataPlaneTC
+		} else {
+			dataPlane = localDataPlaneCgroup
+		}
 	}
 	if dataPlane != localDataPlaneTC && dataPlane != localDataPlaneCgroup {
 		return "", "", E.New("unknown local.data_plane: ", dataPlane)
+	}
+	if options.EndpointConnectedBypass.Enabled && dataPlane != localDataPlaneTC {
+		return "", "", E.New("local.endpoint_connected_bypass requires local.data_plane=tc")
+	}
+	if options.EndpointConnectedBypass.Enabled && options.CgroupPath != "" {
+		return "", "", E.New("local.endpoint_connected_bypass is incompatible with local.cgroup_path")
 	}
 	if dataPlane != localDataPlaneCgroup && options.CgroupPath != "" {
 		return "", "", E.New("local.cgroup_path requires local.data_plane=cgroup")
@@ -110,10 +122,63 @@ func validateLocalOptions(enabled bool, options option.EBPFLocalOptions) error {
 	if len(options.IncludeUID) > 0 || len(options.IncludeUIDRange) > 0 ||
 		len(options.ExcludeUID) > 0 || len(options.ExcludeUIDRange) > 0 ||
 		len(options.IncludeAndroidUser) > 0 || len(options.IncludePackage) > 0 ||
-		len(options.ExcludePackage) > 0 || len(options.BypassPort) > 0 || len(options.BypassPortRange) > 0 {
+		len(options.ExcludePackage) > 0 || len(options.BypassPort) > 0 || len(options.BypassPortRange) > 0 ||
+		options.EndpointConnectedBypass.Enabled || len(options.EndpointConnectedBypass.IPCIDR) > 0 ||
+		len(options.EndpointConnectedBypass.Port) > 0 || options.EndpointConnectedBypass.Network != "" {
 		return E.New("local options require local interception")
 	}
 	return nil
+}
+
+func normalizeEndpointConnectedBypass(options option.EBPFEndpointConnectedBypassOptions) (
+	option.EBPFEndpointConnectedBypassOptions,
+	[]commonEBPF.PortRange,
+	bool,
+	bool,
+	error,
+) {
+	if !options.Enabled {
+		return option.EBPFEndpointConnectedBypassOptions{}, nil, false, false, nil
+	}
+	network := options.Network.Build()
+	for _, networkName := range network {
+		if networkName != N.NetworkTCP && networkName != N.NetworkUDP {
+			return options, nil, false, false, E.New("unknown local.endpoint_connected_bypass.network: ", networkName)
+		}
+	}
+	enableTCP := common.Contains(network, N.NetworkTCP)
+	enableUDP := common.Contains(network, N.NetworkUDP)
+	if !enableTCP && !enableUDP {
+		return options, nil, false, false, E.New("local.endpoint_connected_bypass.network must not be empty")
+	}
+	if len(options.IPCIDR) == 0 {
+		return options, nil, false, false, E.New("local.endpoint_connected_bypass.ip_cidr must not be empty")
+	}
+	if len(options.Port) == 0 {
+		return options, nil, false, false, E.New("local.endpoint_connected_bypass.port must not be empty")
+	}
+	prefixes := make(badoption.Listable[netip.Prefix], 0, len(options.IPCIDR))
+	seen := make(map[netip.Prefix]struct{}, len(options.IPCIDR))
+	for _, prefix := range options.IPCIDR {
+		if !prefix.IsValid() {
+			return options, nil, false, false, E.New("invalid local.endpoint_connected_bypass.ip_cidr")
+		}
+		prefix = prefix.Masked()
+		if prefix.Addr().Is4In6() && prefix.Bits() >= 96 {
+			prefix = netip.PrefixFrom(prefix.Addr().Unmap(), prefix.Bits()-96).Masked()
+		}
+		if _, loaded := seen[prefix]; loaded {
+			continue
+		}
+		seen[prefix] = struct{}{}
+		prefixes = append(prefixes, prefix)
+	}
+	options.IPCIDR = prefixes
+	ports, err := parsePortRanges("local.endpoint_connected_bypass.port", options.Port, nil)
+	if err != nil {
+		return options, nil, false, false, err
+	}
+	return options, ports, enableTCP, enableUDP, nil
 }
 
 func validateAndroidUIDOptions(goos string, options option.EBPFLocalOptions) error {
