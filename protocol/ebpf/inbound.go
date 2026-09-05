@@ -101,7 +101,7 @@ type Inbound struct {
 	lifecycleAccess          sync.Mutex
 	interfaceMonitor         tcInterfaceMonitor
 	vpnReady                 atomic.Bool
-	vpnInterfacePackets      map[string]interfacePacketCount
+	vpnInterfacePackets      map[vpnInterfaceIdentity]interfacePacketCount
 	endpointStatus           atomic.Pointer[endpointBypassStatus]
 
 	bypassRuleSetAccess    sync.Mutex

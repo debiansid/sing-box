@@ -5,6 +5,7 @@ package ebpf
 import (
 	"errors"
 	"net"
+	"slices"
 	"testing"
 
 	"github.com/sagernet/netlink"
@@ -128,7 +129,7 @@ func TestReconcileVPNReady(t *testing.T) {
 }
 
 func TestVPNInterfacePatterns(t *testing.T) {
-	for _, name := range []string{"tun0", "TUN-CF", "ipsec0", "IPSEC1"} {
+	for _, name := range []string{"tun0", "TUN-CF", "ipsec0", "IPSEC1", "ipsec++"} {
 		if !isVPNInterface(name) {
 			t.Fatalf("expected VPN interface match: %s", name)
 		}
@@ -137,6 +138,31 @@ func TestVPNInterfacePatterns(t *testing.T) {
 		if isVPNInterface(name) {
 			t.Fatalf("unexpected VPN interface match: %s", name)
 		}
+	}
+}
+
+func TestVPNInterfaceBaselineIdentity(t *testing.T) {
+	oldInterface := vpnInterfaceIdentity{name: "tun0", index: 10}
+	newInterface := vpnInterfaceIdentity{name: "tun0", index: 11}
+	baseline := map[vpnInterfaceIdentity]interfacePacketCount{
+		oldInterface: {rx: 100, tx: 200},
+	}
+	retainActiveVPNPacketBaselines(baseline, []vpnInterfaceIdentity{newInterface})
+	if _, loaded := baseline[oldInterface]; loaded {
+		t.Fatal("same-name replacement retained the old interface baseline")
+	}
+	if _, loaded := baseline[newInterface]; loaded {
+		t.Fatal("replacement interface inherited a baseline before its first sample")
+	}
+}
+
+func TestVPNInterfaceNamesPreserveIdentityOrder(t *testing.T) {
+	interfaces := []vpnInterfaceIdentity{
+		{name: "ipsec++", index: 7},
+		{name: "tun0", index: 9},
+	}
+	if names := vpnInterfaceNames(interfaces); !slices.Equal(names, []string{"ipsec++", "tun0"}) {
+		t.Fatalf("unexpected VPN interface names: %v", names)
 	}
 }
 
