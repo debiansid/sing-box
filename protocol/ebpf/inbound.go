@@ -89,6 +89,8 @@ type Inbound struct {
 	sharedBypassPrivate      bool
 	localBypassPort          []commonEBPF.PortRange
 	endpointConnectedBypass  option.EBPFEndpointConnectedBypassOptions
+	endpointEnableTCP        bool
+	endpointEnableUDP        bool
 	endpointConnectedPorts   []commonEBPF.PortRange
 	sharedBypassPort         []commonEBPF.PortRange
 	tcPriority               uint16
@@ -180,7 +182,7 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 	if err != nil {
 		return nil, err
 	}
-	endpointConnectedBypass, endpointConnectedPorts, err := normalizeEndpointConnectedBypass(options.Local.EndpointConnectedBypass)
+	endpointConnectedBypass, endpointConnectedPorts, endpointEnableTCP, endpointEnableUDP, err := normalizeEndpointConnectedBypass(options.Local.EndpointConnectedBypass)
 	if err != nil {
 		return nil, err
 	}
@@ -243,6 +245,8 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 		sharedBypassPrivate:     options.Shared.BypassPrivateAddress == nil || *options.Shared.BypassPrivateAddress,
 		localBypassPort:         localBypassPort,
 		endpointConnectedBypass: endpointConnectedBypass,
+		endpointEnableTCP:       endpointEnableTCP,
+		endpointEnableUDP:       endpointEnableUDP,
 		endpointConnectedPorts:  endpointConnectedPorts,
 		sharedBypassPort:        sharedBypassPort,
 		tcPriority:              uint16(options.TCPriority),

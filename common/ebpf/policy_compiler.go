@@ -24,6 +24,8 @@ type PolicyConfig struct {
 	LocalBypassPort     []PortRange
 	SharedBypassPort    []PortRange
 	EndpointEnabled     bool
+	EndpointEnableTCP   bool
+	EndpointEnableUDP   bool
 	EndpointCIDR        []netip.Prefix
 	EndpointPort        []PortRange
 }
@@ -99,7 +101,18 @@ func CompilePolicy(config PolicyConfig) (CompiledPolicy, error) {
 		if len(endpointIPv4) > maxBypassCIDRPolicyEntries || len(endpointIPv6) > maxBypassCIDRPolicyEntries {
 			return CompiledPolicy{}, E.New("TC eBPF endpoint CIDR policy exceeds map capacity")
 		}
-		endpointPortEntries, err = compilePortPolicy(config.EndpointPort, config.EnableTCP, config.EnableUDP)
+		endpointEnableTCP := config.EndpointEnableTCP
+		endpointEnableUDP := config.EndpointEnableUDP
+		if !endpointEnableTCP && !endpointEnableUDP {
+			endpointEnableTCP = true
+			endpointEnableUDP = true
+		}
+		endpointEnableTCP = endpointEnableTCP && config.EnableTCP
+		endpointEnableUDP = endpointEnableUDP && config.EnableUDP
+		if !endpointEnableTCP && !endpointEnableUDP {
+			return CompiledPolicy{}, E.New("TC eBPF endpoint network does not overlap enabled inbound network")
+		}
+		endpointPortEntries, err = compilePortPolicy(config.EndpointPort, endpointEnableTCP, endpointEnableUDP)
 		if err != nil {
 			return CompiledPolicy{}, E.Cause(err, "compile TC eBPF endpoint port policy")
 		}

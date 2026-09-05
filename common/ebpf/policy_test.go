@@ -182,6 +182,61 @@ func TestCompileEndpointPolicyRequiresCIDRAndPort(t *testing.T) {
 	}
 }
 
+func TestCompileEndpointNetworkPolicy(t *testing.T) {
+	endpointCIDR := []netip.Prefix{netip.MustParsePrefix("203.0.113.0/24")}
+	endpointPort := []PortRange{{Start: 4500, End: 4500}}
+	for _, test := range []struct {
+		name      string
+		config    PolicyConfig
+		protocols []uint8
+	}{
+		{
+			name: "default TCP and UDP",
+			config: PolicyConfig{
+				EnableTCP: true, EnableUDP: true, EndpointEnabled: true,
+				EndpointCIDR: endpointCIDR, EndpointPort: endpointPort,
+			},
+			protocols: []uint8{ProtocolTCP, ProtocolUDP},
+		},
+		{
+			name: "TCP only",
+			config: PolicyConfig{
+				EnableTCP: true, EnableUDP: true, EndpointEnabled: true, EndpointEnableTCP: true,
+				EndpointCIDR: endpointCIDR, EndpointPort: endpointPort,
+			},
+			protocols: []uint8{ProtocolTCP},
+		},
+		{
+			name: "UDP only",
+			config: PolicyConfig{
+				EnableTCP: true, EnableUDP: true, EndpointEnabled: true, EndpointEnableUDP: true,
+				EndpointCIDR: endpointCIDR, EndpointPort: endpointPort,
+			},
+			protocols: []uint8{ProtocolUDP},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			policy, err := CompilePolicy(test.config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			protocols := make([]uint8, 0, len(policy.endpointPortEntries))
+			for _, entry := range policy.endpointPortEntries {
+				protocols = append(protocols, entry.Protocol)
+			}
+			if !slices.Equal(protocols, test.protocols) {
+				t.Fatalf("unexpected endpoint protocols: got %v, want %v", protocols, test.protocols)
+			}
+		})
+	}
+	if _, err := CompilePolicy(PolicyConfig{
+		EnableUDP: true, EndpointEnabled: true, EndpointEnableTCP: true,
+		EndpointCIDR: endpointCIDR, EndpointPort: endpointPort,
+	}); err == nil {
+		t.Fatal("endpoint network without an enabled inbound protocol was accepted")
+	}
+}
+
 func TestBypassCIDRPolicyDelta(t *testing.T) {
 	current := []netip.Prefix{
 		netip.MustParsePrefix("10.0.0.0/8"),

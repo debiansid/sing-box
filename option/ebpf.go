@@ -37,6 +37,7 @@ type EBPFLocalOptions struct {
 
 type EBPFEndpointConnectedBypassOptions struct {
 	Enabled bool                             `json:"enabled,omitempty"`
+	Network NetworkList                      `json:"network,omitempty"`
 	IPCIDR  badoption.Listable[netip.Prefix] `json:"ip_cidr,omitempty"`
 	Port    badoption.Listable[uint16]       `json:"port,omitempty"`
 }

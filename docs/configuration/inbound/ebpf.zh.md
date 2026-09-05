@@ -41,6 +41,7 @@ eBPF 入站不使用[监听字段](/zh/configuration/shared/listen/)。
     "bypass_port_range": [],
     "endpoint_connected_bypass": {
       "enabled": false,
+      "network": ["tcp", "udp"],
       "ip_cidr": [],
       "port": []
     }
@@ -169,7 +170,7 @@ UID 策略再处理 DNS，`off` 已经绕过 DNS。配置 53 端口时 sing-box 
 
 #### local.endpoint_connected_bypass
 
-第一版仅支持一个 `endpoint_connected_bypass` 配置组。
+仅支持一个 `endpoint_connected_bypass` 配置组。
 
 该策略只由 local TC 数据面实现。启用后，如果省略 `local.data_plane`，会自动选择
 `tc`；不能与显式 local `cgroup` 数据面或 `local.cgroup_path` 同时使用。
@@ -181,6 +182,7 @@ UID 策略再处理 DNS，`off` 已经绕过 DNS。配置 53 端口时 sing-box 
   "local": {
     "endpoint_connected_bypass": {
       "enabled": true,
+      "network": ["tcp", "udp"],
       "ip_cidr": [
         "162.120.128.0/17",
         "162.159.193.0/24",
@@ -196,8 +198,9 @@ UID 策略再处理 DNS，`off` 已经绕过 DNS。配置 53 端口时 sing-box 
 }
 ```
 
-启用后必须同时配置非空的 `ip_cidr` 和 `port`。只有目标 IP 匹配 `ip_cidr` 且目标
-端口匹配 `port` 的本机流量才会匹配 endpoint。配置缺失或 `enabled` 为 `false` 时，
+启用后必须同时配置非空的 `ip_cidr` 和 `port`。`network` 可选择 `tcp` 和/或 `udp`，
+省略时默认使用该入站已启用的两种协议。只有网络协议、目标 IP `ip_cidr` 与目标端口
+`port` 同时匹配的本机流量才会匹配 endpoint。配置缺失或 `enabled` 为 `false` 时，
 保持原有的 local 策略；endpoint 未匹配时也保持原有的 local 策略。此功能只作用于
 local 路径，shared 路径完全不受影响。
 

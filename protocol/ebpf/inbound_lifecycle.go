@@ -59,6 +59,8 @@ func (i *Inbound) startInbound() error {
 		LocalBypassPort:     i.localBypassPort,
 		SharedBypassPort:    i.sharedBypassPort,
 		EndpointEnabled:     i.endpointConnectedBypass.Enabled,
+		EndpointEnableTCP:   i.endpointEnableTCP,
+		EndpointEnableUDP:   i.endpointEnableUDP,
 		EndpointCIDR:        i.endpointConnectedBypass.IPCIDR,
 		EndpointPort:        i.endpointConnectedPorts,
 	})

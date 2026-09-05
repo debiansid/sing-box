@@ -113,14 +113,16 @@ policy. DNS `off` bypasses and DNS `hijack` intercepts before UID or shared sour
 policy. DNS `respect_policy` applies UID/source policy first, then intercepts
 before host, private-address, and destination-CIDR bypass. For local traffic,
 `endpoint_connected_bypass` is evaluated after these FakeIP/DNS rules and before
-ordinary UID, port, host, private-address, and destination-CIDR bypass. Its first
-version has one configuration group: an unmatched flow keeps the original local
-policy, a matched flow is forced into interception while VPN is NOT READY, and
-the same match native-bypasses TC once VPN is READY. Force interception only
-keeps the flow in eBPF-in; normal Router and route-rule/default-outbound
-selection, including `clash_mode`, remains responsible for routing. If the
-configuration is absent or disabled, local selection is unchanged. Other
-traffic applies the original path-specific policy.
+ordinary UID, port, host, private-address, and destination-CIDR bypass. It has
+one configuration group and matches the selected network, destination CIDR,
+and destination port together. An unmatched flow keeps the original local
+policy, while a matched flow is forced into interception while VPN is NOT
+READY, and the same match native-bypasses TC once VPN is READY. Force
+interception only keeps the flow in eBPF-in; normal Router and
+route-rule/default-outbound selection, including `clash_mode`, remains
+responsible for routing. If the configuration is absent or disabled, local
+selection is unchanged. Other traffic applies the original path-specific
+policy.
 
 Local egress checks the socket-cookie self-bypass map. Shared source CIDR and
 MAC include/exclude policies are evaluated only on the shared path.

@@ -42,6 +42,7 @@ The eBPF inbound does not use [Listen Fields](/configuration/shared/listen/).
     "bypass_port_range": [],
     "endpoint_connected_bypass": {
       "enabled": false,
+      "network": ["tcp", "udp"],
       "ip_cidr": [],
       "port": []
     }
@@ -183,18 +184,19 @@ inclusive.
 
 #### local.endpoint_connected_bypass
 
-The first version supports one local VPN endpoint policy configuration group.
+One local VPN endpoint policy configuration group is supported.
 
 This policy is implemented only by the local TC data plane. Enabling it selects
 `tc` when `local.data_plane` is omitted; it cannot be combined with an explicit
 local `cgroup` data plane or `local.cgroup_path`.
 
-When enabled, `ip_cidr` and `port` are required. A local flow must match both a
-destination CIDR and destination port. While no matching VPN interface is ready,
-matching traffic is forced through this inbound, even if ordinary UID/package,
-bypass-port, host, private, or destination-CIDR policy would bypass it. Routing
-then follows the normal sing-box Router, `route.rules`, `clash_mode`, and
-default outbound.
+When enabled, `ip_cidr` and `port` are required. `network` accepts `tcp` and/or
+`udp` and defaults to both protocols enabled by the inbound. A local flow must
+match the selected network, a destination CIDR, and a destination port. While
+no matching VPN interface is ready, matching traffic is forced through this
+inbound, even if ordinary UID/package, bypass-port, host, private, or
+destination-CIDR policy would bypass it. Routing then follows the normal
+sing-box Router, `route.rules`, `clash_mode`, and default outbound.
 
 An ordinary `tun*` interface becomes ready after it is up and has a
 global-unicast address. Its first packet-counter sample only establishes the

@@ -90,6 +90,7 @@ func TestValidateScopedOptions(t *testing.T) {
 		{BypassPort: []uint16{443}},
 		{BypassPortRange: []string{"8000:8080"}},
 		{EndpointConnectedBypass: option.EBPFEndpointConnectedBypassOptions{Enabled: true}},
+		{EndpointConnectedBypass: option.EBPFEndpointConnectedBypassOptions{Network: option.NetworkList("udp")}},
 	} {
 		if err := validateLocalOptions(false, options); err == nil {
 			t.Fatalf("expected local-only options to be rejected: %+v", options)
@@ -160,13 +161,13 @@ func TestNormalizeEndpointConnectedBypass(t *testing.T) {
 			Port:    []uint16{500},
 		},
 	} {
-		options, ports, err := normalizeEndpointConnectedBypass(disabled)
-		if err != nil || options.Enabled || len(options.IPCIDR) != 0 || len(ports) != 0 {
+		options, ports, enableTCP, enableUDP, err := normalizeEndpointConnectedBypass(disabled)
+		if err != nil || options.Enabled || len(options.IPCIDR) != 0 || len(ports) != 0 || enableTCP || enableUDP {
 			t.Fatalf("disabled endpoint policy was not accepted and cleared: options=%+v ports=%v err=%v", options, ports, err)
 		}
 	}
 
-	options, ports, err := normalizeEndpointConnectedBypass(option.EBPFEndpointConnectedBypassOptions{
+	options, ports, enableTCP, enableUDP, err := normalizeEndpointConnectedBypass(option.EBPFEndpointConnectedBypassOptions{
 		Enabled: true,
 		IPCIDR: []netip.Prefix{
 			netip.MustParsePrefix("162.120.128.9/17"),
@@ -177,6 +178,9 @@ func TestNormalizeEndpointConnectedBypass(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !enableTCP || !enableUDP {
+		t.Fatalf("omitted endpoint network did not enable TCP and UDP: tcp=%v udp=%v", enableTCP, enableUDP)
+	}
 	wantPrefixes := []netip.Prefix{netip.MustParsePrefix("162.120.128.0/17"), netip.MustParsePrefix("192.0.2.0/24")}
 	if !slices.Equal([]netip.Prefix(options.IPCIDR), wantPrefixes) {
 		t.Fatalf("unexpected endpoint prefixes: %v", options.IPCIDR)
@@ -185,12 +189,25 @@ func TestNormalizeEndpointConnectedBypass(t *testing.T) {
 	if !slices.Equal(ports, wantPorts) {
 		t.Fatalf("unexpected endpoint ports: %v", ports)
 	}
+	_, _, enableTCP, enableUDP, err = normalizeEndpointConnectedBypass(option.EBPFEndpointConnectedBypassOptions{
+		Enabled: true,
+		Network: option.NetworkList("udp"),
+		IPCIDR:  []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")},
+		Port:    []uint16{500},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if enableTCP || !enableUDP {
+		t.Fatalf("unexpected UDP-only endpoint network: tcp=%v udp=%v", enableTCP, enableUDP)
+	}
 	for _, invalid := range []option.EBPFEndpointConnectedBypassOptions{
 		{Enabled: true, Port: []uint16{500}},
 		{Enabled: true, IPCIDR: []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}},
 		{Enabled: true, IPCIDR: []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}, Port: []uint16{0}},
+		{Enabled: true, Network: option.NetworkList("icmp"), IPCIDR: []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}, Port: []uint16{500}},
 	} {
-		if _, _, err = normalizeEndpointConnectedBypass(invalid); err == nil {
+		if _, _, _, _, err = normalizeEndpointConnectedBypass(invalid); err == nil {
 			t.Fatalf("expected invalid endpoint policy to fail: %+v", invalid)
 		}
 	}
