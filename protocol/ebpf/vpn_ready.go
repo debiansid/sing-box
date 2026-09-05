@@ -22,6 +22,11 @@ type interfacePacketCount struct {
 	tx uint64
 }
 
+type vpnInterfaceIdentity struct {
+	name  string
+	index int
+}
+
 const (
 	endpointReadyReasonIPsecDefaultRoute = "ipsec_default_route"
 	endpointReadyReasonRXActivity        = "rx_activity"
@@ -73,22 +78,14 @@ func (i *Inbound) resetVPNReadinessState() {
 }
 
 func (i *Inbound) sampleVPNReadiness() vpnReadinessSample {
-	interfaceNames := findActiveVPNInterfaceNames()
+	interfaces := findActiveVPNInterfaces()
 	if i.vpnInterfacePackets == nil {
-		i.vpnInterfacePackets = make(map[string]interfacePacketCount, len(interfaceNames))
+		i.vpnInterfacePackets = make(map[vpnInterfaceIdentity]interfacePacketCount, len(interfaces))
 	}
-	activeInterfaces := make(map[string]struct{}, len(interfaceNames))
-	for _, interfaceName := range interfaceNames {
-		activeInterfaces[interfaceName] = struct{}{}
-	}
-	for interfaceName := range i.vpnInterfacePackets {
-		if _, loaded := activeInterfaces[interfaceName]; !loaded {
-			delete(i.vpnInterfacePackets, interfaceName)
-		}
-	}
-	readyInterface, readyReason, ready := vpnInterfaceReady(interfaceNames, i.vpnInterfacePackets)
+	retainActiveVPNPacketBaselines(i.vpnInterfacePackets, interfaces)
+	readyInterface, readyReason, ready := vpnInterfaceReady(interfaces, i.vpnInterfacePackets)
 	return vpnReadinessSample{
-		activeInterfaces: interfaceNames,
+		activeInterfaces: vpnInterfaceNames(interfaces),
 		readyInterface:   readyInterface,
 		readyReason:      readyReason,
 		ready:            ready,
@@ -187,9 +184,9 @@ func reconcileVPNReady(previous bool, activeInterfaceCount int, sampledReady boo
 	return previous
 }
 
-func findActiveVPNInterfaceNames() []string {
-	seen := make(map[string]struct{})
-	var activeInterfaces []string
+func findActiveVPNInterfaces() []vpnInterfaceIdentity {
+	seen := make(map[int]struct{})
+	var activeInterfaces []vpnInterfaceIdentity
 	links, err := netlink.LinkList()
 	if err == nil && len(links) > 0 {
 		for _, link := range links {
@@ -203,8 +200,8 @@ func findActiveVPNInterfaceNames() []string {
 			}
 			for _, addr := range addrs {
 				if addr.IP != nil && isGlobalUnicastIP(addr.IP) {
-					seen[attrs.Name] = struct{}{}
-					activeInterfaces = append(activeInterfaces, attrs.Name)
+					seen[attrs.Index] = struct{}{}
+					activeInterfaces = append(activeInterfaces, vpnInterfaceIdentity{name: attrs.Name, index: attrs.Index})
 					break
 				}
 			}
@@ -218,7 +215,7 @@ func findActiveVPNInterfaceNames() []string {
 		if networkInterface.Flags&net.FlagUp == 0 || !isVPNInterface(networkInterface.Name) {
 			continue
 		}
-		if _, loaded := seen[networkInterface.Name]; loaded {
+		if _, loaded := seen[networkInterface.Index]; loaded {
 			continue
 		}
 		addresses, addressErr := networkInterface.Addrs()
@@ -234,12 +231,47 @@ func findActiveVPNInterfaceNames() []string {
 				ip = value.IP
 			}
 			if ip != nil && isGlobalUnicastIP(ip) {
-				activeInterfaces = append(activeInterfaces, networkInterface.Name)
+				activeInterfaces = append(activeInterfaces, vpnInterfaceIdentity{
+					name:  networkInterface.Name,
+					index: networkInterface.Index,
+				})
 				break
 			}
 		}
 	}
+	slices.SortFunc(activeInterfaces, func(left, right vpnInterfaceIdentity) int {
+		if left.index < right.index {
+			return -1
+		}
+		if left.index > right.index {
+			return 1
+		}
+		return strings.Compare(left.name, right.name)
+	})
 	return activeInterfaces
+}
+
+func vpnInterfaceNames(interfaces []vpnInterfaceIdentity) []string {
+	names := make([]string, 0, len(interfaces))
+	for _, vpnInterface := range interfaces {
+		names = append(names, vpnInterface.name)
+	}
+	return names
+}
+
+func retainActiveVPNPacketBaselines(
+	baseline map[vpnInterfaceIdentity]interfacePacketCount,
+	interfaces []vpnInterfaceIdentity,
+) {
+	activeInterfaces := make(map[vpnInterfaceIdentity]struct{}, len(interfaces))
+	for _, vpnInterface := range interfaces {
+		activeInterfaces[vpnInterface] = struct{}{}
+	}
+	for vpnInterface := range baseline {
+		if _, loaded := activeInterfaces[vpnInterface]; !loaded {
+			delete(baseline, vpnInterface)
+		}
+	}
 }
 
 func isVPNInterface(interfaceName string) bool {
@@ -285,41 +317,43 @@ func packetCountReadyReason(previous interfacePacketCount, current interfacePack
 	return ""
 }
 
-func vpnInterfaceReady(interfaceNames []string, baseline map[string]interfacePacketCount) (string, string, bool) {
-	var tunInterfaces []string
-	for _, interfaceName := range interfaceNames {
-		if strings.HasPrefix(strings.ToLower(interfaceName), "ipsec") {
-			if interfaceHasDefaultRoute(interfaceName) {
-				return interfaceName, endpointReadyReasonIPsecDefaultRoute, true
+func vpnInterfaceReady(
+	interfaces []vpnInterfaceIdentity,
+	baseline map[vpnInterfaceIdentity]interfacePacketCount,
+) (string, string, bool) {
+	var tunInterfaces []vpnInterfaceIdentity
+	for _, vpnInterface := range interfaces {
+		if strings.HasPrefix(strings.ToLower(vpnInterface.name), "ipsec") {
+			if interfaceHasDefaultRoute(vpnInterface.index) {
+				return vpnInterface.name, endpointReadyReasonIPsecDefaultRoute, true
 			}
 		} else {
-			tunInterfaces = append(tunInterfaces, interfaceName)
+			tunInterfaces = append(tunInterfaces, vpnInterface)
 		}
 	}
-	for _, interfaceName := range tunInterfaces {
-		rx, tx, err := getInterfacePacketCount(interfaceName)
+	for _, vpnInterface := range tunInterfaces {
+		rx, tx, err := getInterfacePacketCount(vpnInterface.name)
 		if err != nil {
 			continue
 		}
 		current := interfacePacketCount{rx: rx, tx: tx}
-		previous, loaded := baseline[interfaceName]
-		baseline[interfaceName] = current
+		previous, loaded := baseline[vpnInterface]
+		baseline[vpnInterface] = current
 		if reason := packetCountReadyReason(previous, current); loaded && reason != "" {
-			return interfaceName, reason, true
+			return vpnInterface.name, reason, true
 		}
 	}
 	return "", "", false
 }
 
-func interfaceHasDefaultRoute(interfaceName string) bool {
-	link, err := netlink.LinkByName(interfaceName)
-	if err != nil || link.Attrs() == nil {
+func interfaceHasDefaultRoute(interfaceIndex int) bool {
+	if interfaceIndex <= 0 {
 		return false
 	}
 	for _, family := range []int{netlink.FAMILY_V4, netlink.FAMILY_V6} {
 		routes, routeErr := netlink.RouteListFiltered(
 			family,
-			&netlink.Route{LinkIndex: link.Attrs().Index, Table: unix.RT_TABLE_UNSPEC},
+			&netlink.Route{LinkIndex: interfaceIndex, Table: unix.RT_TABLE_UNSPEC},
 			netlink.RT_FILTER_OIF|netlink.RT_FILTER_TABLE,
 		)
 		if routeErr == nil && slices.ContainsFunc(routes, isVPNDefaultRoute) {
