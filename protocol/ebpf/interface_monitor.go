@@ -94,6 +94,7 @@ func (i *Inbound) startTCInterfaceMonitor() error {
 	state.access.Unlock()
 	i.vpnReady.Store(false)
 	i.vpnInterfacePackets = nil
+	i.resetEndpointBypassStatus()
 	go i.runTCInterfaceUpdates(monitorContext, updates, done)
 	if networkOwned {
 		if err := networkMonitor.Start(); err != nil {
@@ -155,6 +156,7 @@ func (i *Inbound) stopTCInterfaceMonitor() error {
 	}
 	i.vpnReady.Store(false)
 	i.vpnInterfacePackets = nil
+	i.resetEndpointBypassStatus()
 	return closeErr
 }
 
