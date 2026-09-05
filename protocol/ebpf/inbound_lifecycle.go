@@ -58,6 +58,11 @@ func (i *Inbound) startInbound() error {
 		ExcludeSourceMAC:    i.sharedExcludeMAC,
 		LocalBypassPort:     i.localBypassPort,
 		SharedBypassPort:    i.sharedBypassPort,
+		EndpointEnabled:     i.endpointConnectedBypass.Enabled,
+		EndpointEnableTCP:   i.endpointEnableTCP,
+		EndpointEnableUDP:   i.endpointEnableUDP,
+		EndpointCIDR:        i.endpointConnectedBypass.IPCIDR,
+		EndpointPort:        i.endpointConnectedPorts,
 	})
 	if err != nil {
 		return E.Cause(err, "compile eBPF policy")
@@ -398,6 +403,7 @@ func (i *Inbound) checkKernelCapabilities() error {
 		EnableIPv6:      (localSelected && i.localIPv6) || (sharedSelected && i.sharedIPv6),
 		NeedLPMPolicy: ((localTCEnabled || localCgroupEnabled) && (i.localPolicy.IncludeUIDConfigured || len(i.localPolicy.IncludeUID) > 0 || len(i.localPolicy.ExcludeUID) > 0)) ||
 			((sharedSocketAssignEnabled || sharedRewriteEnabled) && (len(i.sharedOptions.IncludeSourceCIDR) > 0 || len(i.sharedOptions.ExcludeSourceCIDR) > 0)) ||
+			i.endpointConnectedBypass.Enabled ||
 			len(i.bypassRuleSet) > 0,
 		NeedProcessTracking: localSelected && i.router.NeedFindProcess() && !i.usePlatformProcessFinder,
 	})

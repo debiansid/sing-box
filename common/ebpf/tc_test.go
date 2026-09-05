@@ -53,6 +53,33 @@ func TestTCIPv6PathFlags(t *testing.T) {
 	}
 }
 
+func TestTCEndpointFlags(t *testing.T) {
+	policy, err := CompilePolicy(PolicyConfig{
+		EnableTCP:       true,
+		EndpointEnabled: true,
+		EndpointCIDR:    []netip.Prefix{netip.MustParsePrefix("203.0.113.0/24")},
+		EndpointPort:    []PortRange{{Start: 4500, End: 4500}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	flags := tcFlags(TCConfig{}, policy)
+	if flags&tcFlagEndpointEnabled == 0 || flags&tcFlagEndpointReady != 0 {
+		t.Fatalf("unexpected endpoint flags: %#x", flags)
+	}
+	ready := endpointReadyFlags(flags, true)
+	if ready&tcFlagEndpointReady == 0 || ready&tcFlagEndpointEnabled == 0 {
+		t.Fatalf("endpoint READY flag was not applied: %#x", ready)
+	}
+	notReady := endpointReadyFlags(ready, false)
+	if notReady != flags {
+		t.Fatalf("endpoint READY flag was not cleared: %#x != %#x", notReady, flags)
+	}
+	if count := tcLPMPolicyEntryCount(policy); count != 1 {
+		t.Fatalf("endpoint CIDR was omitted from TC LPM safety preflight: %d", count)
+	}
+}
+
 func TestMakeTCAssignKey(t *testing.T) {
 	for _, test := range []struct {
 		source      string
