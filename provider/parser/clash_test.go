@@ -36,7 +36,7 @@ proxies:
 }
 
 func TestParseClashAnyTLSDisableReuse(t *testing.T) {
-	_, _, err := ParseClashSubscription(context.Background(), `
+	outbounds, _, err := ParseClashSubscription(context.Background(), `
 proxies:
   - name: anytls-out
     type: anytls
@@ -45,5 +45,7 @@ proxies:
     password: password
     disable-reuse: true
 `)
-	require.ErrorContains(t, err, "disable-reuse is not supported")
+	require.NoError(t, err)
+	require.Len(t, outbounds, 1)
+	require.True(t, outbounds[0].Options.(*option.AnyTLSOutboundOptions).DisableReuse)
 }

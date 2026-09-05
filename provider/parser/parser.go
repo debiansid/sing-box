@@ -36,8 +36,8 @@ func overrideOutbounds(outbounds []option.Outbound, dialer *option.OverrideDiale
 		if wrapper, ok := outbound.Options.(option.OutboundTLSOptionsWrapper); ok {
 			wrapper.ReplaceOutboundTLSOptions(overrideTLSOption(wrapper.TakeOutboundTLSOptions(), tls))
 		}
-		if options, ok := outbound.Options.(*option.AnyTLSOutboundOptions); ok && anyTLS != nil {
-			applyOverride(&options.ClientMetadata, anyTLS.ClientMetadata)
+		if options, ok := outbound.Options.(*option.AnyTLSOutboundOptions); ok && anyTLS != nil && anyTLS.ClientMetadata != nil {
+			options.ClientMetadata = anyTLS.ClientMetadata
 		}
 	}
 	return outbounds
