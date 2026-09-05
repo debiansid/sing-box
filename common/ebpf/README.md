@@ -154,7 +154,8 @@ LPM update safety exception.
 Endpoint CIDRs use dedicated TC-only IPv4/IPv6 LPM tries and endpoint ports use
 a dedicated TC-only hash map. A dynamic control flag records VPN readiness;
 readiness transitions update only that control state and do not rebuild the backend,
-attachments, or static policy maps.
+attachments, or static policy maps. Repeated samples that preserve the committed
+READY value do not write the control map again.
 
 The object is generated for little-endian and big-endian BPF without BTF or
 CO-RE sections. Source and object hashes are recorded in
@@ -192,7 +193,10 @@ first RX/TX sample only establishes the baseline; a later sample must observe
 RX or TX growth. IPsec becomes ready when it has a non-local-table unicast
 default route. READY is retained while any matching interface remains active
 and is revoked immediately when a sample observes none, so zero active VPN
-interfaces means NOT READY.
+interfaces means NOT READY. TUN counter baselines are keyed by interface name
+and ifindex, so a rapidly recreated interface with the same name starts with a
+new baseline. Periodic and event-driven samples share one transition owner;
+only successful control-map updates advance the committed READY state.
 
 Configured shared interfaces that are absent at startup are attached when they
 appear; deleted or recreated interfaces are detached or replaced. A configured
