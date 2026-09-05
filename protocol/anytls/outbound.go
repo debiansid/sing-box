@@ -14,7 +14,6 @@ import (
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common"
-	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/common/uot"
@@ -38,20 +37,19 @@ type Outbound struct {
 	clientOptions anytls.ClientOptions
 	client        *anytls.Client
 	uotClient     *uot.Client
+	disableReuse  bool
 	logger        log.ContextLogger
 }
 
 func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.AnyTLSOutboundOptions) (adapter.Outbound, error) {
 	outbound := &Outbound{
-		Adapter: outbound.NewAdapterWithDialerOptions(C.TypeAnyTLS, tag, []string{N.NetworkTCP, N.NetworkUDP}, options.DialerOptions),
-		server:  options.ServerOptions.Build(),
-		logger:  logger,
+		Adapter:      outbound.NewAdapterWithDialerOptions(C.TypeAnyTLS, tag, []string{N.NetworkTCP, N.NetworkUDP}, options.DialerOptions),
+		server:       options.ServerOptions.Build(),
+		logger:       logger,
+		disableReuse: options.DisableReuse,
 	}
 	if options.TLS == nil || !options.TLS.Enabled {
 		return nil, C.ErrTLSRequired
-	}
-	if options.DialerOptions.TCPFastOpen {
-		return nil, E.New("tcp_fast_open is not supported with anytls outbound")
 	}
 
 	tlsConfig, err := tls.NewClient(ctx, logger, options.Server, common.PtrValueOrDefault(options.TLS))
@@ -73,12 +71,22 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 
 	outbound.clientOptions = anytls.ClientOptions{
 		Password:                 options.Password,
-		ClientMetadata:           options.ClientMetadata,
+		ClientMetadata:           common.Ptr(clientMetadataOrDefault(options.ClientMetadata)),
+		DisableReuse:             options.DisableReuse,
 		DialOut:                  outbound.dialOut,
 		IdleSessionCheckInterval: options.IdleSessionCheckInterval.Build(),
 		IdleSessionTimeout:       options.IdleSessionTimeout.Build(),
 		MinIdleSession:           options.MinIdleSession,
 		Logger:                   logger,
+	}
+	client, err := anytls.NewClient(outbound.clientOptions)
+	if err != nil {
+		return nil, err
+	}
+	outbound.client = client
+	outbound.uotClient = &uot.Client{
+		Dialer:  anytlsDialer(client.DialContext),
+		Version: uot.Version,
 	}
 	return outbound, nil
 }
@@ -87,20 +95,27 @@ func (h *Outbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	if stage != adapter.StartStateInitialize {
 		return nil
 	}
-	client, err := anytls.NewClient(h.clientOptions)
-	if err != nil {
-		return err
+	if h.client != nil {
+		scope.Add(h.client.Close)
 	}
-	h.client = client
-	scope.Add(client.Close)
-	h.uotClient = &uot.Client{
-		Dialer:  anytlsDialer(client.DialContext),
-		Version: uot.Version,
+	return nil
+}
+
+func (h *Outbound) Close() error {
+	if h.client != nil {
+		return h.client.Close()
 	}
 	return nil
 }
 
 type anytlsDialer func(ctx context.Context, destination M.Socksaddr) (net.Conn, error)
+
+func clientMetadataOrDefault(metadata *string) string {
+	if metadata == nil {
+		return anytls.DefaultClientMetadata + " sing-box/" + C.Version
+	}
+	return *metadata
+}
 
 func (d anytlsDialer) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
 	return d(ctx, destination)
@@ -115,22 +130,31 @@ func (h *Outbound) dialOut(ctx context.Context) (net.Conn, error) {
 }
 
 func (h *Outbound) MultiplexEnabled() bool {
-	return true
+	return !h.disableReuse
 }
 
 func (h *Outbound) InterfaceUpdated(ctx context.Context) {
-	h.client.Reset()
+	if h.client != nil {
+		h.client.Reset()
+	}
 }
 
 func (h *Outbound) SetKeepIdleConnections(keep bool) {
-	h.client.SetKeepIdleConnections(keep)
+	if h.client != nil {
+		h.client.SetKeepIdleConnections(keep)
+	}
 }
 
 func (h *Outbound) CloseIdleConnections() {
-	h.client.CloseIdleConnections()
+	if h.client != nil {
+		h.client.CloseIdleConnections()
+	}
 }
 
 func (h *Outbound) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+	if h.client == nil {
+		return nil, os.ErrClosed
+	}
 	ctx, metadata := adapter.ExtendContext(ctx)
 	metadata.Outbound = h.Tag()
 	metadata.Destination = destination
@@ -146,6 +170,9 @@ func (h *Outbound) DialContext(ctx context.Context, network string, destination 
 }
 
 func (h *Outbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
+	if h.uotClient == nil {
+		return nil, os.ErrClosed
+	}
 	ctx, metadata := adapter.ExtendContext(ctx)
 	metadata.Outbound = h.Tag()
 	metadata.Destination = destination
