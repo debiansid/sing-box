@@ -92,9 +92,7 @@ func (i *Inbound) startTCInterfaceMonitor() error {
 	state.defaultInterfaceCallback = defaultInterfaceMonitor.RegisterCallback(i.defaultInterfaceUpdated)
 	state.defaultInterfaceName = interfaceName(defaultInterfaceMonitor.DefaultInterface())
 	state.access.Unlock()
-	i.vpnReady.Store(false)
-	i.vpnInterfacePackets = nil
-	i.resetEndpointBypassStatus()
+	i.resetVPNReadinessState()
 	go i.runTCInterfaceUpdates(monitorContext, updates, done)
 	if networkOwned {
 		if err := networkMonitor.Start(); err != nil {
@@ -154,9 +152,7 @@ func (i *Inbound) stopTCInterfaceMonitor() error {
 	if done != nil {
 		<-done
 	}
-	i.vpnReady.Store(false)
-	i.vpnInterfacePackets = nil
-	i.resetEndpointBypassStatus()
+	i.resetVPNReadinessState()
 	return closeErr
 }
 

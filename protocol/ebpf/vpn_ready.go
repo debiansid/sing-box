@@ -36,6 +36,13 @@ type endpointBypassStatus struct {
 	ReadyReason        string
 }
 
+type vpnReadinessSample struct {
+	activeInterfaces []string
+	readyInterface   string
+	readyReason      string
+	ready            bool
+}
+
 // currentEndpointBypassStatus returns the last readiness state committed to the
 // TC backend. Sampling or control-map failures do not publish an uncommitted
 // transition.
@@ -55,7 +62,13 @@ func (i *Inbound) resetEndpointBypassStatus() {
 	i.storeEndpointBypassStatus(endpointBypassStatus{Enabled: i.endpointConnectedBypass.Enabled})
 }
 
-func (i *Inbound) syncVPNReadiness() {
+func (i *Inbound) resetVPNReadinessState() {
+	i.vpnReady.Store(false)
+	i.vpnInterfacePackets = nil
+	i.resetEndpointBypassStatus()
+}
+
+func (i *Inbound) sampleVPNReadiness() vpnReadinessSample {
 	interfaceNames := findActiveVPNInterfaceNames()
 	if i.vpnInterfacePackets == nil {
 		i.vpnInterfacePackets = make(map[string]interfacePacketCount, len(interfaceNames))
@@ -70,14 +83,30 @@ func (i *Inbound) syncVPNReadiness() {
 		}
 	}
 	readyInterface, readyReason, ready := vpnInterfaceReady(interfaceNames, i.vpnInterfacePackets)
+	return vpnReadinessSample{
+		activeInterfaces: interfaceNames,
+		readyInterface:   readyInterface,
+		readyReason:      readyReason,
+		ready:            ready,
+	}
+}
+
+func (i *Inbound) syncVPNReadiness() {
+	i.transitionVPNReadiness(i.sampleVPNReadiness())
+}
+
+// transitionVPNReadiness is the sole owner of runtime READY transitions. Both
+// periodic samples and interface events reach this function through the same
+// interface worker before dynamic TC control state is committed.
+func (i *Inbound) transitionVPNReadiness(sample vpnReadinessSample) {
 	previous := i.vpnReady.Load()
-	next := reconcileVPNReady(previous, len(interfaceNames), ready)
+	next := reconcileVPNReady(previous, len(sample.activeInterfaces), sample.ready)
 	status := reconcileEndpointBypassStatus(
 		i.currentEndpointBypassStatus(),
 		i.endpointConnectedBypass.Enabled,
-		interfaceNames,
-		readyInterface,
-		readyReason,
+		sample.activeInterfaces,
+		sample.readyInterface,
+		sample.readyReason,
 		next,
 	)
 	if previous == next {
@@ -88,20 +117,11 @@ func (i *Inbound) syncVPNReadiness() {
 	if backend == nil {
 		return
 	}
-	if next {
-		if err := backend.SetEndpointVPNReady(true); err != nil {
-			i.logger.Error("update eBPF endpoint VPN readiness: ", err)
-			return
-		}
-		i.vpnReady.Store(true)
-	} else {
-		i.vpnReady.Store(false)
-		if err := backend.SetEndpointVPNReady(false); err != nil {
-			i.vpnReady.Store(true)
-			i.logger.Error("update eBPF endpoint VPN readiness: ", err)
-			return
-		}
+	if err := backend.SetEndpointVPNReady(next); err != nil {
+		i.logger.Error("update eBPF endpoint VPN readiness: ", err)
+		return
 	}
+	i.vpnReady.Store(next)
 	i.storeEndpointBypassStatus(status)
 	if next {
 		i.logger.Info("eBPF endpoint-connected bypass ready: VPN interface has traffic or an IPsec default route")
