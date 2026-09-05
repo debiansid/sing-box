@@ -279,6 +279,10 @@ func probeCommonCapabilities(report *KernelProbeReport, memlockErr error, enable
 		probeMapType(report, "shared", KernelProbeRequired, CiliumEBPF.PerCPUArray,
 			"Provides per-CPU packet-rewrite scratch and counters.")
 	}
+	if needSocketAssignment {
+		probeMapType(report, "common", KernelProbeRequired, CiliumEBPF.PerCPUArray,
+			"Provides per-CPU TC endpoint policy counters.")
+	}
 	if enableTCP && needSocketAssignment {
 		probeMapType(report, "common", KernelProbePerformance, CiliumEBPF.SockMap,
 			"Enables the preferred TCP listener fallback; TC loading falls back to direct socket lookup when unavailable.")

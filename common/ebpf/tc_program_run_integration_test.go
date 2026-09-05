@@ -92,6 +92,118 @@ func TestTCProgramRunIntegration(t *testing.T) {
 
 }
 
+func TestTCEndpointTriStateIntegration(t *testing.T) {
+	requireEBPFIntegration(t, "verify TC endpoint tri-state policy")
+	endpoint := netip.MustParsePrefix("203.0.113.0/24")
+	endpointIPv6 := netip.MustParsePrefix("2001:db8:1::/48")
+	fakeIP := netip.MustParsePrefix("198.18.0.0/15")
+	policy, err := CompilePolicy(PolicyConfig{
+		EnableTCP:       true,
+		EnableUDP:       true,
+		EndpointEnabled: true,
+		EndpointCIDR:    []netip.Prefix{endpoint, endpointIPv6, fakeIP},
+		EndpointPort:    []PortRange{{Start: 4500, End: 4500}},
+		LocalBypassPort: []PortRange{{Start: 4500, End: 4500}},
+		FakeIPIPv4:      fakeIP,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	backend, err := PrepareTC(TCConfig{
+		ListenerPort:      65531,
+		EnableLocal:       true,
+		EnableShared:      true,
+		EnableIPv4:        true,
+		EnableLocalIPv6:   true,
+		EnableTCP:         true,
+		EnableUDP:         true,
+		DeliveryInterface: 1,
+		Policy:            policy,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = backend.Close() })
+	if err = backend.Enable(); err != nil {
+		t.Fatal(err)
+	}
+	localEgress := backend.runtime.programs[tcProgramLocalEgressEthernet]
+	sharedIngress := backend.runtime.programs[tcProgramSharedIngressEthernet]
+	matching := testIPv4TCPPacket(
+		netip.MustParseAddr("192.0.2.10"), netip.MustParseAddr("203.0.113.10"), 53000, 4500,
+	)
+	action, _ := runTCProgram(t, localEgress, matching)
+	if action != testTCActRedirect {
+		t.Fatalf("NOT READY endpoint did not force interception over local bypass port: action=%d", action)
+	}
+	matchingUDP := testIPv4UDPPacket(
+		netip.MustParseAddr("192.0.2.10"), netip.MustParseAddr("203.0.113.10"), 53001, 4500,
+	)
+	action, _ = runTCProgram(t, localEgress, matchingUDP)
+	if action != testTCActRedirect {
+		t.Fatalf("NOT READY UDP endpoint did not force interception: action=%d", action)
+	}
+	matchingIPv6 := testIPv6TCPPacket(
+		netip.MustParseAddr("2001:db8::10"), netip.MustParseAddr("2001:db8:1::10"), 53002, 4500, nil,
+	)
+	action, _ = runTCProgram(t, localEgress, matchingIPv6)
+	if action != testTCActRedirect {
+		t.Fatalf("NOT READY IPv6 endpoint did not force interception: action=%d", action)
+	}
+	wrongPort := testIPv4TCPPacket(
+		netip.MustParseAddr("192.0.2.10"), netip.MustParseAddr("203.0.113.10"), 53003, 443,
+	)
+	bypassPolicy, err := CompileBypassCIDRPolicy([]netip.Prefix{endpoint})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = backend.UpdateCompiledBypassCIDR(bypassPolicy); err != nil {
+		t.Fatal(err)
+	}
+	action, _ = runTCProgram(t, localEgress, wrongPort)
+	if action != testTCActUnspec {
+		t.Fatalf("wrong endpoint port did not continue original CIDR policy: action=%d", action)
+	}
+	wrongIP := testIPv4TCPPacket(
+		netip.MustParseAddr("192.0.2.10"), netip.MustParseAddr("198.51.100.10"), 53004, 4500,
+	)
+	action, _ = runTCProgram(t, localEgress, wrongIP)
+	if action != testTCActUnspec {
+		t.Fatalf("wrong endpoint IP did not continue original port policy: action=%d", action)
+	}
+	if err = backend.SetEndpointVPNReady(true); err != nil {
+		t.Fatal(err)
+	}
+	action, _ = runTCProgram(t, localEgress, matching)
+	if action != testTCActUnspec {
+		t.Fatalf("READY endpoint did not native-bypass: action=%d", action)
+	}
+	for name, packet := range map[string][]byte{"UDP": matchingUDP, "IPv6": matchingIPv6} {
+		action, _ = runTCProgram(t, localEgress, packet)
+		if action != testTCActUnspec {
+			t.Fatalf("READY %s endpoint did not native-bypass: action=%d", name, action)
+		}
+	}
+	fakeEndpoint := testIPv4TCPPacket(
+		netip.MustParseAddr("192.0.2.10"), netip.MustParseAddr("198.18.1.1"), 53005, 4500,
+	)
+	action, _ = runTCProgram(t, localEgress, fakeEndpoint)
+	if action != testTCActRedirect {
+		t.Fatalf("FakeIP did not override READY endpoint bypass: action=%d", action)
+	}
+	action, _ = runTCProgram(t, sharedIngress, matching)
+	if action != testTCActShot {
+		t.Fatalf("endpoint policy changed shared selection: action=%d", action)
+	}
+	counters, err := backend.EndpointCounters()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if counters.ForceInterceptHits != 3 || counters.NativeBypassHits != 3 {
+		t.Fatalf("unexpected endpoint counters: %+v", counters)
+	}
+}
+
 func TestTCIPv6PathIsolationIntegration(t *testing.T) {
 	requireEBPFIntegration(t, "verify TC eBPF IPv6 path isolation")
 	packet := testIPv6TCPPacket(

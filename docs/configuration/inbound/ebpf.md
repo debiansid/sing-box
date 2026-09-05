@@ -39,7 +39,13 @@ The eBPF inbound does not use [Listen Fields](/configuration/shared/listen/).
     "include_package": [],
     "exclude_package": [],
     "bypass_port": [],
-    "bypass_port_range": []
+    "bypass_port_range": [],
+    "endpoint_connected_bypass": {
+      "enabled": false,
+      "network": ["tcp", "udp"],
+      "ip_cidr": [],
+      "port": []
+    }
   },
   "shared": {
     "enabled": true,
@@ -99,6 +105,10 @@ replacement is ready.
 Selects the local interception backend. `cgroup` is the default and intercepts
 sockets in the visible cgroup v2 hierarchy. Set `tc` explicitly to intercept
 traffic on the current default interface instead.
+
+When `local.endpoint_connected_bypass.enabled` is `true`, omitting
+`local.data_plane` selects `tc` automatically. Explicit `cgroup` and
+`local.cgroup_path` are incompatible with this TC-only policy.
 
 #### local.cgroup_path
 
@@ -171,6 +181,38 @@ warning when port 53 is listed.
 
 Destination port ranges to bypass, in `start:end` format. The range is
 inclusive.
+
+#### local.endpoint_connected_bypass
+
+One local VPN endpoint policy configuration group is supported.
+
+This policy is implemented only by the local TC data plane. Enabling it selects
+`tc` when `local.data_plane` is omitted; it cannot be combined with an explicit
+local `cgroup` data plane or `local.cgroup_path`.
+
+When enabled, `ip_cidr` and `port` are required. `network` accepts `tcp` and/or
+`udp` and defaults to both protocols enabled by the inbound. A local flow must
+match the selected network, a destination CIDR, and a destination port. While
+no matching VPN interface is ready, matching traffic is forced through this
+inbound, even if ordinary UID/package, bypass-port, host, private, or
+destination-CIDR policy would bypass it. Routing then follows the normal
+sing-box Router, `route.rules`, `clash_mode`, and default outbound.
+
+An ordinary `tun*` interface becomes ready after it is up and has a
+global-unicast address. Its first packet-counter sample only establishes the
+RX/TX baseline; a later one-second sample must observe RX or TX growth. An
+active `ipsec*` interface becomes ready when it has a non-local-table unicast
+default route. While ready, matching endpoint traffic native-bypasses TC.
+
+READY remains active while at least one matching interface is active, even if a
+sample shows no new packets or counters reset. It is revoked immediately when a
+sample observes zero active matching interfaces. There is no grace or debounce
+period. The endpoint decision is tri-state: an unmatched flow keeps the
+original local policy; a matched flow while NOT READY is forced through the
+inbound; and a matched flow while READY native-bypasses TC. FakeIP and DNS
+mandatory interception precedence is unchanged. If this object is absent or
+`enabled` is `false`, the original local policy applies. This option affects
+only local traffic; shared traffic is completely unchanged.
 
 ### shared
 

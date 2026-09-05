@@ -27,6 +27,12 @@ const (
 	tcPortPolicyCapacity = 4096
 )
 
+const (
+	tcEndpointStatForceIntercept uint32 = iota
+	tcEndpointStatNativeBypass
+	tcEndpointStatCount
+)
+
 // DefaultTCRoutingMark is used only by standalone backend tests and callers
 // that do not install policy routing. The TC data plane selects a free mark
 // before enabling the backend.
@@ -43,6 +49,8 @@ const tcFlagSharedIPv6 = 1 << 18
 const (
 	tcFlagLocalBypassPort  = 1 << 20
 	tcFlagSharedBypassPort = 1 << 21
+	tcFlagEndpointEnabled  = 1 << 22
+	tcFlagEndpointReady    = 1 << 23
 )
 
 const (
@@ -117,6 +125,13 @@ type TCAssignment struct {
 	SourceMACValid uint8
 }
 
+// TCEndpointCounters reports internal endpoint policy packet hits accumulated
+// by the local TC data plane. It is not part of the public configuration or API.
+type TCEndpointCounters struct {
+	ForceInterceptHits uint64
+	NativeBypassHits   uint64
+}
+
 type tcRuntime struct {
 	maps     map[string]*CiliumEBPF.Map
 	programs []*CiliumEBPF.Program
@@ -163,9 +178,10 @@ func prepareTC(config TCConfig, forceLegacyTCP bool) (*TCBackend, error) {
 	fakeIPIPv6 := policy.fakeIPIPv6
 	includeIPv4, includeIPv6 := policy.includeSource.ipv4, policy.includeSource.ipv6
 	excludeIPv4, excludeIPv6 := policy.excludeSource.ipv4, policy.excludeSource.ipv6
+	endpointIPv4, endpointIPv6 := policy.endpoint.ipv4, policy.endpoint.ipv6
 	if err = checkLPMTriePolicyCompatibility(
-		"TC eBPF UID and source CIDR",
-		len(uidEntries)+len(includeIPv4)+len(includeIPv6)+len(excludeIPv4)+len(excludeIPv6),
+		"TC eBPF UID, source CIDR, and endpoint CIDR",
+		tcLPMPolicyEntryCount(policy),
 	); err != nil {
 		return nil, err
 	}
@@ -187,6 +203,10 @@ func prepareTC(config TCConfig, forceLegacyTCP bool) (*TCBackend, error) {
 		"tc_host_ipv6":           {name: "sb_tc_host6", mapType: CiliumEBPF.Hash, maxEntries: maxHostAddressPolicyEntries},
 		"tc_local_bypass_port":   {name: "sb_tc_lport", mapType: CiliumEBPF.Hash, maxEntries: tcPortPolicyCapacity},
 		"tc_shared_bypass_port":  {name: "sb_tc_sport", mapType: CiliumEBPF.Hash, maxEntries: tcPortPolicyCapacity},
+		"tc_endpoint_ipv4":       {name: "sb_tc_endpoint4", mapType: CiliumEBPF.LPMTrie, maxEntries: max(uint32(len(endpointIPv4)), 1), flags: bpfFlagNoPrealloc},
+		"tc_endpoint_ipv6":       {name: "sb_tc_endpoint6", mapType: CiliumEBPF.LPMTrie, maxEntries: max(uint32(len(endpointIPv6)), 1), flags: bpfFlagNoPrealloc},
+		"tc_endpoint_port":       {name: "sb_tc_endpointp", mapType: CiliumEBPF.Hash, maxEntries: tcPortPolicyCapacity},
+		"tc_endpoint_stats":      {name: "sb_tc_ep_stats", mapType: CiliumEBPF.PerCPUArray, maxEntries: tcEndpointStatCount},
 	}
 	if config.EnableLocal {
 		mapOverrides["tc_self_sockets"] = mapSpecOverride{
@@ -249,6 +269,9 @@ func prepareTC(config TCConfig, forceLegacyTCP bool) (*TCBackend, error) {
 		UID:               maps["tc_uid_policy"],
 		LocalPort:         maps["tc_local_bypass_port"],
 		SharedPort:        maps["tc_shared_bypass_port"],
+		EndpointPort:      maps["tc_endpoint_port"],
+		EndpointIPv4:      maps["tc_endpoint_ipv4"],
+		EndpointIPv6:      maps["tc_endpoint_ipv6"],
 		IncludeSourceIPv4: maps["tc_include_source_ipv4"],
 		IncludeSourceIPv6: maps["tc_include_source_ipv6"],
 		ExcludeSourceIPv4: maps["tc_exclude_source_ipv4"],
@@ -260,6 +283,52 @@ func prepareTC(config TCConfig, forceLegacyTCP bool) (*TCBackend, error) {
 		return nil, err
 	}
 	return backend, nil
+}
+
+func (b *TCBackend) EndpointCounters() (TCEndpointCounters, error) {
+	if b == nil {
+		return TCEndpointCounters{}, errBackendClosed
+	}
+	b.access.RLock()
+	defer b.access.RUnlock()
+	if b.runtime == nil {
+		return TCEndpointCounters{}, errBackendClosed
+	}
+	statsMap := b.runtime.maps["tc_endpoint_stats"]
+	if statsMap == nil {
+		return TCEndpointCounters{}, errBackendClosed
+	}
+	forceIntercept, err := readPerCPUCounter(statsMap, tcEndpointStatForceIntercept)
+	if err != nil {
+		return TCEndpointCounters{}, E.Cause(err, "read TC endpoint force-intercept counter")
+	}
+	nativeBypass, err := readPerCPUCounter(statsMap, tcEndpointStatNativeBypass)
+	if err != nil {
+		return TCEndpointCounters{}, E.Cause(err, "read TC endpoint native-bypass counter")
+	}
+	return TCEndpointCounters{
+		ForceInterceptHits: forceIntercept,
+		NativeBypassHits:   nativeBypass,
+	}, nil
+}
+
+func readPerCPUCounter(mapInstance *CiliumEBPF.Map, key uint32) (uint64, error) {
+	var perCPU []uint64
+	if err := mapInstance.Lookup(&key, &perCPU); err != nil {
+		return 0, err
+	}
+	var total uint64
+	for _, value := range perCPU {
+		total += value
+	}
+	return total, nil
+}
+
+func tcLPMPolicyEntryCount(policy CompiledPolicy) int {
+	return len(policy.uidEntries) +
+		len(policy.includeSource.ipv4) + len(policy.includeSource.ipv6) +
+		len(policy.excludeSource.ipv4) + len(policy.excludeSource.ipv6) +
+		len(policy.endpoint.ipv4) + len(policy.endpoint.ipv6)
 }
 
 func loadTCResources(config TCConfig, baseOverrides map[string]mapSpecOverride, legacyTCP bool) (map[string]*CiliumEBPF.Map, []*CiliumEBPF.Program, error) {
@@ -355,7 +424,7 @@ func (b *TCBackend) SetRoutingMark(mark uint32) error {
 }
 
 func tcFlags(config TCConfig, policy CompiledPolicy) uint32 {
-	return policyVector{
+	flags := policyVector{
 		EnableTCP:           config.EnableTCP,
 		EnableUDP:           config.EnableUDP,
 		EnableIPv4:          config.EnableIPv4,
@@ -374,6 +443,38 @@ func tcFlags(config TCConfig, policy CompiledPolicy) uint32 {
 		IncludeSourceMAC:    len(policy.includeSourceMAC) > 0,
 		ExcludeSourceMAC:    len(policy.excludeSourceMAC) > 0,
 	}.tcFlags()
+	if policy.endpointEnabled {
+		flags |= tcFlagEndpointEnabled
+	}
+	return flags
+}
+
+func endpointReadyFlags(flags uint32, ready bool) uint32 {
+	if ready {
+		return flags | tcFlagEndpointReady
+	}
+	return flags &^ tcFlagEndpointReady
+}
+
+func (b *TCBackend) SetEndpointVPNReady(ready bool) error {
+	b.access.Lock()
+	defer b.access.Unlock()
+	if b.runtime == nil {
+		return errBackendClosed
+	}
+	if b.control.Flags&tcFlagEndpointEnabled == 0 {
+		return nil
+	}
+	previous := b.control.Flags
+	b.control.Flags = endpointReadyFlags(previous, ready)
+	if b.control.Flags == previous {
+		return nil
+	}
+	if err := b.updateControlLocked(); err != nil {
+		b.control.Flags = previous
+		return err
+	}
+	return nil
 }
 
 func (b *TCBackend) updateControlLocked() error {
