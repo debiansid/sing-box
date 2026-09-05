@@ -195,6 +195,13 @@ func TestTCEndpointTriStateIntegration(t *testing.T) {
 	if action != testTCActShot {
 		t.Fatalf("endpoint policy changed shared selection: action=%d", action)
 	}
+	counters, err := backend.EndpointCounters()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if counters.ForceInterceptHits != 3 || counters.NativeBypassHits != 3 {
+		t.Fatalf("unexpected endpoint counters: %+v", counters)
+	}
 }
 
 func TestTCIPv6PathIsolationIntegration(t *testing.T) {

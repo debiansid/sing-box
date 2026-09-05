@@ -72,6 +72,10 @@
 #define SB_TC_LISTENER_TCP6 1U
 #define SB_TC_LISTENER_COUNT 2U
 
+#define SB_TC_ENDPOINT_STAT_FORCE_INTERCEPT 0U
+#define SB_TC_ENDPOINT_STAT_NATIVE_BYPASS 1U
+#define SB_TC_ENDPOINT_STAT_COUNT 2U
+
 #define SB_TC_PATH_SHARED 1U
 #define SB_TC_PATH_DELIVERY 2U
 #define SB_TC_PATH_SOURCE_MAC_VALID 0x80U
@@ -241,6 +245,7 @@ MAP(tc_shared_bypass_port, struct sb_tc_port_key, __u8, BPF_MAP_TYPE_HASH, 4096U
 MAP(tc_endpoint_ipv4, struct sb_tc_ipv4_lpm_key, __u8, BPF_MAP_TYPE_LPM_TRIE, 65536U);
 MAP(tc_endpoint_ipv6, struct sb_tc_ipv6_lpm_key, __u8, BPF_MAP_TYPE_LPM_TRIE, 65536U);
 MAP(tc_endpoint_port, struct sb_tc_port_key, __u8, BPF_MAP_TYPE_HASH, 4096U);
+MAP(tc_endpoint_stats, __u32, __u64, BPF_MAP_TYPE_PERCPU_ARRAY, SB_TC_ENDPOINT_STAT_COUNT);
 
 static void *(*map_lookup)(void *map, const void *key) = (void *)BPF_FUNC_map_lookup_elem;
 static long (*map_update)(void *map, const void *key, const void *value, __u64 flags) =
@@ -387,6 +392,11 @@ INLINE bool endpoint_destination(const struct sb_tc_control *control,
     return map_lookup(&tc_endpoint_ipv6, &key) != 0;
 }
 
+INLINE void record_endpoint_stat(__u32 key) {
+    __u64 *counter = map_lookup(&tc_endpoint_stats, &key);
+    if (counter != 0) *counter += 1U;
+}
+
 INLINE bool source_address_selected(const struct sb_tc_control *control,
     const struct sb_tc_assign_key *flow) {
     if (flow->family == AF_INET_VALUE) {
@@ -438,7 +448,14 @@ INLINE bool local_selected(struct __sk_buff *skb, const struct sb_tc_control *co
         return (socket_metadata_value & SB_TC_SOCKET_METADATA_POLICY_INTERCEPT) != 0U ||
             !uid_bypassed(skb, control);
     }
-    if (endpoint_destination(control, key)) return (control->flags & SB_TC_FLAG_ENDPOINT_READY) == 0U;
+    if (endpoint_destination(control, key)) {
+        if ((control->flags & SB_TC_FLAG_ENDPOINT_READY) != 0U) {
+            record_endpoint_stat(SB_TC_ENDPOINT_STAT_NATIVE_BYPASS);
+            return false;
+        }
+        record_endpoint_stat(SB_TC_ENDPOINT_STAT_FORCE_INTERCEPT);
+        return true;
+    }
     if ((socket_metadata_value & SB_TC_SOCKET_METADATA_POLICY_BYPASS) != 0U) return false;
     if ((socket_metadata_value & SB_TC_SOCKET_METADATA_POLICY_INTERCEPT) == 0U && uid_bypassed(skb, control)) return false;
     if (port_bypassed(control, key, false)) return false;

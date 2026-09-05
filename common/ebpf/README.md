@@ -135,6 +135,7 @@ MAC include/exclude policies are evaluated only on the shared path.
 | sockets and assignments | `SOCKMAP` (optional), `LRU_HASH` | Preferred TCP listener fallback, original-flow metadata, and local self-bypass cookies. Legacy TCP lookup does not use SOCKMAP. |
 | prefix policy | `LPM_TRIE` | UID ranges, source CIDRs, and destination bypass CIDRs. |
 | exact policy | `HASH` | Host addresses and shared source MAC policy. |
+| endpoint observability | `PERCPU_ARRAY` | Internal force-intercept and native-bypass packet-hit counters for endpoint matches. |
 | packet rewrite scratch | `PERCPU_ARRAY` | Per-CPU scratch and counters used only by shared `packet_rewrite`. |
 
 ### LPM trie kernel safety
@@ -157,7 +158,9 @@ Endpoint CIDRs use dedicated TC-only IPv4/IPv6 LPM tries and endpoint ports use
 a dedicated TC-only hash map. A dynamic control flag records VPN readiness;
 readiness transitions update only that control state and do not rebuild the backend,
 attachments, or static policy maps. Repeated samples that preserve the committed
-READY value do not write the control map again.
+READY value do not write the control map again. Dedicated per-CPU counters record
+matched endpoint packets that take the force-intercept and native-bypass outcomes;
+they are internal dataplane diagnostics and do not affect policy decisions.
 
 The object is generated for little-endian and big-endian BPF without BTF or
 CO-RE sections. Source and object hashes are recorded in

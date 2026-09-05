@@ -27,6 +27,12 @@ const (
 	tcPortPolicyCapacity = 4096
 )
 
+const (
+	tcEndpointStatForceIntercept uint32 = iota
+	tcEndpointStatNativeBypass
+	tcEndpointStatCount
+)
+
 // DefaultTCRoutingMark is used only by standalone backend tests and callers
 // that do not install policy routing. The TC data plane selects a free mark
 // before enabling the backend.
@@ -119,6 +125,13 @@ type TCAssignment struct {
 	SourceMACValid uint8
 }
 
+// TCEndpointCounters reports internal endpoint policy packet hits accumulated
+// by the local TC data plane. It is not part of the public configuration or API.
+type TCEndpointCounters struct {
+	ForceInterceptHits uint64
+	NativeBypassHits   uint64
+}
+
 type tcRuntime struct {
 	maps     map[string]*CiliumEBPF.Map
 	programs []*CiliumEBPF.Program
@@ -193,6 +206,7 @@ func prepareTC(config TCConfig, forceLegacyTCP bool) (*TCBackend, error) {
 		"tc_endpoint_ipv4":       {name: "sb_tc_endpoint4", mapType: CiliumEBPF.LPMTrie, maxEntries: max(uint32(len(endpointIPv4)), 1), flags: bpfFlagNoPrealloc},
 		"tc_endpoint_ipv6":       {name: "sb_tc_endpoint6", mapType: CiliumEBPF.LPMTrie, maxEntries: max(uint32(len(endpointIPv6)), 1), flags: bpfFlagNoPrealloc},
 		"tc_endpoint_port":       {name: "sb_tc_endpointp", mapType: CiliumEBPF.Hash, maxEntries: tcPortPolicyCapacity},
+		"tc_endpoint_stats":      {name: "sb_tc_ep_stats", mapType: CiliumEBPF.PerCPUArray, maxEntries: tcEndpointStatCount},
 	}
 	if config.EnableLocal {
 		mapOverrides["tc_self_sockets"] = mapSpecOverride{
@@ -269,6 +283,45 @@ func prepareTC(config TCConfig, forceLegacyTCP bool) (*TCBackend, error) {
 		return nil, err
 	}
 	return backend, nil
+}
+
+func (b *TCBackend) EndpointCounters() (TCEndpointCounters, error) {
+	if b == nil {
+		return TCEndpointCounters{}, errBackendClosed
+	}
+	b.access.RLock()
+	defer b.access.RUnlock()
+	if b.runtime == nil {
+		return TCEndpointCounters{}, errBackendClosed
+	}
+	statsMap := b.runtime.maps["tc_endpoint_stats"]
+	if statsMap == nil {
+		return TCEndpointCounters{}, errBackendClosed
+	}
+	forceIntercept, err := readPerCPUCounter(statsMap, tcEndpointStatForceIntercept)
+	if err != nil {
+		return TCEndpointCounters{}, E.Cause(err, "read TC endpoint force-intercept counter")
+	}
+	nativeBypass, err := readPerCPUCounter(statsMap, tcEndpointStatNativeBypass)
+	if err != nil {
+		return TCEndpointCounters{}, E.Cause(err, "read TC endpoint native-bypass counter")
+	}
+	return TCEndpointCounters{
+		ForceInterceptHits: forceIntercept,
+		NativeBypassHits:   nativeBypass,
+	}, nil
+}
+
+func readPerCPUCounter(mapInstance *CiliumEBPF.Map, key uint32) (uint64, error) {
+	var perCPU []uint64
+	if err := mapInstance.Lookup(&key, &perCPU); err != nil {
+		return 0, err
+	}
+	var total uint64
+	for _, value := range perCPU {
+		total += value
+	}
+	return total, nil
 }
 
 func tcLPMPolicyEntryCount(policy CompiledPolicy) int {
