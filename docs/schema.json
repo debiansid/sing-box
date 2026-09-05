@@ -3469,6 +3469,27 @@
         "enabled": {
           "type": "boolean"
         },
+        "network": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "tcp",
+                "udp"
+              ]
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "tcp",
+                  "udp"
+                ]
+              }
+            }
+          ]
+        },
         "ip_cidr": {
           "anyOf": [
             {
