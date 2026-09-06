@@ -138,13 +138,8 @@ func (d *sharedRewriteDataPlane) reconcile(interfaceNames []string, hostAddresse
 		}
 	}
 
-	current := make(map[string]*sharedRewriteAttachment, len(d.attachments))
-	for name, attachment := range d.attachments {
-		current[name] = attachment
-	}
 	candidate := make(map[string]*sharedRewriteAttachment, len(desired))
 	created := make([]*sharedRewriteAttachment, 0, len(desired))
-	retired := make([]*sharedRewriteAttachment, 0, len(d.attachments))
 	changed = hostChanged
 	names := make([]string, 0, len(desired))
 	for name := range desired {
@@ -170,7 +165,7 @@ func (d *sharedRewriteDataPlane) reconcile(interfaceNames []string, hostAddresse
 
 	for _, name := range names {
 		device := desired[name]
-		previous := current[name]
+		previous := d.attachments[name]
 		if previous != nil && device.Attrs().Index == previous.interfaceIndex {
 			localnetChanged, err := ensureSharedRewriteLocalnet(name)
 			if err != nil {
@@ -185,12 +180,8 @@ func (d *sharedRewriteDataPlane) reconcile(interfaceNames []string, hostAddresse
 			}
 			if healthy {
 				candidate[name] = previous
-				delete(current, name)
 				continue
 			}
-		}
-		if previous != nil {
-			retired = append(retired, previous)
 		}
 		options := sharedRewriteAttachmentOptions{}
 		if previous != nil && device.Attrs().Index == previous.interfaceIndex {
@@ -207,8 +198,8 @@ func (d *sharedRewriteDataPlane) reconcile(interfaceNames []string, hostAddresse
 		created = append(created, attachment)
 		changed = true
 	}
-	for _, previous := range current {
-		retired = append(retired, previous)
+	retired := retiredSharedRewriteAttachments(d.attachments, candidate)
+	if len(retired) > 0 {
 		changed = true
 	}
 
@@ -267,6 +258,18 @@ func (d *sharedRewriteDataPlane) reconcile(interfaceNames []string, hostAddresse
 	}
 
 	return closeErr
+}
+
+// Select retired attachments once, after staging succeeds. Replacements must
+// not be closed twice: cleanup transfers lock and sysctl ownership to them.
+func retiredSharedRewriteAttachments(current, candidate map[string]*sharedRewriteAttachment) []*sharedRewriteAttachment {
+	var retired []*sharedRewriteAttachment
+	for name, previous := range current {
+		if candidate[name] != previous {
+			retired = append(retired, previous)
+		}
+	}
+	return retired
 }
 
 func discardSharedRewriteBackend(owner *sharedRewrite, backend *commonEBPF.SharedNetworkBackend) error {
