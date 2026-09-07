@@ -47,6 +47,7 @@ type Inbound struct {
 	router                   adapter.Router
 	logger                   log.ContextLogger
 	networkManager           adapter.NetworkManager
+	platformInterface        adapter.PlatformInterface
 	mode                     string
 	localEnabled             bool
 	selfBypass               *commonEBPF.SelfBypass
@@ -83,6 +84,7 @@ type Inbound struct {
 	bypassRuleSet          []adapter.RuleSet
 	bypassRuleSetCallbacks []*list.Element[adapter.RuleSetUpdateCallback]
 	bypassRuleSetStarted   bool
+	bypassRuleSetPolicy    bypassRuleSetPolicyState
 
 	udpClientTable    udpClientTable
 	udpReplySockets   udpReplySocketPool
@@ -173,11 +175,12 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 		}
 	}
 	inbound := &Inbound{
-		Adapter:        inbound.NewAdapter(C.TypeEBPF, tag),
-		ctx:            ctx,
-		router:         router,
-		logger:         logger,
-		networkManager: networkManager,
+		Adapter:           inbound.NewAdapter(C.TypeEBPF, tag),
+		ctx:               ctx,
+		router:            router,
+		logger:            logger,
+		networkManager:    networkManager,
+		platformInterface: service.FromContext[adapter.PlatformInterface](ctx),
 		usePlatformProcessFinder: func() bool {
 			platform := service.FromContext[adapter.PlatformInterface](ctx)
 			return platform != nil && platform.UsePlatformConnectionOwnerFinder()

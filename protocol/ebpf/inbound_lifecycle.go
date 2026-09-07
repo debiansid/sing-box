@@ -295,11 +295,15 @@ func (i *Inbound) takeTCDataPlane() *tcDataPlane {
 	return dataPlane
 }
 
-func (i *Inbound) reconcileTCDataPlane(localInterface string, sharedInterfaces []string, hostAddresses []netip.Addr) error {
+func (i *Inbound) reconcileTCDataPlane(
+	localInterface string,
+	sharedInterfaces []string,
+	hostAddresses []netip.Addr,
+) (map[uint64]struct{}, error) {
 	i.tcDataPlaneAccess.RLock()
 	defer i.tcDataPlaneAccess.RUnlock()
 	if i.tcDataPlane == nil {
-		return nil
+		return nil, nil
 	}
 	return i.tcDataPlane.reconcile(localInterface, sharedInterfaces, hostAddresses)
 }

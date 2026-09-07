@@ -53,25 +53,36 @@ func (i *Inbound) NewPacketConnectionEx(
 	destination M.Socksaddr,
 	onClose N.CloseHandlerFunc,
 ) {
+	session, loaded := udpSessionFromContext(ctx)
+	if !loaded || session.client != source.AddrPort() ||
+		!i.udpClientTable.attachSession(session.client, session.state, session.sessionID, conn) {
+		_ = conn.Close()
+		if onClose != nil {
+			onClose(net.ErrClosed)
+		}
+		return
+	}
 	metadata := adapter.InboundContext{
 		Inbound:     i.Tag(),
 		InboundType: i.Type(),
 		Source:      source,
 		Destination: destination,
 	}
-	if clientState, loaded := i.udpClientTable.load(source.AddrPort()); loaded {
-		metadata.SourceMACAddress = clientState.sourceMACAddress()
-		metadata.ProcessInfo = i.lookupProcessInfo(clientState.processSocketCookie())
-	}
+	metadata.SourceMACAddress = session.state.sourceMACAddress()
+	metadata.ProcessInfo = i.lookupProcessInfo(session.state.processSocketCookie())
 	i.router.RoutePacketConnectionEx(ctx, conn, metadata, onClose)
 }
 
 func (i *Inbound) preparePacketConnection(
 	source M.Socksaddr,
 	destination M.Socksaddr,
-	_ any,
+	userData any,
 ) (bool, context.Context, N.PacketWriter, N.CloseHandlerFunc) {
-	return i.prepareTCPacketConnection(source, destination)
+	clientState, loaded := userData.(*udpClientState)
+	if !loaded {
+		return false, nil, nil, nil
+	}
+	return i.prepareTCPacketConnection(source, destination, clientState)
 }
 
 func (i *Inbound) socketControl(ipv6Listener bool) control.Func {

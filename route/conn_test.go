@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/netip"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -18,6 +19,26 @@ type connectionTestDialer struct {
 	access       sync.Mutex
 	destinations []M.Socksaddr
 	conns        []net.Conn
+}
+
+type connectionTestCloser struct {
+	net.Conn
+	closeCount atomic.Int32
+}
+
+func (c *connectionTestCloser) Close() error {
+	c.closeCount.Add(1)
+	return c.Conn.Close()
+}
+
+type packetConnectionTestCloser struct {
+	net.PacketConn
+	closeCount atomic.Int32
+}
+
+func (c *packetConnectionTestCloser) Close() error {
+	c.closeCount.Add(1)
+	return nil
 }
 
 func (d *connectionTestDialer) DialContext(_ context.Context, _ string, destination M.Socksaddr) (net.Conn, error) {
@@ -91,6 +112,99 @@ func TestConnectionManagerPreservesUnresolvedTCPDestinationDomain(t *testing.T) 
 	}, nil)
 
 	require.Equal(t, []M.Socksaddr{M.ParseSocksaddrHostPort("example.com", 443)}, testDialer.dialedDestinations())
+}
+
+func TestConnectionManagerSelectiveCloseByGeneration(t *testing.T) {
+	t.Parallel()
+
+	manager := NewConnectionManager(log.NewNOPFactory().NewLogger("connection"))
+	ordinaryG1 := &connectionTestCloser{Conn: netConnPipe(t)}
+	manager.TrackConn(ordinaryG1)
+	manager.SetGeneration(2)
+	ordinaryG2 := &connectionTestCloser{Conn: netConnPipe(t)}
+	manager.TrackConn(ordinaryG2)
+	vpnPayload := &connectionTestCloser{Conn: netConnPipe(t)}
+	manager.TrackConnWithContext(adapter.ContextWithVPNPayload(context.Background()), vpnPayload)
+
+	manager.CloseGeneration(1)
+	require.Equal(t, int32(1), ordinaryG1.closeCount.Load())
+	require.Equal(t, int32(0), ordinaryG2.closeCount.Load())
+	require.Equal(t, int32(0), vpnPayload.closeCount.Load())
+	require.Equal(t, 2, manager.Count())
+
+	manager.CloseGeneration(1)
+	require.Equal(t, int32(1), ordinaryG1.closeCount.Load())
+	manager.CloseGeneration(2)
+	require.Equal(t, int32(1), ordinaryG2.closeCount.Load())
+	require.Equal(t, int32(0), vpnPayload.closeCount.Load())
+	require.Equal(t, 1, manager.Count())
+
+	manager.CloseAll()
+	require.Equal(t, int32(1), vpnPayload.closeCount.Load())
+	require.Equal(t, 0, manager.Count())
+}
+
+func TestConnectionManagerPacketProvenance(t *testing.T) {
+	t.Parallel()
+
+	manager := NewConnectionManager(log.NewNOPFactory().NewLogger("connection"))
+	ordinary := &packetConnectionTestCloser{}
+	manager.TrackPacketConn(ordinary)
+	manager.SetGeneration(2)
+	vpnPayload := &packetConnectionTestCloser{}
+	manager.TrackPacketConnWithContext(adapter.ContextWithVPNPayload(context.Background()), vpnPayload)
+
+	manager.CloseGeneration(1)
+	require.Equal(t, int32(1), ordinary.closeCount.Load())
+	require.Equal(t, int32(0), vpnPayload.closeCount.Load())
+	manager.CloseAll()
+	require.Equal(t, int32(1), vpnPayload.closeCount.Load())
+}
+
+func TestConnectionManagerSetGenerationRejectsUnboundGeneration(t *testing.T) {
+	t.Parallel()
+
+	manager := NewConnectionManager(log.NewNOPFactory().NewLogger("connection"))
+	require.Equal(t, uint64(1), manager.CurrentGeneration())
+	manager.SetGeneration(0)
+	require.Equal(t, uint64(1), manager.CurrentGeneration())
+	manager.SetGeneration(1)
+	require.Equal(t, uint64(1), manager.CurrentGeneration())
+	manager.SetGeneration(2)
+	manager.SetGeneration(1)
+	require.Equal(t, uint64(2), manager.CurrentGeneration())
+}
+
+func TestConnectionManagerAdvanceGenerationClosesPreviousOnly(t *testing.T) {
+	t.Parallel()
+
+	manager := NewConnectionManager(log.NewNOPFactory().NewLogger("connection"))
+	ordinaryG1 := &connectionTestCloser{Conn: netConnPipe(t)}
+	manager.TrackConn(ordinaryG1)
+	vpnPayload := &connectionTestCloser{Conn: netConnPipe(t)}
+	manager.TrackConnWithContext(adapter.ContextWithVPNPayload(context.Background()), vpnPayload)
+
+	require.Equal(t, uint64(2), manager.AdvanceGeneration())
+	require.Equal(t, int32(1), ordinaryG1.closeCount.Load())
+	require.Equal(t, int32(0), vpnPayload.closeCount.Load())
+	require.Equal(t, uint64(2), manager.CurrentGeneration())
+	require.Equal(t, 1, manager.Count())
+
+	ordinaryG2 := &connectionTestCloser{Conn: netConnPipe(t)}
+	manager.TrackConn(ordinaryG2)
+	manager.CloseGeneration(1)
+	require.Equal(t, int32(0), ordinaryG2.closeCount.Load(), "stale G1 close must not affect G2")
+	require.Equal(t, int32(0), vpnPayload.closeCount.Load())
+	manager.CloseAll()
+	require.Equal(t, int32(1), ordinaryG2.closeCount.Load())
+	require.Equal(t, int32(1), vpnPayload.closeCount.Load())
+}
+
+func netConnPipe(t *testing.T) net.Conn {
+	t.Helper()
+	conn, peer := net.Pipe()
+	t.Cleanup(func() { _ = peer.Close() })
+	return conn
 }
 
 func newConnectionTestContext(t *testing.T) context.Context {

@@ -1,6 +1,7 @@
 package bridge
 
 import (
+	"errors"
 	"net"
 	"net/netip"
 	"os"
@@ -371,13 +372,55 @@ func flushBridgeRouteTable(routeTable int) {
 	}
 }
 
-func blackholeBridgeDefault(routeTable int, family int) {
-	_ = netlink.RouteReplace(&netlink.Route{
+func resetBridgeRouteTable(routeTable int, families []int) error {
+	return resetBridgeRouteTableWith(
+		routeTable,
+		families,
+		netlink.RouteReplace,
+		netlink.RouteListFiltered,
+		netlink.RouteDel,
+	)
+}
+
+func resetBridgeRouteTableWith(
+	routeTable int,
+	families []int,
+	replace func(*netlink.Route) error,
+	list func(int, *netlink.Route, uint64) ([]netlink.Route, error),
+	deleteRoute func(*netlink.Route) error,
+) error {
+	for _, family := range families {
+		if err := replace(bridgeBlackholeDefault(routeTable, family)); err != nil {
+			return E.Cause(err, "guard bridge route table with blackhole default")
+		}
+		routes, err := list(family, &netlink.Route{Table: routeTable}, netlink.RT_FILTER_TABLE)
+		if err != nil {
+			return E.Cause(err, "list bridge route table")
+		}
+		var deleteErr error
+		for _, route := range routes {
+			if route.Type == unix.RTN_BLACKHOLE && isDefaultDestination(route.Dst) {
+				continue
+			}
+			toDelete := route
+			if err = deleteRoute(&toDelete); err != nil && !errors.Is(err, unix.ENOENT) {
+				deleteErr = E.Errors(deleteErr, err)
+			}
+		}
+		if deleteErr != nil {
+			return E.Cause(deleteErr, "clear stale bridge routes behind blackhole default")
+		}
+	}
+	return nil
+}
+
+func bridgeBlackholeDefault(routeTable int, family int) *netlink.Route {
+	return &netlink.Route{
 		Table:  routeTable,
 		Family: family,
 		Type:   unix.RTN_BLACKHOLE,
 		Dst:    defaultDestination(family),
-	})
+	}
 }
 
 func activeBridgeFamilies(inet6Port netip.Addr) []int {

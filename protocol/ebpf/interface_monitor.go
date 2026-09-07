@@ -215,6 +215,9 @@ func (i *Inbound) updateTCInterfaces(ctx context.Context) {
 	if ctx.Err() != nil {
 		return
 	}
+	if err := i.retryBypassRuleSetPolicy(); err != nil {
+		i.policyWarnings.warn(i.logger, "retry TC eBPF bypass_rule_set policy: ", err)
+	}
 	if err := i.networkManager.UpdateInterfaces(); err != nil {
 		i.interfaceWarnings.inventory.warn(i.logger, "update interfaces for TC eBPF: ", err)
 	}
@@ -249,13 +252,13 @@ func (i *Inbound) updateTCInterfaces(ctx context.Context) {
 		return
 	}
 	previousAttachments := i.tcAttachmentDescriptions()
-	i.udpNat.Purge()
-	if err = i.udpReplySockets.reset(); err != nil {
-		i.interfaceWarnings.reconcile.warn(i.logger, "reset TC eBPF UDP reply sockets: ", err)
-	}
-	if err = i.reconcileTCDataPlane(localInterface, sharedInterfaces, hostAddresses); err != nil {
+	invalidatedGenerations, err := i.reconcileTCDataPlane(localInterface, sharedInterfaces, hostAddresses)
+	if err != nil {
 		i.interfaceWarnings.reconcile.warn(i.logger, "refresh TC eBPF interfaces: ", err)
 		return
+	}
+	if err = i.udpClientTable.invalidateAttachmentGenerations(invalidatedGenerations); err != nil {
+		i.interfaceWarnings.reconcile.warn(i.logger, "close invalidated TC eBPF UDP sessions: ", err)
 	}
 	attachments := i.tcAttachmentDescriptions()
 	if !slices.Equal(previousAttachments, attachments) {

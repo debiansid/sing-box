@@ -124,11 +124,13 @@ appear; deleted or recreated interfaces are detached or replaced. A configured
 shared interface is temporarily excluded while it is the current default
 upstream and becomes eligible again when it returns to a downstream role. This
 allows one Android interface name to alternate between Wi-Fi uplink and hotspot
-operation. Topology reconciliation purges userspace UDP state, disables the
-control map, replaces attachments and host policy, and then enables the backend.
-A failed update attempts to restore the previous state before re-enabling. When
-the default interface disappears, the last local attachment is retained until a
-new interface is available.
+operation. Topology reconciliation disables the control map, replaces
+attachments and host policy, and then enables the backend. After a successful
+commit, only UDP sessions tied to removed or replaced attachment generations
+are closed; unaffected sessions and the shared reply-socket pool remain active.
+A failed update attempts to restore the previous state before re-enabling and
+does not invalidate UDP sessions. When the default interface disappears, the
+last local attachment is retained until a new interface is available.
 
 Shutdown stops network and rule-set callbacks, disables interception, closes
 listeners and UDP sessions, detaches filters or BPF links,
