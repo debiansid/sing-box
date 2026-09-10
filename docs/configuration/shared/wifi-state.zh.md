@@ -15,7 +15,7 @@ sing-box 可以监控 Wi-Fi 状态，以启用基于 `wifi_ssid` 和 `wifi_bssid
 
 | 平台            | 支持              | 备注           |
 |-----------------|------------------|----------------|
-| Android         | :material-check: | 仅图形客户端    |
+| Android         | :material-check: | 图形客户端；核心需具备 nl80211 访问权限 |
 | Apple 平台      | :material-check: | 仅图形客户端    |
 | Linux           | :material-check: | 需要支持的守护进程 |
 | Windows         | :material-check: | WLAN API       |

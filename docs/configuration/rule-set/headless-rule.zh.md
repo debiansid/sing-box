@@ -283,7 +283,7 @@ Available values: `wifi`, `cellular`, `ethernet` and `other`.
 
 !!! quote ""
 
-    仅在 Android 与 Apple 平台图形客户端中支持。
+    支持 Android（核心需具备 nl80211 访问权限）、Apple 平台图形客户端和 Linux。
 
 匹配 WiFi SSID。
 
@@ -291,7 +291,7 @@ Available values: `wifi`, `cellular`, `ethernet` and `other`.
 
 !!! quote ""
 
-    仅在 Android 与 Apple 平台图形客户端中支持。
+    支持 Android（核心需具备 nl80211 访问权限）、Apple 平台图形客户端和 Linux。
 
 #### invert
 

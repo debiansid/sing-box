@@ -290,7 +290,7 @@ Match default interface address.
 
 !!! quote ""
 
-    Only supported in graphical clients on Android and Apple platforms.
+    Supported on Android (core requires nl80211 access), in graphical clients on Apple platforms, or on Linux.
 
 Match WiFi SSID.
 
@@ -298,7 +298,7 @@ Match WiFi SSID.
 
 !!! quote ""
 
-    Only supported in graphical clients on Android and Apple platforms.
+    Supported on Android (core requires nl80211 access), in graphical clients on Apple platforms, or on Linux.
 
 Match WiFi BSSID.
 
