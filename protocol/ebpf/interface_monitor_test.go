@@ -229,8 +229,9 @@ func (m *testNetworkUpdateMonitor) callbackCount() int {
 }
 
 type testDefaultInterfaceMonitor struct {
-	current   *control.Interface
-	callbacks list.List[tun.DefaultInterfaceUpdateCallback]
+	current      *control.Interface
+	callbacks    list.List[tun.DefaultInterfaceUpdateCallback]
+	myInterfaces []string
 }
 
 func (m *testDefaultInterfaceMonitor) Start() error { return nil }
@@ -251,9 +252,11 @@ func (m *testDefaultInterfaceMonitor) UnregisterCallback(element *list.Element[t
 	m.callbacks.Remove(element)
 }
 
-func (m *testDefaultInterfaceMonitor) RegisterMyInterface(string) {}
+func (m *testDefaultInterfaceMonitor) RegisterMyInterface(name string) {
+	m.myInterfaces = append(m.myInterfaces, name)
+}
 
-func (m *testDefaultInterfaceMonitor) MyInterfaces() []string { return nil }
+func (m *testDefaultInterfaceMonitor) MyInterfaces() []string { return m.myInterfaces }
 
 func (m *testDefaultInterfaceMonitor) callbackCount() int {
 	return len(m.callbacks.Array())
