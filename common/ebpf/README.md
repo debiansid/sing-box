@@ -193,8 +193,10 @@ The worker refreshes the interface inventory, follows the current default
 interface for local interception, and compares every attachment by name,
 ifindex, framing, role, and installed filter identity. It also validates policy
 routing and the delivery link after network changes. Missing rules, routes,
-filters, delivery link state, and delivery sysctls are restored without periodic
-polling.
+filters, delivery link state, and delivery sysctls are restored after network
+events, with bounded retries for recoverable failures and a low-frequency
+drift check every ten minutes. VPN readiness sampling remains independent of
+that recovery backoff.
 
 When `endpoint_connected_bypass` is enabled, the same worker also samples
 matching UP `tun*` and `ipsec*` interfaces with global-unicast addresses once per
