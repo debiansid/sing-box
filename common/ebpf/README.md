@@ -13,6 +13,9 @@ and lifecycle owner.
 The runtime has four concrete backend choices: local `tc` or `cgroup`, and
 shared `socket_assign` or `packet_rewrite`. The defaults are local `cgroup` and
 shared `packet_rewrite`; the inbound may enable either path independently.
+`local.endpoint_connected_bypass` is TC-only: enabling it selects local `tc`
+when `local.data_plane` is omitted and rejects an explicit local `cgroup` data
+plane or `local.cgroup_path`.
 `sing-box tools ebpf status` accepts the same choices through
 `--local-data-plane` and `--shared-data-plane`; its `--mode` flags select the
 default local `cgroup` and shared `packet_rewrite` paths. The status command
@@ -112,8 +115,18 @@ The programs first apply path-specific address-family, protocol, fragment,
 service-traffic, and safety gates. FakeIP forces interception before other
 policy. DNS `off` bypasses and DNS `hijack` intercepts before UID or shared source
 policy. DNS `respect_policy` applies UID/source policy first, then intercepts
-before host, private-address, and destination-CIDR bypass. Other traffic applies
-the same source policy followed by those destination bypasses.
+before host, private-address, and destination-CIDR bypass. For local traffic,
+`endpoint_connected_bypass` is evaluated after these FakeIP/DNS rules and before
+ordinary UID, port, host, private-address, and destination-CIDR bypass. It has
+one configuration group and matches the selected network, destination CIDR,
+and destination port together. An unmatched flow keeps the original local
+policy, while a matched flow is forced into interception while VPN is NOT
+READY, and the same match native-bypasses TC once VPN is READY. Force
+interception only keeps the flow in eBPF-in; normal Router and
+route-rule/default-outbound selection, including `clash_mode`, remains
+responsible for routing. If the configuration is absent or disabled, local
+selection is unchanged. Other traffic applies the original path-specific
+policy.
 
 Local egress checks the socket-cookie self-bypass map. Shared source CIDR and
 MAC include/exclude policies are evaluated only on the shared path.
@@ -126,6 +139,7 @@ MAC include/exclude policies are evaluated only on the shared path.
 | sockets and assignments | `SOCKMAP` (optional), `LRU_HASH` | Preferred TCP listener fallback, original-flow metadata, and local self-bypass cookies. Legacy TCP lookup does not use SOCKMAP. |
 | prefix policy | `LPM_TRIE` | UID ranges, source CIDRs, and destination bypass CIDRs. |
 | exact policy | `HASH` | Host addresses and shared source MAC policy. |
+| endpoint observability | `PERCPU_ARRAY` | Internal force-intercept and native-bypass packet-hit counters for endpoint matches. |
 | packet rewrite scratch | `PERCPU_ARRAY` | Per-CPU scratch and counters used only by shared `packet_rewrite`. |
 
 ### LPM trie kernel safety
@@ -143,6 +157,14 @@ fixed BTF type is positively visible. If the fix cannot be confirmed, setup
 fails before issuing an LPM update. Other kernel capabilities continue to use
 runtime map, program, and helper probes; this version check is limited to the
 LPM update safety exception.
+
+Endpoint CIDRs use dedicated TC-only IPv4/IPv6 LPM tries and endpoint ports use
+a dedicated TC-only hash map. A dynamic control flag records VPN readiness;
+readiness transitions update only that control state and do not rebuild the backend,
+attachments, or static policy maps. Repeated samples that preserve the committed
+READY value do not write the control map again. Dedicated per-CPU counters record
+matched endpoint packets that take the force-intercept and native-bypass outcomes;
+they are internal dataplane diagnostics and do not affect policy decisions.
 
 The object is generated for little-endian and big-endian BPF without BTF or
 CO-RE sections. Source and object hashes are recorded in
@@ -174,6 +196,25 @@ routing and the delivery link after network changes. Missing rules, routes,
 filters, delivery link state, and delivery sysctls are restored without periodic
 polling.
 
+When `endpoint_connected_bypass` is enabled, the same worker also samples
+matching UP `tun*` and `ipsec*` interfaces with global-unicast addresses once per
+second, excluding registered sing-box-owned names from `MyInterfaces()`. This
+excludes registered self interfaces only, not every unrelated third-party TUN.
+For ordinary TUN, the first successful RX/TX sample only establishes the
+baseline; read or parse failures leave the last successful baseline unchanged.
+A later sample must observe
+RX or TX growth. IPsec becomes ready when it has a non-local-table unicast
+default route in the current sample; IPsec readiness is not latched. TUN activity
+is latched only for the same eligible interface name and ifindex: silence or
+counter regression retains that local latch, but disappearance, identity change,
+or becoming self-owned removes both baseline and latch. A replacement establishes
+a new baseline. Global desired READY is true only if a currently eligible
+interface is ready; another merely active interface cannot retain old READY.
+Every candidate is sampled. Periodic and event-driven samples share one
+transition owner; only successful control-map writes commit boolean transitions.
+Failed writes preserve committed readiness for a later retry. A source-only
+change does not cause another control-map write.
+
 Configured shared interfaces that are absent at startup are attached when they
 appear; deleted or recreated interfaces are detached or replaced. A configured
 shared interface is temporarily excluded while it is the current default
@@ -200,6 +241,16 @@ listeners and removes only routes owned by this instance. A path that is
 disabled does not load its object or create its network state.
 
 ## Generation and tests
+
+Successful capability probes and program attachment do not prove end-to-end
+forwarding on a vendor kernel. In an Android 6.1 hotspot test, shared
+`socket_assign` recorded IPv6 TCP assignments but the receive path returned
+immediate resets before userspace accepted the connections. With only the
+shared backend changed, `packet_rewrite` carried bidirectional IPv6 TCP through
+the same routing policy and proxy. The exact cause remains unconfirmed; this is
+not a claim that all Android 6.1 kernels are affected. For Ethernet downstreams,
+the default `packet_rewrite` is an available workaround, not a repair to
+`socket_assign`. Backend changes are explicit; there is no automatic fallback.
 
 Generated objects use Android NDK r29 Clang 21:
 
