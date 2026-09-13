@@ -76,6 +76,15 @@ func TestTCLocalFilterHealthCheckDetectsAndRepairsExternalDeletion(t *testing.T)
 		t.Fatalf("detach the local egress filter to simulate drift: %v", err)
 	}
 
+	dataPlane := &tcDataPlane{backend: backend, attachments: []*tcInterfaceAttachment{attachment}, priority: priority}
+	changed, err := dataPlane.attachmentStateChanged("", nil)
+	if err != nil {
+		t.Fatalf("attachmentStateChanged during handoff: %v", err)
+	}
+	if !changed {
+		t.Fatal("attachmentStateChanged missed the deleted filter while the default interface was unavailable")
+	}
+
 	attached, err = attachment.filtersAttached(priority, backend)
 	if err != nil {
 		t.Fatalf("filtersAttached: %v", err)
@@ -85,7 +94,6 @@ func TestTCLocalFilterHealthCheckDetectsAndRepairsExternalDeletion(t *testing.T)
 	}
 
 	staleFilter := attachment.localFilter
-	dataPlane := &tcDataPlane{backend: backend, attachments: []*tcInterfaceAttachment{attachment}, priority: priority}
 	if err = dataPlane.reconcile("sbtclocalh0", nil, nil); err != nil {
 		t.Fatalf("reconcile did not repair the missing local egress filter: %v", err)
 	}

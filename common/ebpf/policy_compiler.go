@@ -23,6 +23,11 @@ type PolicyConfig struct {
 	ExcludeSourceMAC    []MACAddress
 	LocalBypassPort     []PortRange
 	SharedBypassPort    []PortRange
+	EndpointEnabled     bool
+	EndpointEnableTCP   bool
+	EndpointEnableUDP   bool
+	EndpointCIDR        []netip.Prefix
+	EndpointPort        []PortRange
 }
 
 // CompiledPolicy is an immutable policy snapshot shared by all eBPF data
@@ -41,6 +46,9 @@ type CompiledPolicy struct {
 	excludeSourceMAC        []MACAddress
 	localBypassPortEntries  []tcPortKey
 	sharedBypassPortEntries []tcPortKey
+	endpointEnabled         bool
+	endpoint                dualStackCIDRPrefixes
+	endpointPortEntries     []tcPortKey
 }
 
 func CompilePolicy(config PolicyConfig) (CompiledPolicy, error) {
@@ -80,6 +88,35 @@ func CompilePolicy(config PolicyConfig) (CompiledPolicy, error) {
 	if err != nil {
 		return CompiledPolicy{}, E.Cause(err, "compile shared eBPF port bypass policy")
 	}
+	var endpointIPv4, endpointIPv6 []netip.Prefix
+	var endpointPortEntries []tcPortKey
+	if config.EndpointEnabled {
+		if len(config.EndpointCIDR) == 0 || len(config.EndpointPort) == 0 {
+			return CompiledPolicy{}, E.New("TC eBPF endpoint policy requires CIDR and port entries")
+		}
+		endpointIPv4, endpointIPv6, err = compileBypassCIDRPolicy(config.EndpointCIDR)
+		if err != nil {
+			return CompiledPolicy{}, E.Cause(err, "compile TC eBPF endpoint CIDR policy")
+		}
+		if len(endpointIPv4) > maxBypassCIDRPolicyEntries || len(endpointIPv6) > maxBypassCIDRPolicyEntries {
+			return CompiledPolicy{}, E.New("TC eBPF endpoint CIDR policy exceeds map capacity")
+		}
+		endpointEnableTCP := config.EndpointEnableTCP
+		endpointEnableUDP := config.EndpointEnableUDP
+		if !endpointEnableTCP && !endpointEnableUDP {
+			endpointEnableTCP = true
+			endpointEnableUDP = true
+		}
+		endpointEnableTCP = endpointEnableTCP && config.EnableTCP
+		endpointEnableUDP = endpointEnableUDP && config.EnableUDP
+		if !endpointEnableTCP && !endpointEnableUDP {
+			return CompiledPolicy{}, E.New("TC eBPF endpoint network does not overlap enabled inbound network")
+		}
+		endpointPortEntries, err = compilePortPolicy(config.EndpointPort, endpointEnableTCP, endpointEnableUDP)
+		if err != nil {
+			return CompiledPolicy{}, E.Cause(err, "compile TC eBPF endpoint port policy")
+		}
+	}
 	local := config.Local
 	local.IncludeUID = slices.Clone(local.IncludeUID)
 	local.ExcludeUID = slices.Clone(local.ExcludeUID)
@@ -97,6 +134,9 @@ func CompilePolicy(config PolicyConfig) (CompiledPolicy, error) {
 		excludeSourceMAC:        slices.Clone(config.ExcludeSourceMAC),
 		localBypassPortEntries:  localBypassPortEntries,
 		sharedBypassPortEntries: sharedBypassPortEntries,
+		endpointEnabled:         config.EndpointEnabled,
+		endpoint:                dualStackCIDRPrefixes{ipv4: endpointIPv4, ipv6: endpointIPv6},
+		endpointPortEntries:     endpointPortEntries,
 	}, nil
 }
 

@@ -94,6 +94,10 @@ type retryLoopHarness struct {
 }
 
 func newRetryLoopHarness(t *testing.T) *retryLoopHarness {
+	return newRetryLoopHarnessWithVPN(t, nil, nil)
+}
+
+func newRetryLoopHarnessWithVPN(t *testing.T, ticks <-chan time.Time, syncVPN func()) *retryLoopHarness {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	timer := &testRetryTimer{
@@ -119,11 +123,11 @@ func newRetryLoopHarness(t *testing.T) *retryLoopHarness {
 		// pinned to Settled so they never affect the arm/disarm sequence
 		// these tests assert on. interface_monitor_retry_components_test.go
 		// covers those two components' own independence directly.
-		runTCInterfaceUpdateLoop(ctx, harness.updates, func(context.Context) tcUpdateOutcome {
+		runTCInterfaceUpdateLoopWithVPN(ctx, harness.updates, func(context.Context) tcUpdateOutcome {
 			outcome := harness.update()
 			harness.ran <- struct{}{}
 			return tcUpdateOutcome{sharedRewrite: outcome, general: tcSharedRewriteSettled, bypassRuleSet: tcSharedRewriteSettled}
-		}, nil)
+		}, nil, ticks, syncVPN)
 	}()
 	t.Cleanup(func() {
 		cancel()
@@ -197,6 +201,29 @@ func TestNextTCRetryDelay(t *testing.T) {
 		if got := nextTCRetryDelay(testCase.current); got != testCase.next {
 			t.Fatalf("nextTCRetryDelay(%s) = %s, want %s", testCase.current, got, testCase.next)
 		}
+	}
+}
+
+func TestRetryLoopVPNSamplePreservesPendingRecovery(t *testing.T) {
+	ticks := make(chan time.Time, 1)
+	sampled := make(chan struct{}, 1)
+	harness := newRetryLoopHarnessWithVPN(t, ticks, func() { sampled <- struct{}{} })
+	harness.round(t, harness.notify, tcSharedRewriteRecoverable)
+	ticks <- time.Now()
+	select {
+	case <-sampled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("VPN sample did not run during pending recovery")
+	}
+	harness.expectNoAction(t)
+	select {
+	case <-harness.ran:
+		t.Fatal("VPN sample unexpectedly reconciled TC interfaces")
+	default:
+	}
+	action := harness.round(t, harness.fire(t), tcSharedRewriteRecoverable)
+	if !action.armed || action.delay != 2*tcRetryInitialDelay {
+		t.Fatalf("VPN sample changed pending retry: %+v", action)
 	}
 }
 
