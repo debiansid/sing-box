@@ -67,6 +67,7 @@ type Inbound struct {
 	selfBypass               *commonEBPF.SelfBypass
 	selfBypassCgroup         bool
 	processTracker           *commonEBPF.ProcessTracker
+	processInfoCache         *processInfoCache
 	usePlatformProcessFinder bool
 	listeners                internalListenerSet
 	udpNat                   *udpnat.Service
@@ -281,6 +282,7 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 		localDataPlane:      localDataPlane,
 		cgroupPath:          cgroupPath,
 		selfBypass:          selfBypass,
+		processInfoCache:    newProcessInfoCache(),
 		enableTCP:           enableTCP,
 		enableUDP:           enableUDP,
 		localDNSMode:        localDNSMode,

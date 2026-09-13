@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/netip"
 	"syscall"
+	"time"
 
 	"github.com/sagernet/sing-box/adapter"
 	commonEBPF "github.com/sagernet/sing-box/common/ebpf"
@@ -91,6 +92,10 @@ func (i *Inbound) lookupProcessInfo(socketCookie uint64) *adapter.ConnectionOwne
 		i.logger.Trace("lookup eBPF socket process owner: ", err)
 		return nil
 	}
+	cacheKey := processInfoCacheKey{processID: owner.ProcessID, userID: owner.UserID}
+	if processInfo, loaded := i.processInfoCache.load(cacheKey, time.Now()); loaded {
+		return processInfo
+	}
 	processInfo, pathErr := process.FindProcessInfoByPID(
 		owner.ProcessID,
 		owner.UserID,
@@ -98,6 +103,9 @@ func (i *Inbound) lookupProcessInfo(socketCookie uint64) *adapter.ConnectionOwne
 	)
 	if pathErr != nil {
 		i.logger.Trace("resolve eBPF socket process path: ", pathErr)
+	}
+	if pathErr == nil {
+		i.processInfoCache.store(cacheKey, processInfo, time.Now())
 	}
 	return processInfo
 }
