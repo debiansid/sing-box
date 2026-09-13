@@ -15,6 +15,7 @@ import (
 const (
 	integrationTestEnv = "SING_BOX_EBPF_INTEGRATION"
 	testTCActShot      = uint32(2)
+	testTCActRedirect  = uint32(7)
 	testTCActUnspec    = ^uint32(0)
 )
 
@@ -65,6 +66,17 @@ func testIPv4TCPPacket(source, destination netip.Addr, sourcePort, destinationPo
 	tcp[12] = 5 << 4
 	tcp[13] = 0x02
 	return packet
+}
+
+func testIPv4UDPPacket(source, destination netip.Addr, sourcePort, destinationPort uint16) []byte {
+	packet := testIPv4TCPPacket(source, destination, sourcePort, destinationPort)
+	const ethernetHeaderLength = 14
+	const ipv4HeaderLength = 20
+	const udpHeaderLength = 8
+	ip := packet[ethernetHeaderLength:]
+	binary.BigEndian.PutUint16(ip[2:4], ipv4HeaderLength+udpHeaderLength)
+	ip[9] = unix.IPPROTO_UDP
+	return packet[:ethernetHeaderLength+ipv4HeaderLength+udpHeaderLength]
 }
 
 func testIPv6TCPPacket(source, destination netip.Addr, sourcePort, destinationPort uint16, fragment *uint16) []byte {

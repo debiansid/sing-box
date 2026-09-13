@@ -132,6 +132,7 @@ func TestCompilePolicySnapshot(t *testing.T) {
 	includeUID := []UIDRange{{Start: 1000, End: 1002}}
 	includeSource := []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}
 	includeMAC := []MACAddress{{0x02, 0, 0, 0, 0, 1}}
+	endpointCIDR := []netip.Prefix{netip.MustParsePrefix("203.0.113.1/24")}
 	policy, err := CompilePolicy(PolicyConfig{
 		EnableTCP:           true,
 		EnableUDP:           true,
@@ -142,13 +143,17 @@ func TestCompilePolicySnapshot(t *testing.T) {
 		IncludeSourceCIDR:   includeSource,
 		IncludeSourceMAC:    includeMAC,
 		LocalBypassPort:     []PortRange{{Start: 443, End: 443}},
+		EndpointEnabled:     true,
+		EndpointCIDR:        endpointCIDR,
+		EndpointPort:        []PortRange{{Start: 4500, End: 4500}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(policy.uidEntries) == 0 || !policy.uidDefaultBypass ||
 		len(policy.includeSource.ipv4) != 1 || len(policy.includeSourceMAC) != 1 ||
-		len(policy.localBypassPortEntries) != 2 {
+		len(policy.localBypassPortEntries) != 2 || !policy.endpointEnabled ||
+		len(policy.endpoint.ipv4) != 1 || len(policy.endpointPortEntries) != 2 {
 		t.Fatalf("compiled policy omitted configured rules: %+v", policy)
 	}
 	if policy.fakeIPIPv4 != netip.MustParsePrefix("198.18.0.0/15") {
@@ -157,10 +162,78 @@ func TestCompilePolicySnapshot(t *testing.T) {
 	includeUID[0].Start = 2000
 	includeSource[0] = netip.MustParsePrefix("203.0.113.0/24")
 	includeMAC[0][0] = 0x06
+	endpointCIDR[0] = netip.MustParsePrefix("198.51.100.0/24")
 	if policy.local.IncludeUID[0].Start != 1000 ||
 		policy.includeSource.ipv4[0] != netip.MustParsePrefix("192.0.2.0/24") ||
-		policy.includeSourceMAC[0][0] != 0x02 {
+		policy.includeSourceMAC[0][0] != 0x02 ||
+		policy.endpoint.ipv4[0] != netip.MustParsePrefix("203.0.113.0/24") {
 		t.Fatal("compiled policy retained mutable input slices")
+	}
+}
+
+func TestCompileEndpointPolicyRequiresCIDRAndPort(t *testing.T) {
+	for _, config := range []PolicyConfig{
+		{EnableTCP: true, EndpointEnabled: true, EndpointPort: []PortRange{{Start: 4500, End: 4500}}},
+		{EnableTCP: true, EndpointEnabled: true, EndpointCIDR: []netip.Prefix{netip.MustParsePrefix("203.0.113.0/24")}},
+	} {
+		if _, err := CompilePolicy(config); err == nil {
+			t.Fatalf("invalid endpoint policy was accepted: %+v", config)
+		}
+	}
+}
+
+func TestCompileEndpointNetworkPolicy(t *testing.T) {
+	endpointCIDR := []netip.Prefix{netip.MustParsePrefix("203.0.113.0/24")}
+	endpointPort := []PortRange{{Start: 4500, End: 4500}}
+	for _, test := range []struct {
+		name      string
+		config    PolicyConfig
+		protocols []uint8
+	}{
+		{
+			name: "default TCP and UDP",
+			config: PolicyConfig{
+				EnableTCP: true, EnableUDP: true, EndpointEnabled: true,
+				EndpointCIDR: endpointCIDR, EndpointPort: endpointPort,
+			},
+			protocols: []uint8{ProtocolTCP, ProtocolUDP},
+		},
+		{
+			name: "TCP only",
+			config: PolicyConfig{
+				EnableTCP: true, EnableUDP: true, EndpointEnabled: true, EndpointEnableTCP: true,
+				EndpointCIDR: endpointCIDR, EndpointPort: endpointPort,
+			},
+			protocols: []uint8{ProtocolTCP},
+		},
+		{
+			name: "UDP only",
+			config: PolicyConfig{
+				EnableTCP: true, EnableUDP: true, EndpointEnabled: true, EndpointEnableUDP: true,
+				EndpointCIDR: endpointCIDR, EndpointPort: endpointPort,
+			},
+			protocols: []uint8{ProtocolUDP},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			policy, err := CompilePolicy(test.config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			protocols := make([]uint8, 0, len(policy.endpointPortEntries))
+			for _, entry := range policy.endpointPortEntries {
+				protocols = append(protocols, entry.Protocol)
+			}
+			if !slices.Equal(protocols, test.protocols) {
+				t.Fatalf("unexpected endpoint protocols: got %v, want %v", protocols, test.protocols)
+			}
+		})
+	}
+	if _, err := CompilePolicy(PolicyConfig{
+		EnableUDP: true, EndpointEnabled: true, EndpointEnableTCP: true,
+		EndpointCIDR: endpointCIDR, EndpointPort: endpointPort,
+	}); err == nil {
+		t.Fatal("endpoint network without an enabled inbound protocol was accepted")
 	}
 }
 
