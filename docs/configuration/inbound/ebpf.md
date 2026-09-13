@@ -40,7 +40,13 @@ The eBPF inbound does not use [Listen Fields](/configuration/shared/listen/).
     "include_package": [],
     "exclude_package": [],
     "bypass_port": [],
-    "bypass_port_range": []
+    "bypass_port_range": [],
+    "endpoint_connected_bypass": {
+      "enabled": false,
+      "network": ["tcp", "udp"],
+      "ip_cidr": [],
+      "port": []
+    }
   },
   "shared": {
     "enabled": true,
@@ -167,6 +173,10 @@ Selects the local interception backend. `cgroup` is the default and intercepts
 sockets in the visible cgroup v2 hierarchy. Set `tc` explicitly to intercept
 traffic on the current default interface instead.
 
+When `local.endpoint_connected_bypass.enabled` is `true`, omitting
+`local.data_plane` selects `tc` automatically. Explicit `cgroup` and
+`local.cgroup_path` are incompatible with this TC-only policy.
+
 #### local.cgroup_path
 
 Limits `data_plane: cgroup` interception to the specified absolute cgroup v2
@@ -239,6 +249,47 @@ warning when port 53 is listed.
 Destination port ranges to bypass, in `start:end` format. The range is
 inclusive.
 
+#### local.endpoint_connected_bypass
+
+One local VPN endpoint policy configuration group is supported.
+
+This policy is implemented only by the local TC data plane. Enabling it selects
+`tc` when `local.data_plane` is omitted; it cannot be combined with an explicit
+local `cgroup` data plane or `local.cgroup_path`.
+
+When enabled, `ip_cidr` and `port` are required. `network` accepts `tcp` and/or
+`udp` and defaults to both protocols enabled by the inbound. A local flow must
+match the selected network, a destination CIDR, and a destination port. While
+no matching VPN interface is ready, matching traffic is forced through this
+inbound, even if ordinary UID/package, bypass-port, host, private, or
+destination-CIDR policy would bypass it. Routing then follows the normal
+sing-box Router, `route.rules`, `clash_mode`, and default outbound.
+
+Candidates are UP `tun*` or `ipsec*` interfaces with a global-unicast address,
+excluding registered sing-box-owned names from `MyInterfaces()`. This excludes
+registered self interfaces only; it cannot identify every unrelated third-party
+TUN. An ordinary TUN's first successful packet-counter sample only establishes
+the RX/TX baseline; read or parse failures do not update that baseline. A later
+sample must observe RX or TX growth. An
+active `ipsec*` interface becomes ready when it has a non-local-table unicast
+default route. While ready, matching endpoint traffic native-bypasses TC.
+
+Ordinary TUN READY is latched only for the same eligible `(ifindex, name)`, even
+if counters stop increasing or regress. Disappearance, identity change, or
+becoming sing-box-owned removes its baseline and latch; a replacement must
+establish a new baseline. IPsec READY is not latched: its qualifying default
+route must exist in the current sample. Global desired READY is the logical OR
+of currently eligible per-interface readiness, not the previous global value.
+All candidates are sampled. Boolean transitions are committed only after a
+successful TC control write; failures preserve committed state and retry later.
+A ready-source change alone does not rewrite TC control.
+There is no grace or debounce period. The endpoint decision is tri-state: an
+unmatched flow keeps the original local policy; a matched flow while NOT READY is forced through the
+inbound; and a matched flow while READY native-bypasses TC. FakeIP and DNS
+mandatory interception precedence is unchanged. If this object is absent or
+`enabled` is `false`, the original local policy applies. This option affects
+only local traffic; shared traffic is completely unchanged.
+
 ### shared
 
 #### shared.enabled
@@ -268,9 +319,10 @@ and MAC selection is applied before destination port 53 is intercepted.
 ==Required when shared interception is enabled==
 
 Downstream interfaces where client traffic enters the host. The default
-`packet_rewrite` data plane requires Ethernet framing. Set `socket_assign`
-explicitly for Ethernet/IPoE, raw-IP (including Android rmnet), PPP/PPPoE, or
-IPIP/SIT/GRE tunnel interfaces.
+`packet_rewrite` data plane requires Ethernet framing. Both backends support
+Ethernet/IPoE; `packet_rewrite` remains the default for these interfaces. Set
+`socket_assign` explicitly for raw-IP (including Android rmnet), PPP/PPPoE, or
+IPIP/SIT/GRE tunnel interfaces that do not provide Ethernet framing.
 Multiple interfaces may be specified; interfaces that are temporarily absent
 are retried after network updates. An interface is temporarily excluded from
 shared interception while it is the current default upstream, then restored
@@ -361,6 +413,10 @@ inclusive.
 - Fragmented IPv4 and IPv6 datagrams bypass interception. IPv6 atomic fragments
   are processed as ordinary IPv6 packets.
 - Interception state is restored automatically after network changes.
+- Capability probes and successful attachment do not replace IPv4/IPv6 TCP/UDP
+  forwarding tests on the target kernel. If `socket_assign` fails on an Ethernet
+  downstream, explicitly selecting `packet_rewrite` can provide an alternative;
+  there is no automatic backend fallback.
 
 See [eBPF kernel requirements](/manual/misc/ebpf-kernel-requirements/) before
 enabling this inbound on vendor or Android kernels.
