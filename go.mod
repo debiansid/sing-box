@@ -4,7 +4,7 @@ go 1.25.5
 
 require (
 	filippo.io/age v1.3.1
-	github.com/CHIZI-0618/sing-ebpf v0.1.0-alpha.8.0.20260915044104-240e9992f08b
+	github.com/CHIZI-0618/sing-ebpf v0.1.0-alpha.8.0.20260915062432-c52c21d4066a
 	github.com/anthropics/anthropic-sdk-go v1.26.0
 	github.com/caddyserver/certmagic v0.25.3-0.20260421143802-60d9d8b415d6
 	github.com/caddyserver/zerossl v0.1.5
@@ -87,6 +87,7 @@ require (
 )
 
 replace (
+	github.com/CHIZI-0618/sing-ebpf => github.com/debiansid/sing-ebpf v0.0.0-20260915110011-98c82044b9ec
 	github.com/sagernet/sing-anytls => github.com/reF1nd/sing-anytls v0.0.0-20260905062301-7eeaaeb4fb19
 	github.com/sagernet/sing-snell => github.com/reF1nd/sing-snell v0.0.0-20260905064728-48a266fb2745
 )
@@ -207,3 +208,5 @@ require (
 	lukechampine.com/blake3 v1.3.0 // indirect
 	zombiezen.com/go/capnproto2 v2.18.2+incompatible // indirect
 )
+
+replace github.com/sagernet/sing-tun => github.com/reF1nd/sing-tun v0.9.4-0.20260915103927-7512d34d3229

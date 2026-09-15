@@ -29,6 +29,17 @@ func TestNeedsLPMPolicyUsesCompiledEntries(t *testing.T) {
 		t.Fatal("a compiled UID entry requires an LPM trie update")
 	}
 
+	inbound.localPolicy = commonEBPF.LocalPolicy{}
+	inbound.localDataPlane = localDataPlaneTC
+	inbound.endpointConnectedBypass.Enabled = true
+	if !inbound.needsLPMPolicy() {
+		t.Fatal("an enabled local TC endpoint requires CIDR LPM trie updates")
+	}
+	inbound.endpointConnectedBypass.Enabled = false
+	if inbound.needsLPMPolicy() {
+		t.Fatal("a disabled endpoint does not require LPM trie updates")
+	}
+
 	inbound.localEnabled = false
 	inbound.localPolicy = commonEBPF.LocalPolicy{}
 	inbound.sharedEnabled = true
