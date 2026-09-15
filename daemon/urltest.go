@@ -11,12 +11,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/sagernet/sing-anytls"
 	"github.com/sagernet/sing-box/adapter"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/protocol/group"
-	"github.com/sagernet/sing-mux"
-	"github.com/sagernet/sing-snell"
 	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
@@ -204,12 +201,7 @@ func (d ipv6ProbeDialer) DialContext(ctx context.Context, network string, destin
 func probeURL(ctx context.Context, link string, detour N.Dialer) (uint16, error) {
 	multiplexOutbound, isMultiplexOutbound := common.Cast[adapter.OutboundWithMultiplex](detour)
 	if isMultiplexOutbound && multiplexOutbound.MultiplexEnabled() {
-		warmContext := adapter.ContextWithKeepSession(ctx)
-		warmContext = mux.ContextWithKeepSession(warmContext)
-		warmContext = anytls.ContextWithKeepSession(warmContext)
-		warmContext = contextWithQUICKeepSession(warmContext)
-		warmContext = snell.ContextWithKeepSession(warmContext)
-		_, err := probeHTTP(warmContext, link, detour)
+		_, err := probeHTTP(ctx, link, detour)
 		if err != nil {
 			return 0, err
 		}

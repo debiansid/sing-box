@@ -202,8 +202,8 @@ func testSnellSelf(t *testing.T, serverPort uint16, clientPort uint16, version i
 }
 
 func snellTestDNSOptions() *option.DNSOptions {
-	predefined := new(badjson.TypedMap[string, option.HostsDNSPredefinedValue])
-	predefined.Put(snellTestDomain, option.HostsDNSPredefinedValue{Addresses: []netip.Addr{netip.AddrFrom4([4]byte{127, 0, 0, 1})}})
+	predefined := new(badjson.TypedMap[string, badoption.Listable[netip.Addr]])
+	predefined.Put(snellTestDomain, badoption.Listable[netip.Addr]{netip.AddrFrom4([4]byte{127, 0, 0, 1})})
 	return &option.DNSOptions{RawDNSOptions: option.RawDNSOptions{
 		Servers: []option.DNSServerOptions{{
 			Type: C.DNSTypeHosts,
