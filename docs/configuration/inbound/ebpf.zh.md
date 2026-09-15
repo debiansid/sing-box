@@ -4,6 +4,30 @@ icon: material/lan-connect
 
 # eBPF
 
+### local.endpoint_connected_bypass
+
+仅支持一个本地 TC endpoint 配置对象，例如：
+
+```json
+"endpoint_connected_bypass": {
+  "enabled": true,
+  "network": ["tcp", "udp"],
+  "ip_cidr": ["203.0.113.0/24"],
+  "port": [500, 4500]
+}
+```
+
+目标 CIDR 与端口必须同时匹配。VPN 未就绪时强制进入正常 Router；就绪后在
+本地 TC 原生绕过。不选择出站，不影响未匹配流量或 shared 策略，FakeIP/DNS
+语义优先。启用后省略的本地 `data_plane` 默认为 `tc`，不允许显式 `cgroup`、
+`cgroup_path` 或禁用 local。CIDR 和端口列表必须非空，省略 network 表示 TCP/UDP。
+
+VPN 候选为 UP 且有全局单播地址的 `tun*` / `ipsec*` 接口，排除 sing-box 自身接口。
+TUN 首次读取仅建立基线，后续 RX/TX 增长才就绪；同名接口 ifindex 改变会重建基线。
+IPsec 需要非 local 表的单播默认路由。没有就绪候选时立即清除 READY。
+每秒采样和网络事件仅更新控制位，不重建资源。core socket 复用现有
+underlying/protect 和 self-bypass 链，不对普通 VPN payload 全局 protect 或打标。
+
 !!! quote "sing-box 1.15.0 中的更改"
 
     eBPF 入站仍为实验功能，仅在带有 `with_ebpf` 编译标签的 Linux 和 Android
