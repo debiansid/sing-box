@@ -15,7 +15,6 @@ import (
 	"github.com/sagernet/sing-box/common/process"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing/common/buf"
-	sBufio "github.com/sagernet/sing/common/bufio"
 	"github.com/sagernet/sing/common/control"
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
@@ -147,13 +146,13 @@ func (w *tcPacketWriter) WritePacket(buffer *buf.Buffer, destination M.Socksaddr
 	if w.clientState.isCgroupDataPlane() {
 		return w.inbound.listeners.writeUDP(buffer.Bytes(), binding.packetInfo, w.key.Source, binding.redirectAddress)
 	}
-	socket, release, err := w.inbound.udpReplySockets.get(destinationAddress, w.replySocketFactory())
+	entry, release, err := w.inbound.udpReplySockets.get(destinationAddress, w.replySocketFactory())
 	if err != nil {
 		w.logReplySocketError(err)
 		return err
 	}
 	defer release()
-	_, err = socket.WriteToUDPAddrPort(buffer.Bytes(), w.key.Source)
+	_, err = entry.conn.WriteToUDPAddrPort(buffer.Bytes(), w.key.Source)
 	return err
 }
 
@@ -243,15 +242,14 @@ func (w *tcPacketWriter) WritePacketBatch(buffers []*buf.Buffer, destinations []
 	}
 	var batchErr error
 	for source, group := range groups {
-		socket, release, err := w.inbound.udpReplySockets.get(source, w.replySocketFactory())
+		entry, release, err := w.inbound.udpReplySockets.get(source, w.replySocketFactory())
 		if err != nil {
 			w.logReplySocketError(err)
 			buf.ReleaseMulti(group.buffers)
 			batchErr = errors.Join(batchErr, err)
 			continue
 		}
-		writer := sBufio.NewPacketBatchWriter(sBufio.NewPacketConn(socket))
-		err = writer.WritePacketBatch(group.buffers, group.destinations)
+		err = entry.writer.WritePacketBatch(group.buffers, group.destinations)
 		release()
 		batchErr = errors.Join(batchErr, err)
 	}
