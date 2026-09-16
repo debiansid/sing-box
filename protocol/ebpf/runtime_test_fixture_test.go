@@ -62,3 +62,7 @@ func (r *testSharedKernelRuntime) BackendClosed() bool {
 func (r *testSharedKernelRuntime) IsClosed() bool        { return r.closed }
 func (r *testSharedKernelRuntime) RequiresRebuild() bool { return r.rebuild }
 func (r *testSharedKernelRuntime) Close() error          { r.closed = true; return nil }
+
+func (r *testTCRuntime) HealthCheck(string, []string, []netip.Addr) (bool, error) { return true, nil }
+
+func (r *testSharedKernelRuntime) HealthCheck([]string, []netip.Addr) (bool, error) { return true, nil }

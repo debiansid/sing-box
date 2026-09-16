@@ -45,7 +45,7 @@ require (
 	github.com/sagernet/netlink v0.0.0-20260814022025-64455d367bbf
 	github.com/sagernet/nftables v0.3.0-mod.4
 	github.com/sagernet/quic-go v0.61.0-sing-box-mod.7
-	github.com/sagernet/sing v0.9.4
+	github.com/sagernet/sing v0.9.5-0.20260914135810-80bfa92a0607
 	github.com/sagernet/sing-anytls v0.0.0-20260904135308-cec2d74334be
 	github.com/sagernet/sing-cloudflared v0.1.3-0.20260706062323-d9787e794aa3
 	github.com/sagernet/sing-mux v0.3.6
@@ -85,6 +85,7 @@ require (
 )
 
 replace (
+	github.com/CHIZI-0618/sing-ebpf => github.com/debiansid/sing-ebpf v0.0.0-20260917050454-46ea9f96cea5
 	github.com/sagernet/sing-anytls => github.com/reF1nd/sing-anytls v0.0.0-20260905062301-7eeaaeb4fb19
 	github.com/sagernet/sing-snell => github.com/reF1nd/sing-snell v0.0.0-20260905064728-48a266fb2745
 	github.com/sagernet/sing-tun => github.com/reF1nd/sing-tun v0.9.4-0.20260913133025-0af6293f1ef0

@@ -5,6 +5,7 @@ go 1.25.5
 require github.com/sagernet/sing-box v0.0.0
 
 replace (
+	github.com/CHIZI-0618/sing-ebpf => github.com/debiansid/sing-ebpf v0.0.0-20260917050454-46ea9f96cea5
 	github.com/sagernet/sing-anytls => github.com/reF1nd/sing-anytls v0.0.0-20260905062301-7eeaaeb4fb19
 	github.com/sagernet/sing-box => ../
 	github.com/sagernet/sing-snell => github.com/reF1nd/sing-snell v0.0.0-20260905064728-48a266fb2745
@@ -17,7 +18,7 @@ require (
 	github.com/gofrs/uuid/v5 v5.5.1
 	github.com/opencontainers/image-spec v1.1.1
 	github.com/sagernet/quic-go v0.61.0-sing-box-mod.7
-	github.com/sagernet/sing v0.9.4
+	github.com/sagernet/sing v0.9.5-0.20260914135810-80bfa92a0607
 	github.com/sagernet/sing-openvpn v0.0.0-20260729104525-103eb5fe5eb6
 	github.com/sagernet/sing-quic v0.7.0
 	github.com/sagernet/sing-shadowsocks v0.2.8

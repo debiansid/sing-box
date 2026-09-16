@@ -55,3 +55,7 @@ func TestInboundRetainsTCRuntimeAfterFailedClose(t *testing.T) {
 		t.Fatal("inbound retained runtime after successful cleanup")
 	}
 }
+
+func (r *retryTestTCRuntime) HealthCheck(string, []string, []netip.Addr) (bool, error) {
+	return true, nil
+}

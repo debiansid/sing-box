@@ -64,6 +64,11 @@ func (i *Inbound) startInbound() error {
 		ExcludeSourceMAC:    i.sharedExcludeMAC,
 		LocalBypassPort:     i.localBypassPort,
 		SharedBypassPort:    i.sharedBypassPort,
+		EndpointEnabled:     i.endpointConnectedBypass.Enabled,
+		EndpointEnableTCP:   i.endpointEnableTCP,
+		EndpointEnableUDP:   i.endpointEnableUDP,
+		EndpointCIDR:        i.endpointConnectedBypass.IPCIDR,
+		EndpointPort:        i.endpointConnectedPorts,
 	})
 	if err != nil {
 		return E.Cause(err, "compile eBPF policy")
@@ -445,6 +450,9 @@ func (i *Inbound) checkKernelCapabilities() error {
 }
 
 func (i *Inbound) needsLPMPolicy() bool {
+	if i.localTCEnabled() && i.endpointConnectedBypass.Enabled {
+		return true
+	}
 	if (i.localTCEnabled() || i.localCgroupEnabled()) &&
 		(len(i.localPolicy.IncludeUID) > 0 || len(i.localPolicy.ExcludeUID) > 0) {
 		return true
@@ -471,8 +479,6 @@ func combineStartError(startErr error, cleanupErr error) error {
 }
 
 func (i *Inbound) Close() error {
-	i.lifecycleAccess.Lock()
-	defer i.lifecycleAccess.Unlock()
 	return i.closeResources()
 }
 
@@ -482,6 +488,9 @@ func (i *Inbound) cleanupStartFailure() error {
 
 func (i *Inbound) closeResources() error {
 	monitorErr := i.stopTCInterfaceMonitor()
+	// Join the worker before taking the lock it uses for interface updates.
+	i.lifecycleAccess.Lock()
+	defer i.lifecycleAccess.Unlock()
 	i.stopBypassRuleSets()
 	sharedRewriteErr := i.closeSharedRewrite()
 	dataPlane := i.takeTCDataPlane()
