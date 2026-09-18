@@ -85,7 +85,7 @@ require (
 )
 
 replace (
-	github.com/CHIZI-0618/sing-ebpf => github.com/debiansid/sing-ebpf v0.0.0-20260917050454-46ea9f96cea5
+	github.com/CHIZI-0618/sing-ebpf => github.com/debiansid/sing-ebpf v0.0.0-20260918050139-1149539e13af
 	github.com/sagernet/sing-anytls => github.com/reF1nd/sing-anytls v0.0.0-20260905062301-7eeaaeb4fb19
 	github.com/sagernet/sing-snell => github.com/reF1nd/sing-snell v0.0.0-20260905064728-48a266fb2745
 	github.com/sagernet/sing-tun => github.com/reF1nd/sing-tun v0.9.4-0.20260913133025-0af6293f1ef0

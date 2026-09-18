@@ -66,8 +66,8 @@ github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc h1:U9qPSI2PIWSS1
 github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/dblohm7/wingoes v0.0.0-20240119213807-a09d6be7affa h1:h8TfIT1xc8FWbwwpmHn1J5i43Y0uZP97GqasGCzSRJk=
 github.com/dblohm7/wingoes v0.0.0-20240119213807-a09d6be7affa/go.mod h1:Nx87SkVqTKd8UtT+xu7sM/l+LgXs6c0aHrlKusR+2EQ=
-github.com/debiansid/sing-ebpf v0.0.0-20260917050454-46ea9f96cea5 h1:jiOm//GJru2aUaPD+EVxwVLR4Wlugr4j0pKuL89PXEg=
-github.com/debiansid/sing-ebpf v0.0.0-20260917050454-46ea9f96cea5/go.mod h1:xwLo3wcyYrKkzEFUeHIzcFpqQhZ321VPQyOtZ8Q2V9g=
+github.com/debiansid/sing-ebpf v0.0.0-20260918050139-1149539e13af h1:ZXr6/eW5E8jQIowTLMsD553Jg3mjd+DuFEQxHnGDhys=
+github.com/debiansid/sing-ebpf v0.0.0-20260918050139-1149539e13af/go.mod h1:xwLo3wcyYrKkzEFUeHIzcFpqQhZ321VPQyOtZ8Q2V9g=
 github.com/dgrijalva/jwt-go/v4 v4.0.0-preview1 h1:CaO/zOnF8VvUfEbhRatPcwKVWamvbYd8tQGRWacE9kU=
 github.com/dgrijalva/jwt-go/v4 v4.0.0-preview1/go.mod h1:+hnT3ywWDTAFrW5aE+u2Sa/wT555ZqwoCS+pk3p6ry4=
 github.com/dgryski/go-camellia v0.0.0-20191119043421-69a8a13fb23d h1:CPqTNIigGweVPT4CYb+OO2E6XyRKFOmvTHwWRLgCAlE=
