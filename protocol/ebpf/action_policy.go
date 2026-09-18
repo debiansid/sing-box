@@ -211,6 +211,30 @@ func (i *Inbound) compileActionPolicy() (commonEBPF.CompiledPolicy, error) {
 		})
 	}
 	appendPortDecisions(&policy.Shared, i.sharedBypassPort, i.sharedDNSMode, i.enableTCP, i.enableUDP)
+	if i.endpointConnectedBypass.Enabled {
+		for _, prefix := range i.endpointConnectedBypass.IPCIDR {
+			policy.EndpointCIDR = append(policy.EndpointCIDR, commonEBPF.CIDRDecision{
+				Prefix: prefix, Action: commonEBPF.DecisionPass,
+			})
+		}
+		for _, portRange := range i.endpointConnectedPorts {
+			for port := portRange.Start; port <= portRange.End; port++ {
+				if i.endpointEnableTCP && i.enableTCP {
+					policy.EndpointPort = append(policy.EndpointPort, commonEBPF.PortDecision{
+						Protocol: commonEBPF.ProtocolTCP, Port: port, Action: commonEBPF.DecisionPass,
+					})
+				}
+				if i.endpointEnableUDP && i.enableUDP {
+					policy.EndpointPort = append(policy.EndpointPort, commonEBPF.PortDecision{
+						Protocol: commonEBPF.ProtocolUDP, Port: port, Action: commonEBPF.DecisionPass,
+					})
+				}
+				if port == portRange.End {
+					break
+				}
+			}
+		}
+	}
 	i.localInitialDestinations = destinationPassDecisions(policy.Local.DestinationCIDR)
 	i.sharedInitialDestinations = destinationPassDecisions(policy.Shared.DestinationCIDR)
 	if err := validateActionPolicyScope(policy); err != nil {

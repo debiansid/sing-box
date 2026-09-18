@@ -3494,6 +3494,66 @@
       "type": "string",
       "pattern": "^[-+]?(((\\d+(\\.\\d*)?|\\.\\d+)(ns|us|µs|μs|ms|s|m|h|d))+|0)$"
     },
+    "EBPFEndpointConnectedBypassOptions": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "network": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "tcp",
+                "udp"
+              ]
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "tcp",
+                  "udp"
+                ]
+              }
+            }
+          ]
+        },
+        "ip_cidr": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IPPrefix"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/IPPrefix"
+              }
+            }
+          ]
+        },
+        "port": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 65535
+              }
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
     "EBPFLocalOptions": {
       "type": "object",
       "properties": {
@@ -3523,6 +3583,21 @@
         },
         "bypass_private_address": {
           "type": "boolean"
+        },
+        "bypass_rule_set": {
+          "anyOf": [
+            {
+              "type": "string",
+              "x-tag-reference": "rule_set"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "x-tag-reference": "rule_set"
+              }
+            }
+          ]
         },
         "include_uid": {
           "anyOf": [
@@ -3652,6 +3727,9 @@
               }
             }
           ]
+        },
+        "endpoint_connected_bypass": {
+          "$ref": "#/$defs/EBPFEndpointConnectedBypassOptions"
         }
       },
       "additionalProperties": false
@@ -3696,15 +3774,30 @@
         "bypass_private_address": {
           "type": "boolean"
         },
-        "include_source_cidr": {
+        "bypass_rule_set": {
           "anyOf": [
             {
-              "type": "string"
+              "type": "string",
+              "x-tag-reference": "rule_set"
             },
             {
               "type": "array",
               "items": {
-                "type": "string"
+                "type": "string",
+                "x-tag-reference": "rule_set"
+              }
+            }
+          ]
+        },
+        "include_source_cidr": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IPPrefix"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/IPPrefix"
               }
             }
           ]
@@ -3712,12 +3805,12 @@
         "exclude_source_cidr": {
           "anyOf": [
             {
-              "type": "string"
+              "$ref": "#/$defs/IPPrefix"
             },
             {
               "type": "array",
               "items": {
-                "type": "string"
+                "$ref": "#/$defs/IPPrefix"
               }
             }
           ]
