@@ -27,7 +27,8 @@ type EBPFAttachmentDiagnostics = commonEBPF.AttachmentInfo
 // individual fields remain available for anything more specific.
 const (
 	ebpfDiagnosticsSchemaVersion = 2
-	ebpfDiagnosticsAPICacheTTL   = 500 * time.Millisecond
+	ebpfDiagnosticsAPICacheTTL   = 250 * time.Millisecond
+	ebpfDiagnosticsJSONCacheTTL  = 500 * time.Millisecond
 
 	// EBPFDiagnosticsStateNormal is every configured data plane attached and
 	// no recovery outstanding.
@@ -50,19 +51,6 @@ const (
 	EBPFDiagnosticsStateNeedsAttention = "needs_attention"
 )
 
-// BypassRuleSetBackendState is one backend's own confirmed position in the
-// bypass_rule_set policy version sequence -- see EBPFDiagnostics'
-// BypassRuleSetBackendState field doc comment for what Known=false means.
-type BypassRuleSetBackendState struct {
-	Version uint64 `json:"version"`
-	Known   bool   `json:"known"`
-}
-
-// UDPNATDiagnostics reports event-driven userspace UDP NAT state. Cache
-// insertion and capacity-eviction totals come from sing/freelru's existing
-// metrics and therefore restart when the cache is purged (for example after a
-// network change). The remaining counters are touched only on drops or
-// socket-release events, so collecting them adds no packet-path polling.
 type UDPNATDiagnostics struct {
 	ActiveSessions                 int    `json:"active_sessions"`
 	CreatedSessions                uint64 `json:"created_sessions"`
@@ -83,6 +71,14 @@ func (d *UDPNATDiagnostics) add(other UDPNATDiagnostics) {
 	d.SocketReleaseMatched += other.SocketReleaseMatched
 	d.PendingReleaseCapacityRejected += other.PendingReleaseCapacityRejected
 	d.ReleaseNotificationDrops += other.ReleaseNotificationDrops
+}
+
+// BypassRuleSetBackendState is one backend's own confirmed position in the
+// bypass_rule_set policy version sequence -- see EBPFDiagnostics'
+// BypassRuleSetBackendState field doc comment for what Known=false means.
+type BypassRuleSetBackendState struct {
+	Version uint64 `json:"version"`
+	Known   bool   `json:"known"`
 }
 
 // EBPFDiagnostics is one running eBPF inbound's actual interception state,
@@ -292,6 +288,23 @@ func (i *Inbound) recordTCUpdateOutcome(outcome tcUpdateOutcome) {
 	}
 	i.diagnostics.lastOutcomeAt = now
 	i.diagnostics.haveOutcome = true
+}
+
+// DiagnosticsJSON satisfies experimental/clashapi's duck-typed
+// ebpfDiagnosticsProvider interface, so the running Clash API server (when
+// configured) can report this inbound's status without importing this
+// package or its with_ebpf build tag.
+func (i *Inbound) DiagnosticsJSON() any {
+	now := time.Now()
+	i.diagnosticsJSONAccess.Lock()
+	defer i.diagnosticsJSONAccess.Unlock()
+	if !i.diagnosticsJSONAt.IsZero() && now.Sub(i.diagnosticsJSONAt) < ebpfDiagnosticsJSONCacheTTL {
+		return i.diagnosticsJSONValue
+	}
+	diagnostics := i.Diagnostics()
+	i.diagnosticsJSONAt = now
+	i.diagnosticsJSONValue = diagnostics
+	return diagnostics
 }
 
 // EBPFDiagnostics exposes a request-driven snapshot through the sing-box API.
@@ -771,7 +784,7 @@ func (d EBPFDiagnostics) WriteText(w io.Writer) error {
 // configured paths have no interface to attach to yet, and which
 // attachments fakeip_icmp actually covers. It is built from the same
 // Diagnostics this inbound already computes for external queries, so the
-// summary can never say something the API diagnostics would disagree
+// summary can never say something the diagnostics endpoint would disagree
 // with a moment later.
 //
 // This does not replace startInbound's existing Debug-level line: that one

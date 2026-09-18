@@ -7,10 +7,47 @@ import (
 	"net/netip"
 	"strings"
 	"testing"
+	"time"
 
 	commonEBPF "github.com/CHIZI-0618/sing-ebpf"
 	E "github.com/sagernet/sing/common/exceptions"
 )
+
+type retrySharedKernelRuntime struct {
+	testSharedKernelRuntime
+	attempts int
+}
+
+func (r *retrySharedKernelRuntime) Close() error {
+	r.attempts++
+	if r.attempts == 1 {
+		return errors.New("injected shared runtime close failure")
+	}
+	r.closed = true
+	return nil
+}
+
+func TestCloseSharedRewriteRetainsFailedCleanup(t *testing.T) {
+	inbound := &Inbound{}
+	shared := &sharedRewrite{inbound: inbound}
+	shared.udpNat = newUDPNATService(shared, nil, time.Minute)
+	runtime := &retrySharedKernelRuntime{}
+	shared.setDataPlane(runtime)
+	inbound.setSharedRewrite(shared)
+
+	if err := inbound.closeSharedRewrite(); err == nil {
+		t.Fatal("expected injected shared runtime close failure")
+	}
+	if inbound.sharedRewriteInstance() != shared {
+		t.Fatal("inbound lost the shared runtime needed for cleanup retry")
+	}
+	if err := inbound.closeSharedRewrite(); err != nil {
+		t.Fatalf("retry shared runtime close: %v", err)
+	}
+	if inbound.sharedRewriteInstance() != nil || !runtime.closed {
+		t.Fatal("inbound retained the shared runtime after cleanup succeeded")
+	}
+}
 
 func TestNeedsLPMPolicyUsesCompiledEntries(t *testing.T) {
 	inbound := &Inbound{
@@ -27,6 +64,17 @@ func TestNeedsLPMPolicyUsesCompiledEntries(t *testing.T) {
 	inbound.localPolicy.IncludeUID = []commonEBPF.UIDRange{{Start: 1000, End: 1000}}
 	if !inbound.needsLPMPolicy() {
 		t.Fatal("a compiled UID entry requires an LPM trie update")
+	}
+
+	inbound.localPolicy = commonEBPF.LocalPolicy{}
+	inbound.localDataPlane = localDataPlaneTC
+	inbound.endpointConnectedBypass.Enabled = true
+	if !inbound.needsLPMPolicy() {
+		t.Fatal("an enabled local TC endpoint requires CIDR LPM trie updates")
+	}
+	inbound.endpointConnectedBypass.Enabled = false
+	if inbound.needsLPMPolicy() {
+		t.Fatal("a disabled endpoint does not require LPM trie updates")
 	}
 
 	inbound.localEnabled = false

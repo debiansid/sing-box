@@ -11,11 +11,13 @@ import (
 	"github.com/sagernet/sing/common/canceler"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
+	"github.com/sagernet/sing/contrab/freelru"
 )
 
 type udpNATTestConnection struct {
-	conn N.PacketConn
-	key  udpSessionKey
+	conn    N.PacketConn
+	key     udpSessionKey
+	onClose N.CloseHandlerFunc
 }
 
 type udpNATTestHandler struct {
@@ -27,10 +29,37 @@ func (h *udpNATTestHandler) NewPacketConnectionEx(
 	conn N.PacketConn,
 	_ M.Socksaddr,
 	_ M.Socksaddr,
-	_ N.CloseHandlerFunc,
+	onClose N.CloseHandlerFunc,
 ) {
 	key, _ := udpSessionKeyFromContext(ctx)
-	h.connections <- udpNATTestConnection{conn: conn, key: key}
+	h.connections <- udpNATTestConnection{conn: conn, key: key, onClose: onClose}
+}
+
+func TestUDPNATReplacementIgnoresDelayedClose(t *testing.T) {
+	inbound := &Inbound{ctx: context.Background()}
+	handler := &udpNATTestHandler{connections: make(chan udpNATTestConnection, 2)}
+	service := newUDPNATService(handler, inbound.preparePacketConnection, time.Minute)
+	t.Cleanup(func() { _ = service.Close() })
+
+	source := M.ParseSocksaddr("192.0.2.10:53000")
+	destination := M.ParseSocksaddr("203.0.113.80:443")
+	key := udpSessionKey{Source: source.AddrPort(), Scope: udpSessionScopeLocalTC, SocketCookie: 1}
+	inbound.udpClientTable.setDirectBinding(key, destination.AddrPort(), nil, key.SocketCookie)
+	service.NewPacket(key, [][]byte{[]byte("first")}, source, destination, nil)
+	first := receiveUDPNATTestConnection(t, handler.connections)
+	if err := first.conn.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	inbound.udpClientTable.setDirectBinding(key, destination.AddrPort(), nil, key.SocketCookie)
+	service.NewPacket(key, [][]byte{[]byte("second")}, source, destination, nil)
+	second := receiveUDPNATTestConnection(t, handler.connections)
+	first.onClose(nil)
+
+	writer := second.conn.(*udpNATConn).writer.(*tcPacketWriter)
+	if _, err := writer.ensureReplyBinding(destination.AddrPort()); err != nil {
+		t.Fatalf("delayed close removed replacement UDP state: %v", err)
+	}
 }
 
 type udpNATTestWriter struct{}
@@ -552,4 +581,50 @@ func receiveUDPNATTestConnection(t *testing.T, connections <-chan udpNATTestConn
 		t.Fatal("timed out waiting for UDP NAT connection")
 		return udpNATTestConnection{}
 	}
+}
+
+// The hash callback runs before the cache lock. Use it to insert a replacement
+// exactly between cleanup's first lookup and its subsequent eviction attempt.
+func TestUDPNATCleanupDoesNotRemoveConcurrentReplacement(t *testing.T) {
+	service := &udpNATService{}
+	service.cleanup = newUDPNATCleanupQueue(service)
+	key := udpSessionKey{SocketCookie: 1}
+	old := &udpNATConn{service: service, key: key, doneChan: make(chan struct{})}
+	replacement := &udpNATConn{service: service, key: key, doneChan: make(chan struct{})}
+	old.cleanupEntry = &udpNATCleanupEntry{conn: old, index: -1}
+	replacement.cleanupEntry = &udpNATCleanupEntry{conn: replacement, index: -1}
+	replaceNextLookup := false
+	replaced := false
+	cache, err := freelru.New[udpSessionKey, *udpNATConn](2, func(udpSessionKey) uint32 {
+		if replaceNextLookup {
+			replaceNextLookup = false
+			replaced = true
+			service.cache.Add(key, replacement)
+		}
+		return 0
+	}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.cache = cache
+	cache.SetLifetime(time.Minute)
+	cache.SetOnEvict(func(_ udpSessionKey, conn *udpNATConn) { conn.closeFromCache() })
+	cache.SetHealthCheck(func(_ udpSessionKey, conn *udpNATConn) bool {
+		healthy := !conn.isClosed()
+		if conn == old && healthy {
+			// Simulate Close immediately after the first lookup's health check.
+			old.close()
+			replaceNextLookup = true
+		}
+		return healthy
+	})
+	cache.Add(key, old)
+	service.cleanupEntry(old.cleanupEntry)
+	if !replaced {
+		t.Fatal("replacement interleaving was not exercised")
+	}
+	if current, ok := cache.Peek(key); !ok || current != replacement || replacement.isClosed() {
+		t.Fatal("old cleanup removed the replacement UDP session")
+	}
+	cache.Purge()
 }
