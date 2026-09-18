@@ -3451,6 +3451,66 @@
       "type": "string",
       "pattern": "^[-+]?(((\\d+(\\.\\d*)?|\\.\\d+)(ns|us|µs|μs|ms|s|m|h|d))+|0)$"
     },
+    "EBPFEndpointConnectedBypassOptions": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "network": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "tcp",
+                "udp"
+              ]
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "tcp",
+                  "udp"
+                ]
+              }
+            }
+          ]
+        },
+        "ip_cidr": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
+        },
+        "port": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 65535
+              }
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
     "EBPFLocalOptions": {
       "type": "object",
       "properties": {
@@ -3480,6 +3540,21 @@
         },
         "bypass_private_address": {
           "type": "boolean"
+        },
+        "bypass_rule_set": {
+          "anyOf": [
+            {
+              "type": "string",
+              "x-tag-reference": "rule_set"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "x-tag-reference": "rule_set"
+              }
+            }
+          ]
         },
         "include_uid": {
           "anyOf": [
@@ -3609,6 +3684,9 @@
               }
             }
           ]
+        },
+        "endpoint_connected_bypass": {
+          "$ref": "#/$defs/EBPFEndpointConnectedBypassOptions"
         }
       },
       "additionalProperties": false
@@ -3652,6 +3730,21 @@
         },
         "bypass_private_address": {
           "type": "boolean"
+        },
+        "bypass_rule_set": {
+          "anyOf": [
+            {
+              "type": "string",
+              "x-tag-reference": "rule_set"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "x-tag-reference": "rule_set"
+              }
+            }
+          ]
         },
         "include_source_cidr": {
           "anyOf": [

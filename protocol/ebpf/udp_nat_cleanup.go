@@ -171,7 +171,9 @@ func (s *udpNATService) cleanupEntry(entry *udpNATCleanupEntry) {
 		return
 	}
 	if conn.isClosed() {
-		s.cache.Remove(entry.conn.key)
+		// Recheck health under the cache lock; the key may now belong to a
+		// replacement session. Never remove it based on the earlier lookup.
+		s.cache.Peek(entry.conn.key)
 		return
 	}
 	s.cleanup.addOrUpdate(entry, lifetime)

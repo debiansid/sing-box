@@ -209,3 +209,5 @@ require (
 	lukechampine.com/blake3 v1.3.0 // indirect
 	zombiezen.com/go/capnproto2 v2.18.2+incompatible // indirect
 )
+
+replace github.com/CHIZI-0618/sing-ebpf => github.com/debiansid/sing-ebpf v0.0.0-20260925203942-807f024ab5f4
