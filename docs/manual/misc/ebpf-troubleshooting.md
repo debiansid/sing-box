@@ -57,6 +57,12 @@ command. Run probes with the same privileges as the service.
 sing-box api ebpf --url http://127.0.0.1:9090 --secret "$SECRET"
 ```
 
+If a Clash API server is configured, `GET /ebpf` is also available as a compatible diagnostic channel:
+
+```sh
+curl -H "Authorization: Bearer $SECRET" http://127.0.0.1:9090/ebpf
+```
+
 This is distinct from item 6's capability probe: it reports what the running
 inbound is actually doing (attachments, active programs, map occupancy,
 pending recovery, recent errors and counters), not what the kernel could
