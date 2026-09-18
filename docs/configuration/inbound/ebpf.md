@@ -173,6 +173,34 @@ precedence; configuring port 53 therefore emits a warning.
 
 Destination port ranges to bypass, in inclusive `start:end` form.
 
+### local.endpoint_connected_bypass
+
+Optional single local TC endpoint gate (not an outbound selector):
+
+```json
+"endpoint_connected_bypass": {
+  "enabled": true,
+  "network": ["tcp", "udp"],
+  "ip_cidr": ["203.0.113.0/24"],
+  "port": [500, 4500]
+}
+```
+
+Both destination CIDR and port must match. Before VPN readiness, matching
+traffic is forced into the normal Router; after readiness it bypasses local
+TC natively. Unmatched traffic and shared policy are unchanged. FakeIP and
+DNS semantics retain precedence. Enabling this defaults local `data_plane`
+to `tc`; explicit `cgroup`, `cgroup_path`, or disabled local interception is
+invalid. Both CIDR and port lists are required; omitted network means TCP/UDP.
+
+An eligible VPN is an UP `tun*` or `ipsec*` interface with a global-unicast
+address, excluding sing-box's own interfaces. TUN requires RX/TX growth after
+the first sample, keyed by name and ifindex. IPsec requires a non-local-table
+unicast default route. Readiness clears when no eligible interface is ready.
+One-second samples and network events update only the READY control bit.
+Core sockets retain the existing underlying/protect and self-bypass path;
+ordinary VPN payload is not globally protected or marked by this feature.
+
 ## shared
 
 ### shared.enabled
@@ -254,6 +282,7 @@ include selectors.
   occupancy, resource use, UDP/session statistics, fragment/pass counters, and
   failures from a running instance. It requires the
   [sing-box API service](/configuration/service/api/).
+- When the Clash API is configured, `GET /ebpf` exposes the same diagnostics.
 
 See [eBPF troubleshooting](/manual/misc/ebpf-troubleshooting/) for commands and
 counter interpretation.

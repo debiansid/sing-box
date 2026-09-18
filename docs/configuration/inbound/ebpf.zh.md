@@ -163,6 +163,23 @@ Android 厂商的 netd hook 可能造成挂载冲突。sing-box 优先尝试多�
 
 需要绕过的目标端口范围，格式为包含两端的 `start:end`。
 
+### local.endpoint_connected_bypass
+
+可选的单个 local TC endpoint 门控（非出站选择器）：
+
+```json
+"endpoint_connected_bypass": {
+  "enabled": true,
+  "network": ["tcp", "udp"],
+  "ip_cidr": ["203.0.113.0/24"],
+  "port": [500, 4500]
+}
+```
+
+目标 CIDR 与端口必须同时匹配。在 VPN 就绪（READY）前，匹配的流量强制进入正常 Router 处理；在 VPN 就绪后，直接在本地 TC 阶段原生绕过。未匹配流量与 shared 策略保持原样，FakeIP 与 DNS 语义保留最高优先级。启用此项会将 local `data_plane` 默认设为 `tc`；显式配置 `cgroup`、`cgroup_path` 或禁用 local 接管均为无效配置。CIDR 与端口列表均为必填；省略 network 则默认启用 TCP/UDP。
+
+合格的 VPN 是处于 UP 状态、拥有全局单播地址且非 sing-box 自身的 `tun*` 或 `ipsec*` 接口。TUN 接口需要首次采样后的 RX/TX 增长来确立就绪，按名称与 ifindex 标识；IPsec 接口需要存在非 local 表的单播默认路由。当没有合格接口就绪时清除 READY。每秒采样与网络事件仅更新 READY 控制位。Core 套接字保留现有的 underlying/protect 和自绕过路径；普通 VPN 载荷流量不会被此特性全局 protect 或打标。
+
 ## shared
 
 ### shared.enabled
@@ -236,6 +253,7 @@ raw-IP、PPP/PPPoE 和受支持的隧道链路应使用 `socket_assign`。local 
 - `sing-box api ebpf` 从运行实例读取 attachment、恢复状态、活动程序、map 占用、资源、
   UDP/会话统计、分片/放行计数和失败信息；需要启用
   [sing-box API 服务](/zh/configuration/service/api/)。
+- 配置了 Clash API 时，`GET /ebpf` 提供同等的兼容诊断接口。
 
 具体命令和计数解释见 [eBPF 问题排查](/zh/manual/misc/ebpf-troubleshooting/)。
 

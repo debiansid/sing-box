@@ -51,6 +51,12 @@ sing-box tools ebpf status --shared-data-plane packet_rewrite --interface br-lan
 sing-box api ebpf --url http://127.0.0.1:9090 --secret "$SECRET"
 ```
 
+如果配置了 Clash API 服务器，`GET /ebpf` 也作为兼容的诊断接口可用：
+
+```sh
+curl -H "Authorization: Bearer $SECRET" http://127.0.0.1:9090/ebpf
+```
+
 这与第 6 项的能力探测不同：它报告的是运行中的入站实际在做什么（attachment、
 活动 program、map 占用、待处理的恢复、最近的错误与计数器），而不是内核理论上支持什么。当问题涉及
 "是否真的在接管流量"而非"内核是否支持"时，请一并提供此报告。
