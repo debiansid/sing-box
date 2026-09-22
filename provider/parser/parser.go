@@ -244,8 +244,8 @@ func overrideTLSOption(options *option.OutboundTLSOptions, overrideTLSOptions *o
 	if overrideTLSOptions.Insecure != nil {
 		options.Insecure = *overrideTLSOptions.Insecure
 	}
-	if overrideTLSOptions.CertificatePinSHA256 != nil {
-		options.CertificatePinSHA256 = *overrideTLSOptions.CertificatePinSHA256
+	if overrideTLSOptions.CertificateSHA256 != nil {
+		options.CertificateSHA256 = *overrideTLSOptions.CertificateSHA256
 	}
 	if overrideTLSOptions.KernelTx != nil {
 		options.KernelTx = *overrideTLSOptions.KernelTx

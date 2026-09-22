@@ -1,6 +1,9 @@
 package parser
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"net/netip"
 	"net/url"
 	"reflect"
@@ -736,7 +739,11 @@ func parseHysteria2Link(link string) (option.Outbound, error) {
 				TLSOptions.DisableSNI = true
 			}
 		case "pinSHA256":
-			TLSOptions.CertificatePinSHA256 = value
+			certificateHash, err := parseCertificateSHA256(value)
+			if err != nil {
+				return option.Outbound{}, E.Cause(err, "parse pinSHA256")
+			}
+			TLSOptions.CertificateSHA256 = badoption.Listable[[]byte]{certificateHash}
 		case "insecure", "skip-cert-verify":
 			if value == "1" || value == "true" {
 				TLSOptions.Insecure = true
@@ -750,6 +757,22 @@ func parseHysteria2Link(link string) (option.Outbound, error) {
 	options.TLS = &TLSOptions
 	outbound.Options = &options
 	return outbound, nil
+}
+
+func parseCertificateSHA256(value string) ([]byte, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil, nil
+	}
+	if decoded, err := hex.DecodeString(strings.ReplaceAll(value, ":", "")); err == nil && len(decoded) == sha256.Size {
+		return decoded, nil
+	}
+	for _, encoding := range []*base64.Encoding{base64.StdEncoding, base64.RawStdEncoding} {
+		if decoded, err := encoding.DecodeString(value); err == nil && len(decoded) == sha256.Size {
+			return decoded, nil
+		}
+	}
+	return nil, E.New("invalid SHA-256 certificate fingerprint")
 }
 
 func parseAnyTLSLink(link string) (option.Outbound, error) {

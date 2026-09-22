@@ -137,13 +137,14 @@ func TestParseV2RayLinkHostServerNameFallbackRequiresTLS(t *testing.T) {
 }
 
 func TestParseHysteria2LinkOptions(t *testing.T) {
-	outbound, err := ParseSubscriptionLink("hysteria2://password@192.0.2.1:443?sni=example.com&pinSHA256=AA:BB&mport=40000-50000")
+	certificateHash := strings.Repeat("00", 32)
+	outbound, err := ParseSubscriptionLink("hysteria2://password@192.0.2.1:443?sni=example.com&pinSHA256=" + certificateHash + "&mport=40000-50000")
 	require.NoError(t, err)
 
 	options := outbound.Options.(*option.Hysteria2OutboundOptions)
 	require.Equal(t, []string{"40000:50000"}, []string(options.ServerPorts))
 	require.Equal(t, "example.com", options.TLS.ServerName)
-	require.Equal(t, "AA:BB", options.TLS.CertificatePinSHA256)
+	require.Equal(t, []byte(strings.Repeat("\x00", 32)), options.TLS.CertificateSHA256[0])
 }
 
 func TestParseHysteria2LinkDisableSNI(t *testing.T) {
@@ -264,7 +265,13 @@ func TestParseHysteria2LinkDisableSNI(t *testing.T) {
 			require.True(t, options.TLS.Enabled)
 			require.Equal(t, tc.wantDisableSNI, options.TLS.DisableSNI)
 			require.Equal(t, tc.wantServerName, options.TLS.ServerName)
-			require.Equal(t, tc.wantPin, options.TLS.CertificatePinSHA256)
+			if tc.wantPin != "" {
+				wantHash, err := parseCertificateSHA256(tc.wantPin)
+				require.NoError(t, err)
+				require.Equal(t, [][]byte{wantHash}, [][]byte(options.TLS.CertificateSHA256))
+			} else {
+				require.Empty(t, options.TLS.CertificateSHA256)
+			}
 			require.Equal(t, tc.wantInsecure, options.TLS.Insecure)
 		})
 	}
@@ -326,7 +333,9 @@ func TestParseSubscriptionHysteria2DisableSNIOverride(t *testing.T) {
 			require.True(t, options.TLS.Enabled)
 			require.Equal(t, tc.wantDisableSNI, options.TLS.DisableSNI)
 			require.Equal(t, "cert.example", options.TLS.ServerName)
-			require.Equal(t, validPin, options.TLS.CertificatePinSHA256)
+			wantHash, err := parseCertificateSHA256(validPin)
+			require.NoError(t, err)
+			require.Equal(t, [][]byte{wantHash}, [][]byte(options.TLS.CertificateSHA256))
 		})
 	}
 }

@@ -42,6 +42,7 @@ type URLTest struct {
 	outbound.Adapter
 	ctx                          context.Context
 	outbound                     adapter.OutboundManager
+	connection                   adapter.ConnectionManager
 	logger                       log.ContextLogger
 	tags                         []string
 	link                         string
@@ -69,6 +70,7 @@ func NewURLTest(ctx context.Context, router adapter.Router, logger log.ContextLo
 		Adapter:                      outbound.NewAdapter(C.TypeURLTest, tag, []string{N.NetworkTCP, N.NetworkUDP}, options.Outbounds),
 		ctx:                          ctx,
 		outbound:                     service.FromContext[adapter.OutboundManager](ctx),
+		connection:                   service.FromContext[adapter.ConnectionManager](ctx),
 		logger:                       logger,
 		tags:                         options.Outbounds,
 		link:                         options.URL,
@@ -466,7 +468,7 @@ func (g *URLTestGroup) Select(network string) (adapter.Outbound, bool) {
 		selectedOutbound = g.selectedOutboundUDP.Load()
 	}
 	if selectedOutbound != nil {
-		if history := g.history.LoadURLTestHistory(RealTag(selectedOutbound, network)); history != nil {
+		if history := g.history.LoadURLTestHistory(RealTagWithManager(g.outbound, selectedOutbound, network)); history != nil {
 			minOutbound = selectedOutbound
 			minDelay = history.Delay
 		}
@@ -476,7 +478,7 @@ func (g *URLTestGroup) Select(network string) (adapter.Outbound, bool) {
 		if !common.Contains(detour.Network(), network) {
 			continue
 		}
-		history := g.history.LoadURLTestHistory(RealTag(detour, network))
+		history := g.history.LoadURLTestHistory(RealTagWithManager(g.outbound, detour, network))
 		if history == nil {
 			continue
 		}
@@ -597,7 +599,7 @@ func urlTestOutbounds(ctx context.Context, outboundManager adapter.OutboundManag
 	b.Wait()
 	history.UpdateURLTestHistory(testBatch.stored, testBatch.deleted)
 	for _, outboundGroup := range testBatch.groups {
-		groupHistory := history.LoadURLTestHistory(RealTag(outboundGroup, N.NetworkTCP))
+		groupHistory := history.LoadURLTestHistory(RealTagWithManager(outboundManager, outboundGroup, N.NetworkTCP))
 		if groupHistory != nil {
 			testBatch.result[outboundGroup.Tag()] = groupHistory.Delay
 		}
