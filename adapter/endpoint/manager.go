@@ -2,10 +2,12 @@ package endpoint
 
 import (
 	"context"
+	"os"
 	"sync"
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
 )
 
@@ -60,6 +62,24 @@ func (m *Manager) Get(tag string) (adapter.Endpoint, bool) {
 	defer m.access.Unlock()
 	endpoint, found := m.endpointByTag[tag]
 	return endpoint, found
+}
+
+func (m *Manager) Remove(tag string) error {
+	m.access.Lock()
+	defer m.access.Unlock()
+	endpoint, found := m.endpointByTag[tag]
+	if !found {
+		return os.ErrInvalid
+	}
+	delete(m.endpointByTag, tag)
+	index := common.Index(m.endpoints, func(it adapter.Endpoint) bool {
+		return it == endpoint
+	})
+	if index == -1 {
+		panic("invalid endpoint index")
+	}
+	m.endpoints = append(m.endpoints[:index], m.endpoints[index+1:]...)
+	return common.Close(endpoint)
 }
 
 func (m *Manager) Create(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, outboundType string, options any) error {

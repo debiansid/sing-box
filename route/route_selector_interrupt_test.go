@@ -50,7 +50,9 @@ func TestSelectorInterruptRoutedConnections(t *testing.T) {
 						})
 						require.NoError(t, err)
 						selector := raw.(*group.Selector)
-						require.NoError(t, selector.Start())
+						scope := adapter.NewScope(ctx, logger)
+						t.Cleanup(func() { scope.Close() })
+						require.NoError(t, selector.Start(adapter.StartStateStart, scope))
 						return selector
 					}
 					groupCtx := service.ContextWith[adapter.OutboundManager](ctx, &testL3OutboundManager{outbounds: map[string]adapter.Outbound{"leaf": leaf}})
@@ -65,8 +67,10 @@ func TestSelectorInterruptRoutedConnections(t *testing.T) {
 						raw, err := group.NewURLTest(groupCtx, nil, logger, "urltest", option.URLTestOutboundOptions{GroupCommonOption: option.GroupCommonOption{Outbounds: []string{"leaf"}}})
 						require.NoError(t, err)
 						urltest := raw.(*group.URLTest)
-						require.NoError(t, urltest.Start())
-						t.Cleanup(func() { require.NoError(t, urltest.Close()) })
+						scope := adapter.NewScope(groupCtx, logger)
+						require.NoError(t, urltest.Start(adapter.StartStateStart, scope))
+						require.NoError(t, urltest.Start(adapter.StartStateStarted, scope))
+						t.Cleanup(func() { require.NoError(t, scope.Close()) })
 						selected = urltest
 					case "loadbalance":
 						raw, err := group.NewLoadBalance(groupCtx, nil, logger, "loadbalance", option.LoadBalanceOutboundOptions{GroupCommonOption: option.GroupCommonOption{Outbounds: []string{"leaf"}}, Strategy: group.StrategyRoundRobin})
