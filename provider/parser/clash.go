@@ -657,7 +657,7 @@ func (w *ClashWireGuardOption) Build() any {
 }
 
 func clashWireGuardPeer(peer ClashWireGuardPeerOption, persistentKeepalive int) option.WireGuardPeer {
-	var allowedIPs badoption.Listable[netip.Prefix]
+	var allowedIPs option.LegacyListable[netip.Prefix]
 	for _, ip := range peer.AllowedIPs {
 		if prefix, err := netip.ParsePrefix(ip); err == nil {
 			allowedIPs = append(allowedIPs, prefix)
@@ -793,20 +793,29 @@ func (t *TLSOptions) Build() *option.OutboundTLSOptions {
 	if t == nil || !t.TLS {
 		return nil
 	}
-	return &option.OutboundTLSOptions{
-		Enabled:              t.TLS,
-		ServerName:           t.SNI,
-		Insecure:             t.SkipCertVerify,
-		CertificatePinSHA256: t.Fingerprint,
-		ALPN:                 t.ALPN,
-		UTLS:                 clashClientFingerprint(t.ClientFingerprint),
-		Certificate:          trimStringArray(strings.Split(t.CustomCAString, "\n")),
-		CertificatePath:      t.CustomCA,
-		ECH:                  t.ECHOpts.Build(),
-		Reality:              t.RealityOpts.Build(),
-		KernelTx:             t.KernelTx,
-		KernelRx:             t.KernelRx,
+	options := &option.OutboundTLSOptions{
+		Enabled:         t.TLS,
+		ServerName:      t.SNI,
+		Insecure:        t.SkipCertVerify,
+		ALPN:            t.ALPN,
+		UTLS:            clashClientFingerprint(t.ClientFingerprint),
+		Certificate:     trimStringArray(strings.Split(t.CustomCAString, "\n")),
+		CertificatePath: t.CustomCA,
+		ECH:             t.ECHOpts.Build(),
+		Reality:         t.RealityOpts.Build(),
+		KernelTx:        t.KernelTx,
+		KernelRx:        t.KernelRx,
 	}
+	if t.Fingerprint != "" {
+		certificateHash, err := parseCertificateSHA256(t.Fingerprint)
+		if err != nil {
+			// Keep an invalid pin fail-closed; Build cannot return a parse error.
+			options.CertificateSHA256 = badoption.Listable[[]byte]{[]byte(t.Fingerprint)}
+		} else {
+			options.CertificateSHA256 = badoption.Listable[[]byte]{certificateHash}
+		}
+	}
+	return options
 }
 
 type DialerOptions struct {
@@ -933,11 +942,11 @@ func clashPluginOptions(plugin string, opts map[string]any) string {
 	return options.Build()
 }
 
-func clashPorts(ports string) badoption.Listable[string] {
+func clashPorts(ports string) option.LegacyListable[string] {
 	if ports == "" {
 		return nil
 	}
-	serverPorts := badoption.Listable[string]{}
+	serverPorts := option.LegacyListable[string]{}
 	ports = strings.ReplaceAll(ports, "/", ",")
 	for port := range strings.SplitSeq(ports, ",") {
 		if port == "" {
