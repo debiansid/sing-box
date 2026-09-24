@@ -405,7 +405,7 @@ func New(options Options) (*Box, error) {
 			logFactory.NewLogger("dns/local"),
 			"local",
 			C.DNSTypeLocal,
-			&option.LocalDNSServerOptions{},
+			&option.LocalDNSServerOptions{ImplicitDefault: true},
 		)
 	})
 	httpClientManager.Initialize(func() (*httpclient.ManagedTransport, error) {
