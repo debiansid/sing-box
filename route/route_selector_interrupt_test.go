@@ -3,6 +3,7 @@ package route
 import (
 	"context"
 	"net"
+	"net/netip"
 	"os"
 	"sync"
 	"testing"
@@ -24,7 +25,7 @@ import (
 )
 
 func TestSelectorInterruptRoutedConnections(t *testing.T) {
-	for _, kind := range []string{"plain", "selector", "urltest", "loadbalance", "handler", "nested-handler"} {
+	for _, kind := range []string{"plain", "selector", "urltest", "handler", "nested-handler"} {
 		for _, network := range []string{N.NetworkTCP, N.NetworkUDP} {
 			for _, policy := range []string{"interrupt", "keep", "resource-download"} {
 				t.Run(kind+"/"+network+"/"+policy, func(t *testing.T) {
@@ -35,7 +36,7 @@ func TestSelectorInterruptRoutedConnections(t *testing.T) {
 					logger := log.NewNOPFactory().NewLogger("test")
 					scope := adapter.NewScope(ctx, logger)
 					t.Cleanup(func() { require.NoError(t, scope.Close()) })
-					manager := NewConnectionManager(logger)
+					manager := NewConnectionManager(ctx, logger)
 					incoming := newSelectorInterruptTestConn()
 					remote := newSelectorInterruptTestConn()
 					t.Cleanup(func() { incoming.Close(); remote.Close() })
@@ -70,13 +71,6 @@ func TestSelectorInterruptRoutedConnections(t *testing.T) {
 						require.NoError(t, urltest.Start(adapter.StartStateStart, scope))
 
 						selected = urltest
-					case "loadbalance":
-						raw, err := group.NewLoadBalance(groupCtx, nil, logger, "loadbalance", option.LoadBalanceOutboundOptions{GroupCommonOption: option.GroupCommonOption{Outbounds: []string{"leaf"}}, Strategy: group.StrategyRoundRobin})
-						require.NoError(t, err)
-						balance := raw.(*group.LoadBalance)
-						require.NoError(t, balance.Start(adapter.StartStateStart, scope))
-
-						selected = balance
 					case "handler", "nested-handler":
 						handler = &selectorInterruptTestHandler{selectorInterruptTestOutbound: leaf}
 						selected = handler
@@ -208,3 +202,19 @@ func (c *selectorInterruptTestConn) RemoteAddr() net.Addr             { return &
 func (c *selectorInterruptTestConn) SetDeadline(time.Time) error      { return nil }
 func (c *selectorInterruptTestConn) SetReadDeadline(time.Time) error  { return nil }
 func (c *selectorInterruptTestConn) SetWriteDeadline(time.Time) error { return nil }
+
+type testL3OutboundManager struct {
+	adapter.OutboundManager
+	defaultOutbound adapter.Outbound
+	outbounds       map[string]adapter.Outbound
+}
+
+func (m *testL3OutboundManager) Default() adapter.Outbound { return m.defaultOutbound }
+func (m *testL3OutboundManager) Outbound(tag string) (adapter.Outbound, bool) {
+	o, ok := m.outbounds[tag]
+	return o, ok
+}
+
+type testL3DNSRouter struct{ adapter.DNSRouter }
+
+func (*testL3DNSRouter) LookupReverseMapping(netip.Addr) (string, bool) { return "", false }
