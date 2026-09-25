@@ -2,52 +2,43 @@ package clashapi
 
 import (
 	"context"
-	"net/http"
-	"testing"
-	"time"
-
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/interrupt"
 	"github.com/sagernet/sing-box/log"
-	"github.com/sagernet/sing/service"
-
+	M "github.com/sagernet/sing/common/metadata"
 	"github.com/stretchr/testify/require"
+	"net"
+	"testing"
+	"time"
 )
 
-type resourceDownloadTransport struct {
-	adapter.HTTPTransport
-	roundTrip func(*http.Request) (*http.Response, error)
+type resourceDownloadOutbound struct {
+	adapter.Outbound
+	dial func(context.Context) (net.Conn, error)
 }
 
-func (t *resourceDownloadTransport) RoundTrip(r *http.Request) (*http.Response, error) {
-	return t.roundTrip(r)
-}
-func (*resourceDownloadTransport) CloseIdleConnections() {}
-
-type resourceDownloadManager struct {
-	adapter.HTTPClientManager
-	transport adapter.HTTPTransport
+func (o *resourceDownloadOutbound) Type() string { return "test" }
+func (o *resourceDownloadOutbound) Tag() string  { return "test" }
+func (o *resourceDownloadOutbound) DialContext(ctx context.Context, _ string, _ M.Socksaddr) (net.Conn, error) {
+	return o.dial(ctx)
 }
 
-func (m *resourceDownloadManager) DefaultTransport() adapter.HTTPTransport { return m.transport }
+type resourceDownloadOutboundManager struct {
+	adapter.OutboundManager
+	outbound adapter.Outbound
+}
 
+func (m *resourceDownloadOutboundManager) Default() adapter.Outbound { return m.outbound }
 func TestExternalUIResourceDownloadContext(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	deadline, _ := ctx.Deadline()
-	called := false
-	transport := &resourceDownloadTransport{roundTrip: func(r *http.Request) (*http.Response, error) {
-		called = true
-		require.True(t, interrupt.IsResourceDownloadFromContext(r.Context()))
-		actual, ok := r.Context().Deadline()
-		require.True(t, ok)
-		require.Equal(t, deadline, actual)
+	called := make(chan bool, 1)
+	outbound := &resourceDownloadOutbound{dial: func(ctx context.Context) (net.Conn, error) {
+		called <- interrupt.IsResourceDownloadFromContext(ctx)
 		cancel()
-		require.ErrorIs(t, r.Context().Err(), context.Canceled)
-		return nil, r.Context().Err()
+		return nil, context.Canceled
 	}}
-	ctx = service.ContextWith[adapter.HTTPClientManager](ctx, &resourceDownloadManager{transport: transport})
-	server := &Server{ctx: ctx, logger: log.NewNOPFactory().NewLogger("test"), externalUIDownloadURL: "https://example.com/dashboard.zip"}
+	server := &Server{ctx: ctx, logger: log.NewNOPFactory().NewLogger("test"), outbound: &resourceDownloadOutboundManager{outbound: outbound}, externalUIDownloadURL: "https://example.com/dashboard.zip"}
 	require.ErrorIs(t, server.downloadExternalUI(), context.Canceled)
-	require.True(t, called)
+	require.True(t, <-called)
 }

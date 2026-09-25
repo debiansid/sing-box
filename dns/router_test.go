@@ -88,8 +88,6 @@ func (r *legacyAliasRule) Race() bool {
 	return false
 }
 
-}
-
 func TestFindLastCNAMETarget(t *testing.T) {
 	const (
 		source = "source.example."
