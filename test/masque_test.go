@@ -41,6 +41,11 @@ type masqueEnvironment struct {
 
 func startMASQUE(t *testing.T, serverVersions []int, clientVersion int, disableVersionFallback bool, mtu uint32, serverRoutes []netip.Prefix, clientRoutes []netip.Prefix) masqueEnvironment {
 	t.Helper()
+	return startMASQUEConfigured(t, serverVersions, clientVersion, disableVersionFallback, mtu, serverRoutes, clientRoutes, nil)
+}
+
+func startMASQUEConfigured(t *testing.T, serverVersions []int, clientVersion int, disableVersionFallback bool, mtu uint32, serverRoutes []netip.Prefix, clientRoutes []netip.Prefix, configure func(server, client *option.Options)) masqueEnvironment {
+	t.Helper()
 	environment := masqueEnvironment{
 		serverProxyPort: reserveOpenVPNTCPPort(t),
 		clientProxyPort: reserveOpenVPNTCPPort(t),
@@ -49,7 +54,7 @@ func startMASQUE(t *testing.T, serverVersions []int, clientVersion int, disableV
 	environment.serverPort = masquePort
 	_, certPem, keyPem := createSelfSignedCertificate(t, "example.org")
 	users := []auth.User{{Username: "sekai", Password: "password"}}
-	startInstance(t, masqueInstanceOptions(C.TypeMASQUEServer, &option.MASQUEServerEndpointOptions{
+	serverOptions := masqueInstanceOptions(C.TypeMASQUEServer, &option.MASQUEServerEndpointOptions{
 		ListenOptions: option.ListenOptions{
 			Listen:     common.Ptr(badoption.Addr(netip.MustParseAddr("127.0.0.1"))),
 			ListenPort: masquePort,
@@ -67,8 +72,8 @@ func startMASQUE(t *testing.T, serverVersions []int, clientVersion int, disableV
 		},
 		Address:         []netip.Prefix{netip.MustParsePrefix(masqueServerAddress + "/24")},
 		AdvertiseRoutes: serverRoutes,
-	}, environment.serverProxyPort, ""))
-	startInstance(t, masqueInstanceOptions(C.TypeMASQUEClient, &option.MASQUEClientEndpointOptions{
+	}, environment.serverProxyPort, "")
+	clientOptions := masqueInstanceOptions(C.TypeMASQUEClient, &option.MASQUEClientEndpointOptions{
 		ServerOptions: option.ServerOptions{
 			Server:     "127.0.0.1",
 			ServerPort: masquePort,
@@ -86,7 +91,12 @@ func startMASQUE(t *testing.T, serverVersions []int, clientVersion int, disableV
 		Version:                clientVersion,
 		DisableVersionFallback: disableVersionFallback,
 		AdvertiseRoutes:        clientRoutes,
-	}, environment.clientProxyPort, "127.0.0.1"))
+	}, environment.clientProxyPort, "127.0.0.1")
+	if configure != nil {
+		configure(&serverOptions, &clientOptions)
+	}
+	startInstance(t, serverOptions)
+	startInstance(t, clientOptions)
 	waitForOpenVPNClientReady(t, environment.clientProxyPort, reserveOpenVPNEchoPort(t), masqueServerAddress)
 	return environment
 }

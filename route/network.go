@@ -42,7 +42,7 @@ type NetworkManager struct {
 	autoDetectInterface     bool
 	defaultOptions          adapter.NetworkOptions
 	autoRedirectOutputMark  uint32
-	hostPort                common.TypedValue[tun.RoutedPort]
+	hostPort                common.TypedValue[adapter.RoutedPort]
 	bridgeInterfaceAccess   sync.Mutex
 	bridgeInterfaces        []string
 	networkMonitor          tun.NetworkUpdateMonitor
@@ -395,14 +395,14 @@ func (r *NetworkManager) AutoRedirectOutputMark() uint32 {
 	return r.autoRedirectOutputMark
 }
 
-func (r *NetworkManager) RegisterHostPort(port tun.RoutedPort) {
+func (r *NetworkManager) RegisterHostPort(port adapter.RoutedPort) {
 	if r.hostPort.Load() != nil {
 		return
 	}
 	r.hostPort.Store(port)
 }
 
-func (r *NetworkManager) HostPort() tun.RoutedPort {
+func (r *NetworkManager) HostPort() adapter.RoutedPort {
 	return r.hostPort.Load()
 }
 

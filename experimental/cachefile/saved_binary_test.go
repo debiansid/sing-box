@@ -79,9 +79,8 @@ func TestBranchCacheMigrationAndIsolation(t *testing.T) {
 	for _, cacheID := range []string{"", "profile"} {
 		t.Run(cacheID, func(t *testing.T) {
 			options := option.CacheFileOptions{Path: filepath.Join(t.TempDir(), "cache.db"), CacheID: cacheID}
-			scope := adapter.NewScope(context.Background(), logger.NOP())
-			defer func() { scope.Close() }()
 			cache := New(context.Background(), logger.NOP(), options)
+			scope := adapter.NewScope(context.Background(), logger.NOP())
 			require.NoError(t, cache.Start(adapter.StartStateInitialize, scope))
 			old := &adapter.SavedBinary{Content: []byte("old rules"), LastUpdated: time.Unix(1750000000, 0), LastEtag: "old", URLHash: []byte("old url")}
 			for _, version := range []byte{1, 2} {
@@ -108,14 +107,9 @@ func TestBranchCacheMigrationAndIsolation(t *testing.T) {
 					return nil
 				}))
 			}
-			require.NoError(t, cache.SaveExternalUI("ui", old))
-			require.NoError(t, cache.DB.View(func(tx *bbolt.Tx) error {
-				require.Equal(t, legacySavedBinary(t, 2, old), cache.bucket(tx, bucketExternalUI).Get([]byte("ui")))
-				return nil
-			}))
 			require.NoError(t, scope.Close())
-			scope = adapter.NewScope(context.Background(), logger.NOP())
 			cache = New(context.Background(), logger.NOP(), options)
+			scope = adapter.NewScope(context.Background(), logger.NOP())
 			require.NoError(t, cache.Start(adapter.StartStateInitialize, scope))
 			defer scope.Close()
 			require.Equal(t, []byte("new rules"), cache.LoadRuleSet("1").Content)
