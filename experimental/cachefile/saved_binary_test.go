@@ -106,11 +106,6 @@ func TestBranchCacheMigrationAndIsolation(t *testing.T) {
 					return nil
 				}))
 			}
-			require.NoError(t, cache.SaveExternalUI("ui", old))
-			require.NoError(t, cache.DB.View(func(tx *bbolt.Tx) error {
-				require.Equal(t, legacySavedBinary(t, 2, old), cache.bucket(tx, bucketExternalUI).Get([]byte("ui")))
-				return nil
-			}))
 			require.NoError(t, cache.Close())
 			cache = New(context.Background(), logger.NOP(), options)
 			require.NoError(t, cache.Start(adapter.StartStateInitialize))

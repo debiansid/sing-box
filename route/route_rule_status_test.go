@@ -34,17 +34,16 @@ func TestDisabledRuleReferenceReachability(t *testing.T) {
 		routeOptions = append(routeOptions, option.Rule{Type: C.RuleTypeDefault, DefaultOptions: option.DefaultRule{RuleAction: option.RuleAction{Action: C.RuleActionTypeRoute, RouteOptions: option.RouteActionOptions{Outbound: tag}}}})
 		dnsOptions = append(dnsOptions, option.DNSRule{Type: C.RuleTypeDefault, DefaultOptions: option.DefaultDNSRule{DNSRuleAction: option.DNSRuleAction{Action: C.RuleActionTypeRoute, RouteOptions: option.DNSRouteActionOptions{Server: tag}}}})
 	}
-	manager := &testL3OutboundManager{outbounds: map[string]adapter.Outbound{}}
 	var outbounds, transports []string
-	require.True(t, collectRuleReferences(enabledRuleOptions(routeOptions, runtime), "", manager, &outbounds, &transports))
+	require.True(t, collectRuleReferences(enabledRuleOptions(routeOptions, runtime), "", &outbounds, &transports))
 	require.Equal(t, []string{"fallback"}, outbounds)
 	require.True(t, collectDNSRuleReferences(enabledRuleOptions(dnsOptions, runtime), "", &transports))
 	require.Equal(t, []string{"fallback"}, transports)
 	runtime[1].disabled = true
-	require.False(t, collectRuleReferences(enabledRuleOptions(routeOptions, runtime), "", manager, &outbounds, &transports))
+	require.False(t, collectRuleReferences(enabledRuleOptions(routeOptions, runtime), "", &outbounds, &transports))
 	require.False(t, collectDNSRuleReferences(enabledRuleOptions(dnsOptions, runtime), "", &transports))
 	runtime[0].disabled = false
 	outbounds = nil
-	require.True(t, collectRuleReferences(enabledRuleOptions(routeOptions, runtime), "", manager, &outbounds, &transports))
+	require.True(t, collectRuleReferences(enabledRuleOptions(routeOptions, runtime), "", &outbounds, &transports))
 	require.Equal(t, []string{"disabled"}, outbounds)
 }

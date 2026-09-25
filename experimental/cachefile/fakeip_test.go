@@ -1,8 +1,14 @@
 package cachefile
 
 import (
+	"context"
 	"net/netip"
+	"path/filepath"
 	"testing"
+
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing/common/logger"
 
 	"github.com/stretchr/testify/require"
 )
@@ -10,7 +16,9 @@ import (
 func TestFakeIPResetWithMissingBuckets(t *testing.T) {
 	t.Parallel()
 
-	cache := newDNSCacheTestCache(t)
+	cache := New(context.Background(), logger.NOP(), option.CacheFileOptions{Path: filepath.Join(t.TempDir(), "cache.db")})
+	require.NoError(t, cache.Start(adapter.StartStateInitialize))
+	t.Cleanup(func() { require.NoError(t, cache.Close()) })
 	require.NoError(t, cache.FakeIPReset())
 
 	address := netip.MustParseAddr("198.18.0.2")
