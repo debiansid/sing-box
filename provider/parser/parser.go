@@ -229,9 +229,6 @@ func overrideTLSOption(options *option.OutboundTLSOptions, overrideTLSOptions *o
 	if overrideTLSOptions.ServerName != nil {
 		options.ServerName = *overrideTLSOptions.ServerName
 	}
-	if overrideTLSOptions.CertificateServerName != nil {
-		options.CertificateServerName = *overrideTLSOptions.CertificateServerName
-	}
 	if overrideTLSOptions.Insecure != nil {
 		options.Insecure = *overrideTLSOptions.Insecure
 	}
