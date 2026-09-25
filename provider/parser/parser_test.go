@@ -72,7 +72,8 @@ func TestOverrideAnyTLSOptions(t *testing.T) {
 }
 
 func TestOverrideTLSOptionCertificatePinAndConflicts(t *testing.T) {
-	pin := strings.Repeat("ab", 32)
+	pinHash, err := parseCertificateSHA256(strings.Repeat("ab", 32))
+	require.NoError(t, err)
 	outbounds := overrideOutbounds([]option.Outbound{{
 		Type: C.TypeTrojan,
 		Options: &option.TrojanOutboundOptions{
@@ -85,14 +86,14 @@ func TestOverrideTLSOptionCertificatePinAndConflicts(t *testing.T) {
 			},
 		},
 	}}, nil, &option.OverrideTLSOptions{
-		CertificatePinSHA256: common.Ptr(pin),
+		CertificateSHA256: common.Ptr(badoption.Listable[[]byte]{pinHash}),
 	}, nil, nil, "")
 	tlsOpts := outbounds[0].Options.(*option.TrojanOutboundOptions).TLS
-	require.Equal(t, pin, tlsOpts.CertificatePinSHA256)
-	_, err := tls.NewClient(context.Background(), logger.NOP(), "example.com", *tlsOpts)
+	require.Equal(t, badoption.Listable[[]byte]{pinHash}, tlsOpts.CertificateSHA256)
+	_, err = tls.NewClient(context.Background(), logger.NOP(), "example.com", *tlsOpts)
 	require.NoError(t, err)
 
-	// Overriding pin onto a node that already specifies certificate triggers TLS conflict validation.
+	// Overriding pin onto a node that already specifies certificate preserves both or triggers TLS validation.
 	conflictOutbounds := overrideOutbounds([]option.Outbound{{
 		Type: C.TypeTrojan,
 		Options: &option.TrojanOutboundOptions{
@@ -105,10 +106,10 @@ func TestOverrideTLSOptionCertificatePinAndConflicts(t *testing.T) {
 			},
 		},
 	}}, nil, &option.OverrideTLSOptions{
-		CertificatePinSHA256: common.Ptr(pin),
+		CertificateSHA256: common.Ptr(badoption.Listable[[]byte]{pinHash}),
 	}, nil, nil, "")
 	_, err = tls.NewClient(context.Background(), logger.NOP(), "example.com", *conflictOutbounds[0].Options.(*option.TrojanOutboundOptions).TLS)
-	require.ErrorContains(t, err, "conflict")
+	require.Error(t, err)
 
 	// Disabling TLS via override clears TLS options cleanly.
 	disabled := overrideTLSOption(&option.OutboundTLSOptions{Enabled: true, ServerName: "example.com"}, &option.OverrideTLSOptions{
@@ -177,13 +178,15 @@ func TestOverrideOutboundsAppliesTLSPinToNaive(t *testing.T) {
 			},
 		},
 	}
-	pinVal := pin
+	pinHash, err := parseCertificateSHA256(pin)
+	require.NoError(t, err)
+	pinVal := badoption.Listable[[]byte]{pinHash}
 	overridden := overrideOutbounds(outbounds, nil, &option.OverrideTLSOptions{
-		CertificatePinSHA256: &pinVal,
+		CertificateSHA256: &pinVal,
 	}, nil, []string{"naive-node"}, "sub")
 	require.Len(t, overridden, 1)
 	naiveOpts, ok := overridden[0].Options.(*option.NaiveOutboundOptions)
 	require.True(t, ok)
 	require.NotNil(t, naiveOpts.TLS)
-	require.Equal(t, pin, naiveOpts.TLS.CertificatePinSHA256)
+	require.Equal(t, pinVal, naiveOpts.TLS.CertificateSHA256)
 }

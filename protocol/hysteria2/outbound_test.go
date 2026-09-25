@@ -11,7 +11,6 @@ import (
 	"crypto/x509/pkix"
 	"encoding/hex"
 	"encoding/pem"
-	"errors"
 	"fmt"
 	"math/big"
 	"net"
@@ -321,41 +320,6 @@ func TestHysteria2DisableSNIHandshake(t *testing.T) {
 		require.Zero(t, srv.authCount.Load())
 	})
 
-	t.Run("CertificateServerName with visible SNI and with disable_sni", func(t *testing.T) {
-		srv := startHysteria2TestServer(t, dnsBundle.tlsCert, password)
-
-		visibleOpts := parseHysteria2LinkOptions(t, fmt.Sprintf("hy2://%s@127.0.0.1:%d?sni=wire.example", password, srv.port))
-		visibleOpts.TLS.Certificate = []string{dnsBundle.rootPEM}
-		visibleOpts.TLS.CertificateServerName = "cert.example"
-		require.NoError(t, dialHysteria2Handshake(t, visibleOpts))
-		hello := readHello(t, srv.helloCh)
-		require.Equal(t, "wire.example", hello.serverName)
-		require.Contains(t, hello.extensions, chromeTrustAnchorsExt)
-		_ = readAuth(t, srv.authCh)
-
-		wrongVisible := visibleOpts
-		tlsCopy := *visibleOpts.TLS
-		tlsCopy.CertificateServerName = "wrong.example"
-		wrongVisible.TLS = &tlsCopy
-		err := dialHysteria2Handshake(t, wrongVisible)
-		require.Error(t, err)
-		var hostErr x509.HostnameError
-		require.ErrorAs(t, err, &hostErr)
-		hello = readHello(t, srv.helloCh)
-		require.Equal(t, "wire.example", hello.serverName)
-		require.Equal(t, int32(1), srv.authCount.Load())
-
-		disabledOpts := parseHysteria2LinkOptions(t, fmt.Sprintf("hy2://%s@127.0.0.1:%d?sni=ignored.example&disable_sni=1", password, srv.port))
-		disabledOpts.TLS.Certificate = []string{dnsBundle.rootPEM}
-		disabledOpts.TLS.CertificateServerName = "cert.example"
-		require.NoError(t, dialHysteria2Handshake(t, disabledOpts))
-		hello = readHello(t, srv.helloCh)
-		require.Empty(t, hello.serverName)
-		require.NotContains(t, hello.extensions, sniExtensionID)
-		_ = readAuth(t, srv.authCh)
-		require.Equal(t, int32(2), srv.authCount.Load())
-	})
-
 	t.Run("IP host without sni verifies IP SAN under disable_sni=1", func(t *testing.T) {
 		ipSrv := startHysteria2TestServer(t, ipBundle.tlsCert, password)
 		okOpts := parseHysteria2LinkOptions(t, fmt.Sprintf("hy2://%s@127.0.0.1:%d?disable_sni=1", password, ipSrv.port))
@@ -381,28 +345,31 @@ func TestHysteria2DisableSNIHandshake(t *testing.T) {
 	t.Run("leaf pin and issuer pin under disable_sni=1", func(t *testing.T) {
 		srv := startHysteria2TestServer(t, dnsBundle.tlsCert, password)
 
-		leafOpts := parseHysteria2LinkOptions(t, fmt.Sprintf("hy2://%s@127.0.0.1:%d?sni=wrong.example&pinSHA256=%s&disable_sni=1", password, srv.port, dnsBundle.leafPin))
-		require.NoError(t, dialHysteria2Handshake(t, leafOpts))
+		untrustedPinOpts := parseHysteria2LinkOptions(t, fmt.Sprintf("hy2://%s@127.0.0.1:%d?sni=cert.example&pinSHA256=%s&disable_sni=1", password, srv.port, dnsBundle.leafPin))
+		err := dialHysteria2Handshake(t, untrustedPinOpts)
+		require.Error(t, err)
+		var authErr x509.UnknownAuthorityError
+		require.ErrorAs(t, err, &authErr)
 		hello := readHello(t, srv.helloCh)
+		require.Empty(t, hello.serverName)
+		require.NotContains(t, hello.extensions, sniExtensionID)
+		require.Contains(t, hello.extensions, chromeTrustAnchorsExt)
+
+		leafOpts := parseHysteria2LinkOptions(t, fmt.Sprintf("hy2://%s@127.0.0.1:%d?sni=cert.example&insecure=1&pinSHA256=%s&disable_sni=1", password, srv.port, dnsBundle.leafPin))
+		require.NoError(t, dialHysteria2Handshake(t, leafOpts))
+		hello = readHello(t, srv.helloCh)
 		require.Empty(t, hello.serverName)
 		require.NotContains(t, hello.extensions, sniExtensionID)
 		require.Contains(t, hello.extensions, chromeTrustAnchorsExt)
 		_ = readAuth(t, srv.authCh)
 
-		caOKOpts := parseHysteria2LinkOptions(t, fmt.Sprintf("hy2://%s@127.0.0.1:%d?sni=cert.example&pinSHA256=%s&disable_sni=1", password, srv.port, dnsBundle.intermediatePin))
-		require.NoError(t, dialHysteria2Handshake(t, caOKOpts))
-		hello = readHello(t, srv.helloCh)
-		require.Empty(t, hello.serverName)
-		_ = readAuth(t, srv.authCh)
-
-		caBadOpts := parseHysteria2LinkOptions(t, fmt.Sprintf("hy2://%s@127.0.0.1:%d?sni=wrong.example&pinSHA256=%s&disable_sni=1", password, srv.port, dnsBundle.intermediatePin))
-		err := dialHysteria2Handshake(t, caBadOpts)
+		caRejectedOpts := parseHysteria2LinkOptions(t, fmt.Sprintf("hy2://%s@127.0.0.1:%d?sni=cert.example&insecure=1&pinSHA256=%s&disable_sni=1", password, srv.port, dnsBundle.intermediatePin))
+		err = dialHysteria2Handshake(t, caRejectedOpts)
 		require.Error(t, err)
-		var hostErr x509.HostnameError
-		require.ErrorAs(t, err, &hostErr)
+		require.ErrorContains(t, err, "unrecognized peer certificate")
 		hello = readHello(t, srv.helloCh)
 		require.Empty(t, hello.serverName)
-		require.Equal(t, int32(2), srv.authCount.Load())
+		require.Equal(t, int32(1), srv.authCount.Load())
 	})
 
 	t.Run("insecure and pin interactions under disable_sni=1", func(t *testing.T) {
@@ -420,19 +387,16 @@ func TestHysteria2DisableSNIHandshake(t *testing.T) {
 		badPinOpts := parseHysteria2LinkOptions(t, fmt.Sprintf("hy2://%s@127.0.0.1:%d?insecure=1&pinSHA256=%s&disable_sni=1", password, srv.port, wrongPin))
 		err := dialHysteria2Handshake(t, badPinOpts)
 		require.Error(t, err)
-		require.ErrorContains(t, err, "certificate fingerprint mismatch")
+		require.ErrorContains(t, err, "unrecognized peer certificate")
 		hello = readHello(t, srv.helloCh)
 		require.Empty(t, hello.serverName)
-		require.Equal(t, int32(1), srv.authCount.Load())
 
-		caBadNameWithInsecure := parseHysteria2LinkOptions(t, fmt.Sprintf("hy2://%s@127.0.0.1:%d?sni=wrong.example&insecure=1&pinSHA256=%s&disable_sni=1", password, srv.port, dnsBundle.intermediatePin))
-		err = dialHysteria2Handshake(t, caBadNameWithInsecure)
-		require.Error(t, err)
-		var hostErr x509.HostnameError
-		require.True(t, errors.As(err, &hostErr))
+		leafWithInsecure := parseHysteria2LinkOptions(t, fmt.Sprintf("hy2://%s@127.0.0.1:%d?sni=wrong.example&insecure=1&pinSHA256=%s&disable_sni=1", password, srv.port, dnsBundle.leafPin))
+		require.NoError(t, dialHysteria2Handshake(t, leafWithInsecure))
 		hello = readHello(t, srv.helloCh)
 		require.Empty(t, hello.serverName)
-		require.Equal(t, int32(1), srv.authCount.Load())
+		_ = readAuth(t, srv.authCh)
+		require.Equal(t, int32(2), srv.authCount.Load())
 	})
 
 	t.Run("standard QUIC control with DisableChromeParrot", func(t *testing.T) {

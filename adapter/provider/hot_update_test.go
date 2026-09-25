@@ -37,6 +37,12 @@ type testNode struct {
 	conns   []net.Conn
 }
 
+type testEndpointNode struct {
+	*testNode
+}
+
+func (*testEndpointNode) IsEndpoint() {}
+
 func (n *testNode) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	n.starts.Add(1)
 	if stage == adapter.StartStateInitialize {
@@ -69,12 +75,6 @@ func (n *testNode) DialContext(context.Context, string, M.Socksaddr) (net.Conn, 
 func (*testNode) ListenPacket(context.Context, M.Socksaddr) (net.PacketConn, error) {
 	return nil, errors.New("unsupported")
 }
-
-type testEndpointNode struct {
-	*testNode
-}
-
-func (*testEndpointNode) IsEndpoint() {}
 
 func TestProviderHotUpdateKeepsUnchangedNodesAndConnections(t *testing.T) {
 	ctx := service.ContextWithPtr(context.Background(), urltest.NewHistoryStorage())

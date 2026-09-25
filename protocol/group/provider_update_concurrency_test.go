@@ -176,3 +176,11 @@ func (m *providerUpdateTestOutboundManager) Outbound(tag string) (adapter.Outbou
 	outbound, loaded := m.outbounds[tag]
 	return outbound, loaded
 }
+
+type preMatchTestOutbound struct {
+	adapter.Outbound
+	tag string
+}
+
+func (o *preMatchTestOutbound) Tag() string       { return o.tag }
+func (o *preMatchTestOutbound) Network() []string { return []string{"tcp", "udp"} }
