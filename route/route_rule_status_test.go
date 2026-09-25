@@ -23,3 +23,13 @@ func TestDisabledRuleFallsThroughPreMatchAndMatch(t *testing.T) {
 	require.NoError(t, err)
 	require.Same(t, next, matched)
 }
+
+type testL3OutboundManager struct {
+	adapter.OutboundManager
+	outbounds map[string]adapter.Outbound
+}
+
+func (m *testL3OutboundManager) Outbound(tag string) (adapter.Outbound, bool) {
+	o, ok := m.outbounds[tag]
+	return o, ok
+}

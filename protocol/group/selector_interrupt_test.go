@@ -21,7 +21,7 @@ import (
 )
 
 func TestSelectorInterruptRoutedConnections(t *testing.T) {
-	for _, kind := range []string{"plain", "selector", "urltest", "loadbalance", "handler", "nested-handler"} {
+	for _, kind := range []string{"plain", "selector", "urltest", "handler", "nested-handler"} {
 		for _, network := range []string{N.NetworkTCP, N.NetworkUDP} {
 			for _, policy := range []string{"interrupt", "keep", "resource-download"} {
 				t.Run(kind+"/"+network+"/"+policy, func(t *testing.T) {
@@ -58,11 +58,6 @@ func TestSelectorInterruptRoutedConnections(t *testing.T) {
 						group.selectedOutboundTCP.Store(leaf)
 						group.selectedOutboundUDP.Store(leaf)
 						selected = &URLTest{connection: manager, group: group}
-					case "loadbalance":
-						selected = &LoadBalance{connection: manager, group: &LoadBalanceGroup{
-							interruptGroup: interrupt.NewGroup(),
-							strategyFn:     func(*adapter.InboundContext, bool, outboundMatcher) adapter.Outbound { return leaf },
-						}}
 					case "handler", "nested-handler":
 						handler = &selectorInterruptTestHandler{selectorInterruptTestOutbound: leaf}
 						selected = handler

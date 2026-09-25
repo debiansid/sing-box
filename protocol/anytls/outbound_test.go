@@ -2,6 +2,8 @@ package anytls
 
 import (
 	"context"
+	M "github.com/sagernet/sing/common/metadata"
+	"os"
 	"testing"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -57,4 +59,15 @@ func TestClientMetadataOrDefault(t *testing.T) {
 func TestMultiplexEnabled(t *testing.T) {
 	require.True(t, (&Outbound{}).MultiplexEnabled())
 	require.False(t, (&Outbound{disableReuse: true}).MultiplexEnabled())
+}
+
+func TestOutboundBeforeInitialize(t *testing.T) {
+	o := &Outbound{}
+	for _, network := range []string{"tcp", "udp"} {
+		_, err := o.DialContext(context.Background(), network, M.Socksaddr{})
+		require.ErrorIs(t, err, os.ErrInvalid)
+	}
+	_, err := o.ListenPacket(context.Background(), M.Socksaddr{})
+	require.ErrorIs(t, err, os.ErrInvalid)
+	require.NoError(t, o.Close())
 }

@@ -180,7 +180,6 @@ type OverrideTLSOptions struct {
 	Enabled                    *bool                                `json:"enabled,omitempty"`
 	DisableSNI                 *bool                                `json:"disable_sni,omitempty"`
 	ServerName                 *string                              `json:"server_name,omitempty"`
-	CertificateServerName      *string                              `json:"certificate_server_name,omitempty"`
 	Insecure                   *bool                                `json:"insecure,omitempty"`
 	ALPN                       *badoption.Listable[string]          `json:"alpn,omitempty"`
 	MinVersion                 *string                              `json:"min_version,omitempty"`
