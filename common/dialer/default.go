@@ -434,7 +434,7 @@ func (d *DefaultDialer) trackConn(ctx context.Context, destination M.Socksaddr, 
 			conn.Close()
 			return nil, err
 		}
-		conn = &udpConn{Conn: conn, rawConn: rawConn}
+		conn = &udpConn{Conn: conn, packetConn: nativeConn, rawConn: rawConn}
 	}
 	conn = bindEBPFSelfBypassConnLifecycle(d.networkManager, conn)
 	if d.connectionManager != nil {

@@ -129,7 +129,7 @@ func (i *Inbound) prepareTCPacketConnection(
 	key udpSessionKey,
 ) (bool, context.Context, N.PacketWriter, N.CloseHandlerFunc) {
 	ctx := log.ContextWithNewID(i.ctx)
-	clientState := i.udpClientTable.loadOrCreate(key)
+	clientState := i.udpClientTable.renew(key)
 	writer := &tcPacketWriter{inbound: i, key: key, clientState: clientState}
 	return true, ctx, writer, func(error) {
 		i.deleteCgroupUDPRedirects(i.udpClientTable.delete(key, clientState))
@@ -299,15 +299,9 @@ func (i *Inbound) newTCUDPReplySocket(source netip.AddrPort) (*net.UDPConn, func
 	if source.Addr().Is4() {
 		network = "udp4"
 	}
-	fragmentControl := control.DisableUDPFragment()
-	if i.udpFragment {
-		fragmentControl = control.EnableUDPFragment()
-	}
 	listenConfig := net.ListenConfig{Control: control.Append(
 		control.UDPSocketBuffer(listener.UDPSocketBufferSize()),
-		// This socket is created outside common/listener.Listener, so it
-		// must mirror ebpf.udp_fragment explicitly.
-		fragmentControl,
+		control.EnableUDPFragment(),
 	)}
 	var selfBypass *commonEBPF.SelfBypass
 	if provider, loaded := i.networkManager.(interface {
