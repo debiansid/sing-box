@@ -66,6 +66,21 @@ func TestDiagnosticsReportsWaitingForInterfaceWhenNothingIsAttachedYet(t *testin
 	}
 }
 
+func TestDiagnosticsJSONUsesShortRequestDrivenCache(t *testing.T) {
+	inbound := &Inbound{localEnabled: true, localDataPlane: localDataPlaneTC}
+	first, ok := inbound.DiagnosticsJSON().(EBPFDiagnostics)
+	if !ok {
+		t.Fatal("DiagnosticsJSON did not return EBPFDiagnostics")
+	}
+	second, ok := inbound.DiagnosticsJSON().(EBPFDiagnostics)
+	if !ok {
+		t.Fatal("second DiagnosticsJSON did not return EBPFDiagnostics")
+	}
+	if !first.ObservedAt.Equal(second.ObservedAt) {
+		t.Fatalf("cache miss inside TTL: first=%v second=%v", first.ObservedAt, second.ObservedAt)
+	}
+}
+
 func TestEBPFDiagnosticsUsesShortRequestDrivenCache(t *testing.T) {
 	inbound := &Inbound{localEnabled: true, localDataPlane: localDataPlaneTC}
 	first := inbound.EBPFDiagnostics()

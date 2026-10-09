@@ -106,6 +106,38 @@ func (t *sharedUDPClientTable) loadOrCreate(key udpSessionKey) *sharedUDPClientS
 	return shard.loadOrCreateLocked(key)
 }
 
+// renew transfers the current bindings to a new NAT session owner.
+func (t *sharedUDPClientTable) renew(key udpSessionKey) *sharedUDPClientState {
+	shard := t.clientShard(key)
+	shard.access.Lock()
+	defer shard.access.Unlock()
+	previous, loaded := shard.clients[key]
+	if !loaded {
+		return shard.loadOrCreateLocked(key)
+	}
+	previous.access.Lock()
+	state := &sharedUDPClientState{
+		connected:            previous.connected,
+		connectedDestination: previous.connectedDestination,
+		sourceMAC:            previous.sourceMAC,
+		bindings:             previous.bindings,
+		originals:            previous.originals,
+		replyAliasCount:      previous.replyAliasCount,
+	}
+	if connectedBinding := previous.connectedBinding.Swap(nil); connectedBinding != nil {
+		state.connectedBinding.Store(connectedBinding)
+	}
+	previous.connected = false
+	previous.connectedDestination = netip.AddrPort{}
+	previous.sourceMAC = nil
+	previous.bindings = nil
+	previous.originals = nil
+	previous.replyAliasCount = 0
+	previous.access.Unlock()
+	shard.clients[key] = state
+	return state
+}
+
 func (s *sharedUDPClientShard) loadOrCreateLocked(key udpSessionKey) *sharedUDPClientState {
 	if clientState, loaded := s.clients[key]; loaded {
 		return clientState

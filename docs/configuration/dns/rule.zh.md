@@ -154,7 +154,9 @@ icon: material/alert-decagram
         "user_id": [
           1000
         ],
-        "clash_mode": "direct",
+        "clash_mode": [
+          "direct"
+        ],
         "network_type": [
           "wifi"
         ],
@@ -452,7 +454,7 @@ DNS 查询类型。值可以为整数或者类型名称字符串。
 
 !!! quote ""
 
-    仅在 Android 与 Apple 平台图形客户端中支持。
+    仅在 Android 与 Apple 平台图形客户端、安卓核心中支持。
 
 匹配网络类型。
 

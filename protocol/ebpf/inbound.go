@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	commonEBPF "github.com/CHIZI-0618/sing-ebpf"
@@ -97,6 +98,10 @@ type Inbound struct {
 	sharedIPv6                bool
 	sharedBypassPrivate       bool
 	localBypassPort           []portRange
+	endpointConnectedBypass   option.EBPFEndpointConnectedBypassOptions
+	endpointEnableTCP         bool
+	endpointEnableUDP         bool
+	endpointConnectedPorts    []portRange
 	sharedBypassPort          []portRange
 	localBypassExclude        []netip.Prefix
 	sharedBypassExclude       []netip.Prefix
@@ -118,6 +123,8 @@ type Inbound struct {
 	cgroupRecoveryEvents      chan commonEBPF.UDPReleaseEvent
 	lifecycleAccess           sync.Mutex
 	interfaceMonitor          tcInterfaceMonitor
+	vpnReady                  atomic.Bool
+	vpnInterfacePackets       map[vpnInterfaceIdentity]vpnInterfaceState
 
 	bypassRuleSetAccess       sync.Mutex
 	bypassRuleSet             []adapter.RuleSet
@@ -196,9 +203,12 @@ type Inbound struct {
 	// diagnosticsAPICache is request-driven only. API polling can be frequent,
 	// so native per-CPU counter reads are coalesced for a short
 	// window without adding a timer or background wakeup.
-	diagnosticsAPIAccess sync.Mutex
-	diagnosticsAPIAt     time.Time
-	diagnosticsAPIValue  adapter.EBPFRuntimeDiagnostics
+	diagnosticsAPIAccess  sync.Mutex
+	diagnosticsAPIAt      time.Time
+	diagnosticsAPIValue   adapter.EBPFRuntimeDiagnostics
+	diagnosticsJSONAccess sync.Mutex
+	diagnosticsJSONAt     time.Time
+	diagnosticsJSONValue  EBPFDiagnostics
 	// kernelRuntimeAPICache protects the more expensive global program/map
 	// enumeration. It remains request-driven and never starts a timer.
 	kernelRuntimeAPIAccess sync.Mutex
@@ -280,6 +290,10 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 	if err != nil {
 		return nil, err
 	}
+	endpointConnectedBypass, endpointConnectedPorts, endpointEnableTCP, endpointEnableUDP, err := normalizeEndpointConnectedBypass(options.Local.EndpointConnectedBypass)
+	if err != nil {
+		return nil, err
+	}
 	sharedIncludeMAC, err := parseSharedMACAddresses(
 		"include_mac_address",
 		sharedOptions.IncludeMACAddress,
@@ -323,28 +337,32 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 			platform := service.FromContext[adapter.PlatformInterface](ctx)
 			return platform != nil && platform.UsePlatformConnectionOwnerFinder()
 		}(),
-		localEnabled:        localEnabled,
-		localDataPlane:      localDataPlane,
-		cgroupPath:          cgroupPath,
-		selfBypass:          selfBypass,
-		processInfoCache:    newProcessInfoCache(),
-		enableTCP:           enableTCP,
-		enableUDP:           enableUDP,
-		localDNSMode:        localDNSMode,
-		sharedDNSMode:       sharedDNSMode,
-		localIPv6:           localEnabled && enabledByDefault(options.Local.IPv6),
-		sharedOptions:       sharedOptions,
-		sharedEnabled:       sharedEnabled,
-		sharedDataPlane:     sharedDataPlane,
-		sharedIPv6:          sharedEnabled && enabledByDefault(options.Shared.IPv6),
-		sharedBypassPrivate: options.Shared.BypassPrivateAddress == nil || *options.Shared.BypassPrivateAddress,
-		localBypassPort:     localBypassPort,
-		sharedBypassPort:    sharedBypassPort,
-		localBypassExclude:  localBypassExclude,
-		sharedBypassExclude: sharedBypassExclude,
-		tcPriority:          uint16(options.TCPriority),
-		sharedIncludeMAC:    sharedIncludeMAC,
-		sharedExcludeMAC:    sharedExcludeMAC,
+		localEnabled:            localEnabled,
+		localDataPlane:          localDataPlane,
+		cgroupPath:              cgroupPath,
+		selfBypass:              selfBypass,
+		processInfoCache:        newProcessInfoCache(),
+		enableTCP:               enableTCP,
+		enableUDP:               enableUDP,
+		localDNSMode:            localDNSMode,
+		sharedDNSMode:           sharedDNSMode,
+		localIPv6:               localEnabled && enabledByDefault(options.Local.IPv6),
+		sharedOptions:           sharedOptions,
+		sharedEnabled:           sharedEnabled,
+		sharedDataPlane:         sharedDataPlane,
+		sharedIPv6:              sharedEnabled && enabledByDefault(options.Shared.IPv6),
+		sharedBypassPrivate:     options.Shared.BypassPrivateAddress == nil || *options.Shared.BypassPrivateAddress,
+		localBypassPort:         localBypassPort,
+		endpointConnectedBypass: endpointConnectedBypass,
+		endpointEnableTCP:       endpointEnableTCP,
+		endpointEnableUDP:       endpointEnableUDP,
+		endpointConnectedPorts:  endpointConnectedPorts,
+		sharedBypassPort:        sharedBypassPort,
+		localBypassExclude:      localBypassExclude,
+		sharedBypassExclude:     sharedBypassExclude,
+		tcPriority:              uint16(options.TCPriority),
+		sharedIncludeMAC:        sharedIncludeMAC,
+		sharedExcludeMAC:        sharedExcludeMAC,
 		localPolicy: localUIDPolicy{
 			BypassPrivateAddress: options.Local.BypassPrivateAddress == nil || *options.Local.BypassPrivateAddress,
 			IncludeUIDConfigured: len(options.Local.IncludeUID) > 0 ||
