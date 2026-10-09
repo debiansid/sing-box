@@ -49,7 +49,6 @@ The type of the DNS server.
 | `openconnect`   | [OpenConnect](./openconnect/) |
 | `openvpn`       | [OpenVPN](./openvpn/)         |
 | `resolved`      | [Resolved](./resolved/)   |
-| `group`         | [Group](./group/)         |
 
 #### tag
 

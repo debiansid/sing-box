@@ -142,9 +142,7 @@ icon: material/new-box
         "user_id": [
           1000
         ],
-        "clash_mode": [
-          "direct"
-        ],
+        "clash_mode": "direct",
         "network_type": [
           "wifi"
         ],
@@ -405,7 +403,7 @@ icon: material/new-box
 
 !!! quote ""
 
-    仅在 Android 与 Apple 平台图形客户端、安卓核心中支持。
+    仅在 Android 与 Apple 平台图形客户端中支持。
 
 匹配网络类型。
 

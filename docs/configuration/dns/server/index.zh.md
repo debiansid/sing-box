@@ -49,7 +49,6 @@ DNS 服务器的类型。
 | `openconnect`   | [OpenConnect](./openconnect/) |
 | `openvpn`       | [OpenVPN](./openvpn/)         |
 | `resolved`      | [Resolved](./resolved/)   |
-| `group`         | [Group](./group/)         |
 
 #### tag
 

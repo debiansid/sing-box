@@ -10,17 +10,10 @@
     "proxy-b",
     "proxy-c"
   ],
-  "providers": [
-    "provider-a",
-    "provider-b",
-  ],
-  "exclude": "",
-  "include": "",
   "url": "",
   "interval": "",
-  "tolerance": 50,
+  "tolerance": 0,
   "idle_timeout": "",
-  "use_all_providers": false,
   "interrupt_exist_connections": false
 }
 ```
@@ -29,19 +22,9 @@
 
 #### outbounds
 
+==Required==
+
 List of outbound tags to test.
-
-#### providers
-
-List of [Provider](/configuration/provider) tags to test.
-
-#### exclude
-
-Exclude regular expression to filter `providers` nodes.
-
-#### include
-
-Include regular expression to filter `providers` nodes.
 
 #### url
 
@@ -58,10 +41,6 @@ The test tolerance in milliseconds. `50` will be used if empty.
 #### idle_timeout
 
 The idle timeout. `30m` will be used if empty.
-
-#### use_all_providers
-
-Whether to use all providers for testing. `false` will be used if empty.
 
 #### interrupt_exist_connections
 

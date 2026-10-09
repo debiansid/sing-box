@@ -144,9 +144,7 @@ icon: material/new-box
         "user_id": [
           1000
         ],
-        "clash_mode": [
-          "direct"
-        ],
+        "clash_mode": "direct",
         "network_type": [
           "wifi"
         ],
@@ -407,7 +405,7 @@ Match Clash mode.
 
 !!! quote ""
 
-    Only supported in graphical clients on Android and Apple platforms and in the Android core.
+    Only supported in graphical clients on Android and Apple platforms.
 
 Match network type.
 
