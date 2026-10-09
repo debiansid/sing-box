@@ -26,8 +26,7 @@ Local interception with the default cgroup data plane:
     "enabled": true,
     "data_plane": "cgroup",
     "dns_mode": "respect_policy",
-    "bypass_private_address": true,
-    "bypass_exclude": ["100.64.0.0/10"]
+    "bypass_private_address": true
   }
 }
 ```
@@ -42,8 +41,7 @@ interface name:
     "data_plane": "packet_rewrite",
     "interface": ["wlan1"],
     "dns_mode": "respect_policy",
-    "bypass_private_address": true,
-    "bypass_exclude": ["fd7a:115c:a1e0::/48"]
+    "bypass_private_address": true
   }
 }
 ```
@@ -69,10 +67,7 @@ Enabled transport protocols: `tcp`, `udp`, or both. Both are enabled by default.
 
 ### udp_timeout
 
-UDP session timeout. Default is `5m`. A JSON number is interpreted as seconds
-for compatibility; duration strings such as `30s` and `5m` are also accepted.
-The value must be at least `5s` and is rounded up to whole seconds for the
-kernel data plane.
+UDP session timeout. Default is `5m`.
 
 ### tc_priority
 
@@ -122,23 +117,7 @@ the root cgroup hook.
 | `respect_policy` | Apply UID/package selection first, then intercept. Default. |
 | `off` | Bypass. |
 
-With `hijack`, port 53 is a global DNS control-plane rule: it remains intercepted
-even when `include_uid`, `include_package`, or another selector would otherwise
-pass the socket. Those selectors still apply to ordinary non-DNS traffic, so
-`hijack` does not disable package filtering or turn it into a global intercept.
-For example, this is valid and intercepts DNS from every socket while selecting
-only the listed package for other ports:
-
-```json
-{
-  "dns_mode": "hijack",
-  "include_package": ["org.example.browser"]
-}
-```
-
-`respect_policy` applies the UID/package selection before the port-53 rule.
-This option applies only to enabled TCP/UDP traffic; it does not detect DoH or
-DoT.
+This option applies only to enabled TCP/UDP traffic; it does not detect DoH or DoT.
 
 ### local.ipv6
 
@@ -147,22 +126,6 @@ Enables local IPv6 interception. Default is `true`.
 ### local.bypass_private_address
 
 Bypasses private and special-use destinations. Default is `true`.
-
-### local.bypass_exclude
-
-CIDR prefixes that are force-intercepted ahead of every bypass decision,
-even when `local.bypass_private_address`, `local.bypass_port`, or another
-bypass rule would otherwise pass them in kernel. The kernel checks the
-force-intercept prefix before all bypass checks.
-
-At most one IPv4 and one IPv6 prefix is accepted (the backend keeps a single
-force-intercept prefix per address family). A prefix that overlaps the DNS
-fake-ip range is rejected at startup because fake-ip already occupies that
-slot; use `redir-host` DNS mode when you need bypass_exclude.
-
-Typical use: keep a VPN/CGNAT range such as Tailscale's `100.64.0.0/10` (and
-IPv6 `fd7a:115c:a1e0::/48`) intercepted so tailnet traffic can reach a
-`tailscale` outbound node instead of being passed straight to the kernel.
 
 ### local.bypass_rule_set
 
@@ -210,6 +173,34 @@ precedence; configuring port 53 therefore emits a warning.
 
 Destination port ranges to bypass, in inclusive `start:end` form.
 
+### local.endpoint_connected_bypass
+
+Optional single local TC endpoint gate (not an outbound selector):
+
+```json
+"endpoint_connected_bypass": {
+  "enabled": true,
+  "network": ["tcp", "udp"],
+  "ip_cidr": ["203.0.113.0/24"],
+  "port": [500, 4500]
+}
+```
+
+Both destination CIDR and port must match. Before VPN readiness, matching
+traffic is forced into the normal Router; after readiness it bypasses local
+TC natively. Unmatched traffic and shared policy are unchanged. FakeIP and
+DNS semantics retain precedence. Enabling this defaults local `data_plane`
+to `tc`; explicit `cgroup`, `cgroup_path`, or disabled local interception is
+invalid. Both CIDR and port lists are required; omitted network means TCP/UDP.
+
+An eligible VPN is an UP `tun*` or `ipsec*` interface with a global-unicast
+address, excluding sing-box's own interfaces. TUN requires RX/TX growth after
+the first sample, keyed by name and ifindex. IPsec requires a non-local-table
+unicast default route. Readiness clears when no eligible interface is ready.
+One-second samples and network events update only the READY control bit.
+Core sockets retain the existing underlying/protect and self-bypass path;
+ordinary VPN payload is not globally protected or marked by this feature.
+
 ## shared
 
 ### shared.enabled
@@ -244,13 +235,6 @@ client addresses, router advertisements, forwarding or upstream IPv6 routing.
 ### shared.bypass_private_address
 
 Bypasses private and special-use destinations. Default is `true`.
-
-### shared.bypass_exclude
-
-Like `local.bypass_exclude`, but for the shared data plane: CIDR prefixes
-that are force-intercepted ahead of every shared bypass decision. At most one
-IPv4 and one IPv6 prefix is accepted, and a prefix that overlaps the DNS
-fake-ip range is rejected at startup.
 
 ### shared.bypass_rule_set
 
@@ -310,6 +294,7 @@ any matching exclude selector takes precedence.
   effective attach, UDP cleanup, socket-storage, and time-source modes after
   fallback. It requires the
   [sing-box API service](/configuration/service/api/).
+- When the Clash API is configured, `GET /ebpf` exposes the same diagnostics.
 
 For local TC and shared `socket_assign`, the response also reports the effective
 TCX/clsact attachment mode, SOCKMAP/direct listener lookup, delivery interface,

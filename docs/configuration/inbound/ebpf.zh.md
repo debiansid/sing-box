@@ -25,8 +25,7 @@ eBPF 入站将选中的本机或下游 TCP/UDP 流量透明送入 sing-box 常�
     "enabled": true,
     "data_plane": "cgroup",
     "dns_mode": "respect_policy",
-    "bypass_private_address": true,
-    "bypass_exclude": ["100.64.0.0/10"]
+    "bypass_private_address": true
   }
 }
 ```
@@ -40,8 +39,7 @@ eBPF 入站将选中的本机或下游 TCP/UDP 流量透明送入 sing-box 常�
     "data_plane": "packet_rewrite",
     "interface": ["wlan1"],
     "dns_mode": "respect_policy",
-    "bypass_private_address": true,
-    "bypass_exclude": ["fd7a:115c:a1e0::/48"]
+    "bypass_private_address": true
   }
 }
 ```
@@ -66,9 +64,7 @@ eBPF 入站将选中的本机或下游 TCP/UDP 流量透明送入 sing-box 常�
 
 ### udp_timeout
 
-UDP 会话超时，默认 `5m`。为兼容旧格式，JSON 数字按秒解释；也可以使用
-`30s`、`5m` 等 duration 字符串。该值不能小于 `5s`，写入内核数据面时会向上
-取整到整秒。
+UDP 会话超时，默认 `5m`。
 
 ### tc_priority
 
@@ -114,21 +110,7 @@ Android 厂商的 netd hook 可能造成挂载冲突。sing-box 优先尝试多�
 | `respect_policy` | 先应用 UID/包名筛选，再接管。默认值。 |
 | `off` | 绕过。 |
 
-`hijack` 下 53 端口属于全局 DNS 控制面规则：即使 `include_uid`、
-`include_package` 或其他筛选器对该 socket 的普通结果是放行，也仍会接管
-DNS。上述筛选仍然作用于普通的非 DNS 流量，因此 `hijack` 不会禁用包名筛选，
-也不会退化成全局接管。下面的组合是合法的：所有 socket 的 DNS 都会被接管，
-其他端口只接管列出的包：
-
-```json
-{
-  "dns_mode": "hijack",
-  "include_package": ["org.example.browser"]
-}
-```
-
-`respect_policy` 会先应用 UID/包名筛选，再处理 53 端口规则。该选项只处理已
-启用的 TCP/UDP 流量，不识别 DoH 或 DoT。
+此选项只处理已启用的 TCP/UDP 流量，不识别 DoH 或 DoT。
 
 ### local.ipv6
 
@@ -137,20 +119,6 @@ DNS。上述筛选仍然作用于普通的非 DNS 流量，因此 `hijack` 不�
 ### local.bypass_private_address
 
 绕过私有和特殊用途目标地址，默认 `true`。
-
-### local.bypass_exclude
-
-这些 CIDR 前缀会在所有 bypass 决策之前被强制接管，即使
-`local.bypass_private_address`、`local.bypass_port` 或其他 bypass 规则本会让
-它们在内核直连。内核在检查所有 bypass 之前先检查强制接管前缀。
-
-每个地址族最多接受一个前缀（后端每地址族只保留一个强制接管前缀）。与 DNS
-fake-ip 范围重叠的前缀会在启动时报错，因为 fake-ip 已占用该槽位；需要使用
-`redir-host` DNS 模式才能配置 bypass_exclude。
-
-典型用途：让 VPN/CGNAT 网段（如 Tailscale 的 `100.64.0.0/10` 及 IPv6
-`fd7a:115c:a1e0::/48`）保持被接管，使 tailnet 流量能够到达 `tailscale`
-出站节点，而不是被内核直连放行。
 
 ### local.bypass_rule_set
 
@@ -195,6 +163,23 @@ fake-ip 范围重叠的前缀会在启动时报错，因为 fake-ip 已占用该
 
 需要绕过的目标端口范围，格式为包含两端的 `start:end`。
 
+### local.endpoint_connected_bypass
+
+可选的单个 local TC endpoint 门控（非出站选择器）：
+
+```json
+"endpoint_connected_bypass": {
+  "enabled": true,
+  "network": ["tcp", "udp"],
+  "ip_cidr": ["203.0.113.0/24"],
+  "port": [500, 4500]
+}
+```
+
+目标 CIDR 与端口必须同时匹配。在 VPN 就绪（READY）前，匹配的流量强制进入正常 Router 处理；在 VPN 就绪后，直接在本地 TC 阶段原生绕过。未匹配流量与 shared 策略保持原样，FakeIP 与 DNS 语义保留最高优先级。启用此项会将 local `data_plane` 默认设为 `tc`；显式配置 `cgroup`、`cgroup_path` 或禁用 local 接管均为无效配置。CIDR 与端口列表均为必填；省略 network 则默认启用 TCP/UDP。
+
+合格的 VPN 是处于 UP 状态、拥有全局单播地址且非 sing-box 自身的 `tun*` 或 `ipsec*` 接口。TUN 接口需要首次采样后的 RX/TX 增长来确立就绪，按名称与 ifindex 标识；IPsec 接口需要存在非 local 表的单播默认路由。当没有合格接口就绪时清除 READY。每秒采样与网络事件仅更新 READY 控制位。Core 套接字保留现有的 underlying/protect 和自绕过路径；普通 VPN 载荷流量不会被此特性全局 protect 或打标。
+
 ## shared
 
 ### shared.enabled
@@ -227,12 +212,6 @@ raw-IP、PPP/PPPoE 和受支持的隧道链路应使用 `socket_assign`。local 
 ### shared.bypass_private_address
 
 绕过私有和特殊用途目标地址，默认 `true`。
-
-### shared.bypass_exclude
-
-与 `local.bypass_exclude` 相同，但作用于 shared 数据面：这些 CIDR 前缀会在
-所有 shared bypass 决策之前被强制接管。每个地址族最多接受一个前缀，与 DNS
-fake-ip 范围重叠的前缀会在启动时报错。
 
 ### shared.bypass_rule_set
 
@@ -285,6 +264,7 @@ fake-ip 范围重叠的前缀会在启动时报错。
   UDP/会话统计、分片/放行计数和失败信息。local cgroup 还会报告回退后实际使用的挂载、
   UDP 清理、socket storage 和时间源模式；需要启用
   [sing-box API 服务](/zh/configuration/service/api/)。
+- 配置了 Clash API 时，`GET /ebpf` 提供同等的兼容诊断接口。
 
 local TC 和 shared `socket_assign` 还会报告实际的 TCX/clsact 挂载机制、SOCKMAP/direct
 listener 查找、delivery 接口、策略路由值、活动/待回收资源数量、health/reconcile 时间，
