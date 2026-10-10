@@ -3,12 +3,37 @@
 package ebpf
 
 import (
+	"net/netip"
 	"testing"
 	"time"
 
 	commonEBPF "github.com/CHIZI-0618/sing-ebpf"
 	"github.com/sagernet/sing-box/option"
 )
+
+func TestSharedUDPReplacementIgnoresDelayedClose(t *testing.T) {
+	var table sharedUDPClientTable
+	key := udpSessionKey{
+		Source:         netip.MustParseAddrPort("192.0.2.10:53000"),
+		Scope:          udpSessionScopeSharedRewrite,
+		InterfaceIndex: 1,
+	}
+	destination := netip.MustParseAddrPort("203.0.113.80:443")
+	redirect := netip.MustParseAddr("127.128.0.1")
+	table.setBinding(key, destination, redirect, false)
+	first := table.loadOrCreate(key)
+	second := table.renew(key)
+	if first == second {
+		t.Fatal("replacement reused state owned by the previous UDP session")
+	}
+	table.deleteShared(key, first)
+	if current, loaded := table.load(key); !loaded || current != second {
+		t.Fatal("delayed close removed replacement shared UDP state")
+	}
+	if binding, loaded := second.redirectBinding(destination); !loaded || binding.address != redirect {
+		t.Fatal("replacement lost the shared UDP reply binding")
+	}
+}
 
 func TestUpdateSharedRewriteFlowPressure(t *testing.T) {
 	usage := commonEBPF.MapUsage{Capacity: 100}

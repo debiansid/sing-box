@@ -111,17 +111,51 @@ func (t *udpClientTable) loadOrCreate(key udpSessionKey) *udpClientState {
 	shard := t.clientShard(key)
 	shard.access.Lock()
 	defer shard.access.Unlock()
-	if state, loaded := shard.clients[key]; loaded {
+	return shard.loadOrCreateLocked(key)
+}
+
+// renew transfers the current bindings to a new NAT session owner.
+func (t *udpClientTable) renew(key udpSessionKey) *udpClientState {
+	shard := t.clientShard(key)
+	shard.access.Lock()
+	defer shard.access.Unlock()
+	previous, loaded := shard.clients[key]
+	if !loaded {
+		return shard.loadOrCreateLocked(key)
+	}
+	previous.access.Lock()
+	state := &udpClientState{
+		sourceMAC:       previous.sourceMAC,
+		socketCookie:    previous.socketCookie,
+		bindings:        previous.bindings,
+		replyAliasCount: previous.replyAliasCount,
+		cgroupDataPlane: previous.cgroupDataPlane,
+		cgroupOriginals: previous.cgroupOriginals,
+	}
+	previous.sourceMAC = nil
+	previous.socketCookie = 0
+	previous.bindings = nil
+	previous.cgroupOriginals = nil
+	previous.replyAliasCount = 0
+	previous.cgroupDataPlane = false
+	previous.closed = true
+	previous.access.Unlock()
+	shard.clients[key] = state
+	return state
+}
+
+func (s *udpClientShard) loadOrCreateLocked(key udpSessionKey) *udpClientState {
+	if state, loaded := s.clients[key]; loaded {
 		return state
 	}
-	if shard.clients == nil {
-		shard.clients = make(map[udpSessionKey]*udpClientState)
+	if s.clients == nil {
+		s.clients = make(map[udpSessionKey]*udpClientState)
 	}
 	state := &udpClientState{
 		bindings:        make(map[netip.AddrPort]udpRedirectBinding),
 		cgroupOriginals: make(map[netip.Addr]commonEBPF.OriginalDestination),
 	}
-	shard.clients[key] = state
+	s.clients[key] = state
 	return state
 }
 

@@ -2,6 +2,7 @@ package option
 
 import (
 	"net/netip"
+	"reflect"
 
 	"github.com/sagernet/sing-box/schema"
 	"github.com/sagernet/sing/common/json/badoption"
@@ -44,6 +45,33 @@ type EBPFLocalOptions struct {
 	ExcludePackage       badoption.Listable[string] `json:"exclude_package,omitempty"`
 	BypassPort           badoption.Listable[uint16] `json:"bypass_port,omitempty"`
 	BypassPortRange      badoption.Listable[string] `json:"bypass_port_range,omitempty"`
+	VPNServerBypass      EBPFVPNServerBypassOptions `json:"vpn_server_bypass,omitempty"`
+}
+
+// EBPFVPNServerBypassOptions gates local traffic to an external VPN server:
+// matching flows go through the Router until an eligible VPN interface is
+// ready, then bypass the local TC data plane natively.
+type EBPFVPNServerBypassOptions struct {
+	Enabled             bool                             `json:"enabled,omitempty"`
+	Network             NetworkList                      `json:"network,omitempty"`
+	IPCIDR              badoption.Listable[netip.Prefix] `json:"ip_cidr,omitempty"`
+	Port                badoption.Listable[uint16]       `json:"port,omitempty"`
+	PortRange           badoption.Listable[string]       `json:"port_range,omitempty"`
+	VPNInterfaceAddress badoption.Listable[netip.Prefix] `json:"vpn_interface_address,omitempty"`
+}
+
+func (EBPFVPNServerBypassOptions) DescribeSchema(builder schema.Builder) (*schema.Node, error) {
+	return builder.Define("EBPFVPNServerBypassOptions", func() (*schema.Node, error) {
+		node := schema.StrictObject()
+		if err := builder.FlattenStruct(node, reflect.TypeFor[EBPFVPNServerBypassOptions]()); err != nil {
+			return nil, err
+		}
+		port := schema.UnsignedNode(16)
+		minimum := int64(1)
+		port.Minimum = &minimum
+		node.Properties.Put("port", schema.AnyOf(port, &schema.Node{Type: "array", Items: port}))
+		return node, nil
+	})
 }
 
 type EBPFSharedOptions struct {

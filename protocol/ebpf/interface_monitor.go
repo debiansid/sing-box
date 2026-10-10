@@ -25,6 +25,7 @@ type tcInterfaceMonitor struct {
 	defaultInterfaceCallback *list.Element[tun.DefaultInterfaceUpdateCallback]
 	defaultInterfaceName     string
 	cancel                   context.CancelFunc
+	done                     chan struct{}
 	updates                  chan struct{}
 }
 
@@ -90,6 +91,7 @@ func (i *Inbound) startTCInterfaceMonitor() error {
 		defaultInterfaceOwned = true
 	}
 	monitorContext, cancel := context.WithCancel(i.ctx)
+	done := make(chan struct{})
 	updates := make(chan struct{}, 1)
 	state := &i.interfaceMonitor
 	state.access.Lock()
@@ -109,12 +111,14 @@ func (i *Inbound) startTCInterfaceMonitor() error {
 	state.defaultInterface = defaultInterfaceMonitor
 	state.defaultInterfaceOwned = defaultInterfaceOwned
 	state.cancel = cancel
+	state.done = done
 	state.updates = updates
 	state.networkCallback = networkMonitor.RegisterCallback(i.notifyTCInterfaceUpdate)
 	state.defaultInterfaceCallback = defaultInterfaceMonitor.RegisterCallback(i.defaultInterfaceUpdated)
 	state.defaultInterfaceName = interfaceName(defaultInterfaceMonitor.DefaultInterface())
 	state.access.Unlock()
-	go i.runTCInterfaceUpdates(monitorContext, updates)
+	i.resetVPNReadinessState()
+	go i.runTCInterfaceUpdates(monitorContext, updates, done)
 	if networkOwned {
 		if err := networkMonitor.Start(); err != nil {
 			return E.Errors(E.Cause(err, "start TC eBPF network monitor"), i.stopTCInterfaceMonitor())
@@ -139,6 +143,7 @@ func (i *Inbound) stopTCInterfaceMonitor() error {
 	defaultInterfaceOwned := state.defaultInterfaceOwned
 	defaultInterfaceCallback := state.defaultInterfaceCallback
 	cancel := state.cancel
+	done := state.done
 	state.network = nil
 	state.networkOwned = false
 	state.networkCallback = nil
@@ -147,6 +152,7 @@ func (i *Inbound) stopTCInterfaceMonitor() error {
 	state.defaultInterfaceCallback = nil
 	state.defaultInterfaceName = ""
 	state.cancel = nil
+	state.done = nil
 	state.updates = nil
 	state.access.Unlock()
 	if networkMonitor == nil {
@@ -168,6 +174,10 @@ func (i *Inbound) stopTCInterfaceMonitor() error {
 	if networkOwned {
 		closeErr = E.Errors(closeErr, networkMonitor.Close())
 	}
+	if done != nil {
+		<-done
+	}
+	i.resetVPNReadinessState()
 	return closeErr
 }
 
@@ -360,12 +370,22 @@ func (t *tcRealRetryTimer) Expired() <-chan time.Time { return t.timer.C }
 
 var tcRetryTimerFactory = newTCRetryTimer
 
-func (i *Inbound) runTCInterfaceUpdates(ctx context.Context, updates <-chan struct{}) {
-	runTCInterfaceUpdateLoopWithHealth(ctx, updates, i.interfaceDriftCheckInterval(), i.tcInterfaceHealthCheck, func(ctx context.Context) tcUpdateOutcome {
+// vpnInterfacePollInterval is how often packet counters are sampled while a
+// TUN candidate still waits for traffic to prove readiness. Interface,
+// address and route changes arrive as network events and need no polling.
+const vpnInterfacePollInterval = time.Second
+
+func (i *Inbound) runTCInterfaceUpdates(ctx context.Context, updates <-chan struct{}, done chan<- struct{}) {
+	defer close(done)
+	var syncVPN func() bool
+	if i.vpnServerBypass.Enabled {
+		syncVPN = i.syncVPNReadiness
+	}
+	runTCInterfaceUpdateLoopWithVPN(ctx, updates, i.interfaceDriftCheckInterval(), i.tcInterfaceHealthCheck, func(ctx context.Context) tcUpdateOutcome {
 		outcome := i.updateTCInterfaces(ctx)
 		i.recordTCUpdateOutcome(outcome)
 		return outcome
-	}, i.recordNextRetryDeadline)
+	}, i.recordNextRetryDeadline, vpnInterfacePollInterval, syncVPN)
 }
 
 func (i *Inbound) interfaceDriftCheckInterval() time.Duration {
@@ -429,8 +449,51 @@ func runTCInterfaceUpdateLoopWithHealth(
 	update func(context.Context) tcUpdateOutcome,
 	onScheduleChange func(deadline time.Time),
 ) {
+	runTCInterfaceUpdateLoopWithVPN(ctx, updates, driftCheckInterval, healthCheck, update, onScheduleChange, 0, nil)
+}
+
+func runTCInterfaceUpdateLoopWithVPN(
+	ctx context.Context,
+	updates <-chan struct{},
+	driftCheckInterval time.Duration,
+	healthCheck func(context.Context) bool,
+	update func(context.Context) tcUpdateOutcome,
+	onScheduleChange func(time.Time),
+	vpnPollInterval time.Duration,
+	syncVPN func() (poll bool),
+) {
 	retryTimer := tcRetryTimerFactory()
 	defer retryTimer.Disarm()
+	// syncVPN samples VPN readiness after every event-driven round and reports
+	// whether counters must be polled; the poll timer runs only while it does.
+	var (
+		vpnPoll        *time.Timer
+		vpnPollChannel <-chan time.Time
+	)
+	defer func() {
+		if vpnPoll != nil {
+			vpnPoll.Stop()
+		}
+	}()
+	refreshVPN := func() {
+		if syncVPN == nil {
+			return
+		}
+		if !syncVPN() || vpnPollInterval <= 0 {
+			if vpnPoll != nil {
+				vpnPoll.Stop()
+			}
+			vpnPollChannel = nil
+			return
+		}
+		if vpnPoll == nil {
+			vpnPoll = time.NewTimer(vpnPollInterval)
+		} else {
+			vpnPoll.Reset(vpnPollInterval)
+		}
+		vpnPollChannel = vpnPoll.C
+	}
+	refreshVPN()
 	var (
 		driftCheck        *time.Ticker
 		driftCheckChannel <-chan time.Time
@@ -453,6 +516,12 @@ func runTCInterfaceUpdateLoopWithHealth(
 		select {
 		case <-ctx.Done():
 			return
+		case <-vpnPollChannel:
+			if ctx.Err() != nil {
+				return
+			}
+			refreshVPN()
+			continue
 		case <-updates:
 		case <-driftCheckChannel:
 			triggeredByHealthCheck = true
@@ -471,10 +540,12 @@ func runTCInterfaceUpdateLoopWithHealth(
 			return
 		}
 		if triggeredByHealthCheck && healthCheck != nil && healthCheck(ctx) {
+			refreshVPN()
 			continue
 		}
 		now := time.Now()
 		outcome := update(ctx)
+		refreshVPN()
 		outcomes := [tcRetryComponentCount]tcSharedRewriteOutcome{
 			tcRetryComponentSharedRewrite: outcome.sharedRewrite,
 			tcRetryComponentGeneral:       outcome.general,

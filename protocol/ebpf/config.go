@@ -12,8 +12,10 @@ import (
 
 	commonEBPF "github.com/CHIZI-0618/sing-ebpf"
 	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/json/badoption"
+	N "github.com/sagernet/sing/common/network"
 )
 
 func normalizeEnablement(localOption, sharedOption *bool) (bool, bool, error) {
@@ -76,6 +78,11 @@ func normalizeLocalDataPlane(options option.EBPFLocalOptions) (string, string, e
 	if dataPlane != localDataPlaneTC && dataPlane != localDataPlaneCgroup {
 		return "", "", E.New("unknown local.data_plane: ", dataPlane)
 	}
+	// The bypass only exists in the TC data plane. Require the data plane to be
+	// explicit so enabling it never switches the local interception mode.
+	if options.VPNServerBypass.Enabled && dataPlane != localDataPlaneTC {
+		return "", "", E.New("local.vpn_server_bypass requires local.data_plane=tc")
+	}
 	if dataPlane != localDataPlaneCgroup && options.CgroupPath != "" {
 		return "", "", E.New("local.cgroup_path requires local.data_plane=cgroup")
 	}
@@ -111,10 +118,117 @@ func validateLocalOptions(enabled bool, options option.EBPFLocalOptions) error {
 		len(options.ExcludeUID) > 0 || len(options.ExcludeUIDRange) > 0 ||
 		len(options.IncludeAndroidUser) > 0 || len(options.IncludePackage) > 0 ||
 		len(options.ExcludePackage) > 0 || len(options.BypassPort) > 0 || len(options.BypassPortRange) > 0 ||
-		len(options.BypassRuleSet) > 0 {
+		len(options.BypassRuleSet) > 0 || vpnServerBypassConfigured(options.VPNServerBypass) {
 		return E.New("local options require local interception")
 	}
 	return nil
+}
+
+// vpnServerBypassPortCapacity mirrors the sing-ebpf endpoint port map
+// capacity, so an oversized port_range fails at configuration time.
+const vpnServerBypassPortCapacity = 4096
+
+// vpnServerBypassPolicy is the normalized local.vpn_server_bypass option.
+type vpnServerBypassPolicy struct {
+	Enabled             bool
+	EnableTCP           bool
+	EnableUDP           bool
+	IPCIDR              []netip.Prefix
+	Ports               []portRange
+	VPNInterfaceAddress []netip.Prefix
+}
+
+func normalizeVPNServerBypass(
+	options option.EBPFVPNServerBypassOptions,
+	inboundTCP bool,
+	inboundUDP bool,
+) (vpnServerBypassPolicy, error) {
+	if !options.Enabled {
+		return vpnServerBypassPolicy{}, nil
+	}
+	const name = "local.vpn_server_bypass"
+	network := options.Network.Build()
+	for _, networkName := range network {
+		if networkName != N.NetworkTCP && networkName != N.NetworkUDP {
+			return vpnServerBypassPolicy{}, E.New("unknown ", name, ".network: ", networkName)
+		}
+		if options.Network != "" &&
+			(networkName == N.NetworkTCP && !inboundTCP || networkName == N.NetworkUDP && !inboundUDP) {
+			return vpnServerBypassPolicy{}, E.New(name, ".network: ", networkName, " is not enabled by the inbound network")
+		}
+	}
+	policy := vpnServerBypassPolicy{
+		Enabled:   true,
+		EnableTCP: inboundTCP && common.Contains(network, N.NetworkTCP),
+		EnableUDP: inboundUDP && common.Contains(network, N.NetworkUDP),
+	}
+	if len(options.IPCIDR) == 0 {
+		return vpnServerBypassPolicy{}, E.New(name, ".ip_cidr must not be empty")
+	}
+	prefixes, err := normalizeVPNServerBypassPrefixes(name+".ip_cidr", options.IPCIDR)
+	if err != nil {
+		return vpnServerBypassPolicy{}, err
+	}
+	for _, prefix := range prefixes {
+		if prefix.Bits() == 0 {
+			// A default route would let every matching port bypass once any VPN is up.
+			return vpnServerBypassPolicy{}, E.New(name, ".ip_cidr must not contain a default route: ", prefix)
+		}
+	}
+	policy.IPCIDR = prefixes
+	ports, err := parsePortRanges(name+".port", options.Port, options.PortRange)
+	if err != nil {
+		return vpnServerBypassPolicy{}, err
+	}
+	if len(ports) == 0 {
+		return vpnServerBypassPolicy{}, E.New(name, ".port or ", name, ".port_range must not be empty")
+	}
+	protocols := 0
+	if policy.EnableTCP {
+		protocols++
+	}
+	if policy.EnableUDP {
+		protocols++
+	}
+	entries := 0
+	for _, port := range ports {
+		entries += (int(port.End) - int(port.Start) + 1) * protocols
+	}
+	if entries > vpnServerBypassPortCapacity {
+		return vpnServerBypassPolicy{}, E.New(name, " ports expand to ", entries,
+			" protocol/port entries; at most ", vpnServerBypassPortCapacity, " are supported")
+	}
+	policy.Ports = ports
+	policy.VPNInterfaceAddress, err = normalizeVPNServerBypassPrefixes(name+".vpn_interface_address", options.VPNInterfaceAddress)
+	if err != nil {
+		return vpnServerBypassPolicy{}, err
+	}
+	return policy, nil
+}
+
+func normalizeVPNServerBypassPrefixes(name string, input []netip.Prefix) ([]netip.Prefix, error) {
+	prefixes := make([]netip.Prefix, 0, len(input))
+	seen := make(map[netip.Prefix]struct{}, len(input))
+	for _, prefix := range input {
+		if !prefix.IsValid() {
+			return nil, E.New("invalid ", name)
+		}
+		prefix = prefix.Masked()
+		if prefix.Addr().Is4In6() && prefix.Bits() >= 96 {
+			prefix = netip.PrefixFrom(prefix.Addr().Unmap(), prefix.Bits()-96).Masked()
+		}
+		if _, loaded := seen[prefix]; loaded {
+			continue
+		}
+		seen[prefix] = struct{}{}
+		prefixes = append(prefixes, prefix)
+	}
+	return prefixes, nil
+}
+
+func vpnServerBypassConfigured(options option.EBPFVPNServerBypassOptions) bool {
+	return options.Enabled || options.Network != "" || len(options.IPCIDR) > 0 || len(options.Port) > 0 ||
+		len(options.PortRange) > 0 || len(options.VPNInterfaceAddress) > 0
 }
 
 func validateAndroidUIDOptions(goos string, options option.EBPFLocalOptions) error {

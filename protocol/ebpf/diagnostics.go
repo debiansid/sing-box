@@ -26,7 +26,8 @@ type EBPFAttachmentDiagnostics = commonEBPF.AttachmentInfo
 // below into the one value most operators actually want at a glance; the
 // individual fields remain available for anything more specific.
 const (
-	ebpfDiagnosticsAPICacheTTL = 500 * time.Millisecond
+	ebpfDiagnosticsAPICacheTTL  = 500 * time.Millisecond
+	ebpfDiagnosticsJSONCacheTTL = 500 * time.Millisecond
 
 	// EBPFDiagnosticsStateNormal is every configured data plane attached and
 	// no recovery outstanding.
@@ -289,6 +290,20 @@ func (i *Inbound) recordTCUpdateOutcome(outcome tcUpdateOutcome) {
 	}
 	i.diagnostics.lastOutcomeAt = now
 	i.diagnostics.haveOutcome = true
+}
+
+// DiagnosticsJSON exposes a build-tag-independent value to the Clash API.
+func (i *Inbound) DiagnosticsJSON() any {
+	now := time.Now()
+	i.diagnosticsJSONAccess.Lock()
+	defer i.diagnosticsJSONAccess.Unlock()
+	if !i.diagnosticsJSONAt.IsZero() && now.Sub(i.diagnosticsJSONAt) < ebpfDiagnosticsJSONCacheTTL {
+		return i.diagnosticsJSONValue
+	}
+	diagnostics := i.Diagnostics()
+	i.diagnosticsJSONAt = now
+	i.diagnosticsJSONValue = diagnostics
+	return diagnostics
 }
 
 // EBPFDiagnostics exposes a request-driven snapshot through the sing-box API.

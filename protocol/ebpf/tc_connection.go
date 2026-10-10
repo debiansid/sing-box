@@ -129,7 +129,7 @@ func (i *Inbound) prepareTCPacketConnection(
 	key udpSessionKey,
 ) (bool, context.Context, N.PacketWriter, N.CloseHandlerFunc) {
 	ctx := log.ContextWithNewID(i.ctx)
-	clientState := i.udpClientTable.loadOrCreate(key)
+	clientState := i.udpClientTable.renew(key)
 	writer := &tcPacketWriter{inbound: i, key: key, clientState: clientState}
 	return true, ctx, writer, func(error) {
 		i.deleteCgroupUDPRedirects(i.udpClientTable.delete(key, clientState))

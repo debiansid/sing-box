@@ -3492,6 +3492,21 @@
         "bypass_private_address": {
           "type": "boolean"
         },
+        "bypass_rule_set": {
+          "anyOf": [
+            {
+              "type": "string",
+              "x-tag-reference": "rule_set"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "x-tag-reference": "rule_set"
+              }
+            }
+          ]
+        },
         "include_uid": {
           "anyOf": [
             {
@@ -3620,6 +3635,9 @@
               }
             }
           ]
+        },
+        "vpn_server_bypass": {
+          "$ref": "#/$defs/EBPFVPNServerBypassOptions"
         }
       },
       "additionalProperties": false
@@ -3663,6 +3681,21 @@
         },
         "bypass_private_address": {
           "type": "boolean"
+        },
+        "bypass_rule_set": {
+          "anyOf": [
+            {
+              "type": "string",
+              "x-tag-reference": "rule_set"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "x-tag-reference": "rule_set"
+              }
+            }
+          ]
         },
         "include_source_cidr": {
           "anyOf": [
@@ -3734,6 +3767,92 @@
           ]
         },
         "bypass_port_range": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "EBPFVPNServerBypassOptions": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "network": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "tcp",
+                "udp"
+              ]
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "tcp",
+                  "udp"
+                ]
+              }
+            }
+          ]
+        },
+        "ip_cidr": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
+        },
+        "port": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 65535
+              }
+            }
+          ]
+        },
+        "port_range": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
+        },
+        "vpn_interface_address": {
           "anyOf": [
             {
               "type": "string"

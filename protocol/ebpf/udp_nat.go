@@ -161,7 +161,8 @@ func (s *udpNATService) connection(
 		return nil, false
 	}
 	if s.closed.Load() {
-		s.cache.Remove(key)
+		conn.close()
+		s.cache.Peek(key)
 		if !updated && newOnClose != nil {
 			newOnClose(net.ErrClosed)
 		}
@@ -169,7 +170,8 @@ func (s *udpNATService) connection(
 	}
 	if !updated {
 		if !s.registerReleaseConnection(conn) {
-			s.cache.Remove(key)
+			conn.close()
+			s.cache.Peek(key)
 			if newOnClose != nil {
 				newOnClose(net.ErrClosed)
 			}
@@ -177,7 +179,7 @@ func (s *udpNATService) connection(
 		}
 		s.cleanup.addOrUpdate(conn.cleanupEntry, time.Now().Add(s.timeout))
 		if conn.isClosed() {
-			s.cache.Remove(key)
+			s.cache.Peek(key)
 			if newOnClose != nil {
 				newOnClose(net.ErrClosed)
 			}
