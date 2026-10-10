@@ -224,4 +224,4 @@ require (
 	zombiezen.com/go/capnproto2 v2.18.2+incompatible // indirect
 )
 
-replace github.com/CHIZI-0618/sing-ebpf => github.com/MiCat-S/sing-ebpf v0.0.0-20261010073123-3429f4fc59aa
+replace github.com/CHIZI-0618/sing-ebpf => github.com/debiansid/sing-ebpf v0.0.0-20261010075248-a74ed9fbb524
