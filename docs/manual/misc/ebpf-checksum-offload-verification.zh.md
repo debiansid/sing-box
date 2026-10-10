@@ -32,7 +32,7 @@ icon: material/check-decagram
 - sing-box eBPF 入站已运行并挂载到 `LOCAL_IFACE`。
 - ICMP 检查要求启用 `fakeip_icmp: reply`。
 - shared TCP/UDP 检查要求 `shared.data_plane: packet_rewrite`。
-- 可选启用 sing-box API 服务，用于计数器归因。
+- 可选启用 sing-box API 服务（或 Clash API `/ebpf` 接口），用于计数器归因。
 
 先确认接口使用真实硬件驱动：
 
