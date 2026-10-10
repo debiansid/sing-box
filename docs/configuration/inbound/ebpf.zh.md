@@ -163,22 +163,74 @@ Android 厂商的 netd hook 可能造成挂载冲突。sing-box 优先尝试多�
 
 需要绕过的目标端口范围，格式为包含两端的 `start:end`。
 
-### local.endpoint_connected_bypass
+### local.vpn_server_bypass
 
-可选的单个 local TC endpoint 门控（非出站选择器）：
+可选门控，作用于本机外部 VPN 客户端（例如 IKEv2/IPsec、WireGuard、OpenVPN 应用）的
+服务器地址。它不是出站选择器，也与 sing-box 的 [端点](/zh/configuration/endpoint/)
+无关。
 
 ```json
-"endpoint_connected_bypass": {
+"vpn_server_bypass": {
   "enabled": true,
   "network": ["tcp", "udp"],
   "ip_cidr": ["203.0.113.0/24"],
-  "port": [500, 4500]
+  "port": [500, 4500],
+  "port_range": [],
+  "vpn_interface_address": ["10.8.0.0/16"]
 }
 ```
 
-目标 CIDR 与端口必须同时匹配。在 VPN 就绪（READY）前，匹配的流量强制进入正常 Router 处理；在 VPN 就绪后，直接在本地 TC 阶段原生绕过。未匹配流量与 shared 策略保持原样，FakeIP 与 DNS 语义保留最高优先级。启用此项会将 local `data_plane` 默认设为 `tc`；显式配置 `cgroup`、`cgroup_path` 或禁用 local 接管均为无效配置。CIDR 与端口列表均为必填；省略 network 则默认启用 TCP/UDP。
+需要显式设置 `local.data_plane` 为 `tc`；启用此项不会改变 local 数据面。`cgroup`、
+`cgroup_path` 或禁用 local 接管均为无效配置。
 
-合格的 VPN 是处于 UP 状态、拥有全局单播地址且非 sing-box 自身的 `tun*` 或 `ipsec*` 接口。TUN 接口需要首次采样后的 RX/TX 增长来确立就绪，按名称与 ifindex 标识；IPsec 接口需要存在非 local 表的单播默认路由。当没有合格接口就绪时清除 READY。每秒采样与网络事件仅更新 READY 控制位。Core 套接字保留现有的 underlying/protect 和自绕过路径；普通 VPN 载荷流量不会被此特性全局 protect 或打标。
+在 VPN 就绪（READY）前，匹配的流量强制进入正常 Router 处理；就绪后直接在本地 TC
+阶段原生绕过。目标地址属于 `ip_cidr` **且**端口属于 `port`/`port_range` 时匹配，
+两组列表按笛卡尔积组合。FakeIP 与 DNS 处理保持优先（端口 53 仅在 `dns_mode` 为
+`respect_policy` 时生效，否则会产生告警）。门控本身优先于 UID/包名及其他绕过策略：
+就绪前即使是被排除的应用，匹配流量也会被接管；就绪后即使是被包含的应用，匹配流量也会
+被绕过。未匹配流量与 shared 策略保持原样。
+
+就绪状态变化不会中断已建立的连接：TCP 连接沿用其 SYN 发出时决定的路径直至关闭，只有新
+的 TCP 连接遵循新状态。UDP 按每个数据包的当前状态判定，因此就绪后 UDP 隧道会迁移到原生
+路径，服务器会看到新的源地址与端口；IKEv2 NAT-T 与 WireGuard 能处理这种变化。
+
+#### network
+
+`tcp`、`udp` 或两者。省略时使用入站 `network` 已启用的协议；显式指定入站未启用的协议
+为无效配置。
+
+#### ip_cidr
+
+==必填==
+
+VPN 服务器目标地址前缀。拒绝默认路由（`0.0.0.0/0`、`::/0`）。
+
+#### port
+
+VPN 服务器目标端口。`port` 与 `port_range` 至少填写一项。
+
+#### port_range
+
+VPN 服务器目标端口范围，格式为包含两端的 `start:end`。端口数乘以启用的协议数不得超过
+4096 条。
+
+#### vpn_interface_address
+
+分配给 VPN 隧道接口的地址前缀。设置后，只有持有其中某个前缀内地址的 `tun*` 或
+`ipsec*` 接口才会计入就绪判定。建议在 Android 上设置：防火墙、广告拦截等 VpnService
+应用同样会创建 `tun*` 接口，Wi-Fi 通话会创建 `ipsec*` 隧道，否则它们都可能让门控进入
+就绪状态。
+
+#### 就绪判定
+
+合格的 VPN 是处于 UP 状态、拥有全局单播地址（设置了 `vpn_interface_address` 时需
+匹配）且非 sing-box 自身的 `tun*` 或 `ipsec*` 接口。TUN 接口在首次采样后出现 RX/TX
+增长即就绪，按名称与 ifindex 标识，并在接口存在期间保持就绪；IPsec 接口在存在非 local
+表的单播默认路由时就绪。当没有合格接口就绪时清除 READY。
+
+网络事件（链路、地址与路由变化）会重新评估就绪状态；仅当仍有等待流量的 TUN 候选接口时
+才每秒轮询一次数据包计数。此特性只更新 READY 控制位。Core 套接字保留现有的
+underlying/protect 和自绕过路径；普通 VPN 载荷流量不会被此特性全局 protect 或打标。
 
 ## shared
 

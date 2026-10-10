@@ -4,6 +4,7 @@ package ebpf
 
 import (
 	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"slices"
@@ -35,7 +36,9 @@ func (i *Inbound) resetVPNReadinessState() {
 
 // Only the interface worker samples and commits readiness. The library owns
 // the control map; readiness must not reconcile resources or change routing.
-func (i *Inbound) syncVPNReadiness() {
+// The result reports whether packet counters still need polling: a TUN
+// candidate waits for traffic, everything else changes through network events.
+func (i *Inbound) syncVPNReadiness() (poll bool) {
 	if i.vpnInterfacePackets == nil {
 		i.vpnInterfacePackets = make(map[vpnInterfaceIdentity]vpnInterfaceState)
 	}
@@ -43,13 +46,17 @@ func (i *Inbound) syncVPNReadiness() {
 	if monitor := i.networkManager.InterfaceMonitor(); monitor != nil {
 		excluded = monitor.MyInterfaces()
 	}
-	candidates := findActiveVPNInterfaces(excluded, netlink.LinkList, netlink.AddrList, net.Interfaces, (*net.Interface).Addrs)
-	next := sampleVPNInterfaces(candidates, i.vpnInterfacePackets, readVPNPackets, interfaceHasDefaultRoute)
+	candidates := findActiveVPNInterfaces(excluded, i.vpnServerBypass.VPNInterfaceAddress,
+		netlink.LinkList, netlink.AddrList, net.Interfaces, (*net.Interface).Addrs)
+	next, pending := sampleVPNInterfaces(candidates, i.vpnInterfacePackets, readVPNPackets, interfaceHasDefaultRoute)
 	if backend := i.tcBackend(); backend != nil {
 		if err := i.commitVPNReady(next, backend); err != nil {
-			i.logger.Error("update eBPF endpoint VPN readiness: ", err)
+			i.interfaceWarnings.vpnReadiness.warn(i.logger, "update eBPF VPN server bypass readiness: ", err)
+			// Keep sampling so the gate is retried even without a network event.
+			return true
 		}
 	}
+	return pending
 }
 
 func (i *Inbound) commitVPNReady(next bool, backend endpointVPNReadyControl) error {
@@ -68,9 +75,34 @@ func isVPNInterface(name string) bool {
 	return strings.HasPrefix(name, "tun") || strings.HasPrefix(name, "ipsec")
 }
 
+// vpnAddressEligible reports whether an interface address identifies a VPN
+// tunnel. Without configured prefixes any global unicast address qualifies;
+// otherwise the address must fall inside vpn_interface_address, which keeps
+// unrelated tun/ipsec interfaces (VpnService firewalls, Wi-Fi calling
+// tunnels) from opening the gate.
+func vpnAddressEligible(ip net.IP, allowed []netip.Prefix) bool {
+	if !ip.IsGlobalUnicast() {
+		return false
+	}
+	if len(allowed) == 0 {
+		return true
+	}
+	address, loaded := netip.AddrFromSlice(ip)
+	if !loaded {
+		return false
+	}
+	address = address.Unmap()
+	for _, prefix := range allowed {
+		if prefix.Contains(address) {
+			return true
+		}
+	}
+	return false
+}
+
 // Keep the net.Interface fallback: Android may expose an eligible VPN through
 // that inventory even when the netlink inventory is incomplete.
-func findActiveVPNInterfaces(excluded []string,
+func findActiveVPNInterfaces(excluded []string, allowed []netip.Prefix,
 	links func() ([]netlink.Link, error), addresses func(netlink.Link, int) ([]netlink.Addr, error),
 	interfaces func() ([]net.Interface, error), interfaceAddresses func(*net.Interface) ([]net.Addr, error),
 ) []vpnInterfaceIdentity {
@@ -89,7 +121,7 @@ func findActiveVPNInterfaces(excluded []string,
 				continue
 			}
 			for _, addr := range addrs {
-				if addr.IPNet != nil && addr.IP.IsGlobalUnicast() {
+				if addr.IPNet != nil && vpnAddressEligible(addr.IP, allowed) {
 					result = append(result, vpnInterfaceIdentity{a.Name, a.Index})
 					break
 				}
@@ -114,7 +146,7 @@ func findActiveVPNInterfaces(excluded []string,
 				case *net.IPAddr:
 					ip = addr.IP
 				}
-				if ip.IsGlobalUnicast() {
+				if vpnAddressEligible(ip, allowed) {
 					result = append(result, id)
 					break
 				}
@@ -124,15 +156,16 @@ func findActiveVPNInterfaces(excluded []string,
 	return result
 }
 
+// sampleVPNInterfaces returns whether any candidate is ready, and whether a
+// TUN candidate is still waiting for counter growth and must be sampled again.
 func sampleVPNInterfaces(candidates []vpnInterfaceIdentity, states map[vpnInterfaceIdentity]vpnInterfaceState,
 	packets func(string) (uint64, uint64, error), defaultRoute func(int) bool,
-) bool {
+) (ready bool, pending bool) {
 	for id := range states {
 		if !slices.Contains(candidates, id) {
 			delete(states, id)
 		}
 	}
-	ready := false
 	for _, id := range candidates {
 		if strings.HasPrefix(strings.ToLower(id.name), "ipsec") {
 			ready = defaultRoute(id.index) || ready
@@ -145,8 +178,9 @@ func sampleVPNInterfaces(candidates []vpnInterfaceIdentity, states map[vpnInterf
 			states[id] = previous
 		}
 		ready = previous.ready || ready
+		pending = pending || !previous.ready
 	}
-	return ready
+	return ready, pending
 }
 
 func readVPNPackets(name string) (uint64, uint64, error) {

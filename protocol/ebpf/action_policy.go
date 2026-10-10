@@ -216,20 +216,20 @@ func (i *Inbound) compileActionPolicy() (commonEBPF.CompiledPolicy, error) {
 	}
 	appendDestinationPolicy(&policy.Shared, i.sharedBypassPrivate, i.sharedBypassPort, i.sharedDNSMode,
 		i.fakeIPIPv4Prefix, i.fakeIPIPv6Prefix, i.sharedBypassExclude, i.enableTCP, i.enableUDP)
-	if i.endpointConnectedBypass.Enabled {
-		for _, prefix := range i.endpointConnectedBypass.IPCIDR {
+	if i.vpnServerBypass.Enabled {
+		for _, prefix := range i.vpnServerBypass.IPCIDR {
 			policy.EndpointCIDR = append(policy.EndpointCIDR, commonEBPF.CIDRDecision{
 				Prefix: prefix, Action: commonEBPF.DecisionPass,
 			})
 		}
-		for _, portRange := range i.endpointConnectedPorts {
+		for _, portRange := range i.vpnServerBypass.Ports {
 			for port := portRange.Start; port <= portRange.End; port++ {
-				if i.endpointEnableTCP && i.enableTCP {
+				if i.vpnServerBypass.EnableTCP {
 					policy.EndpointPort = append(policy.EndpointPort, commonEBPF.PortDecision{
 						Protocol: commonEBPF.ProtocolTCP, Port: port, Action: commonEBPF.DecisionPass,
 					})
 				}
-				if i.endpointEnableUDP && i.enableUDP {
+				if i.vpnServerBypass.EnableUDP {
 					policy.EndpointPort = append(policy.EndpointPort, commonEBPF.PortDecision{
 						Protocol: commonEBPF.ProtocolUDP, Port: port, Action: commonEBPF.DecisionPass,
 					})

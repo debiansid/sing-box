@@ -98,10 +98,7 @@ type Inbound struct {
 	sharedIPv6                bool
 	sharedBypassPrivate       bool
 	localBypassPort           []portRange
-	endpointConnectedBypass   option.EBPFEndpointConnectedBypassOptions
-	endpointEnableTCP         bool
-	endpointEnableUDP         bool
-	endpointConnectedPorts    []portRange
+	vpnServerBypass           vpnServerBypassPolicy
 	sharedBypassPort          []portRange
 	localBypassExclude        []netip.Prefix
 	sharedBypassExclude       []netip.Prefix
@@ -290,10 +287,6 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 	if err != nil {
 		return nil, err
 	}
-	endpointConnectedBypass, endpointConnectedPorts, endpointEnableTCP, endpointEnableUDP, err := normalizeEndpointConnectedBypass(options.Local.EndpointConnectedBypass)
-	if err != nil {
-		return nil, err
-	}
 	sharedIncludeMAC, err := parseSharedMACAddresses(
 		"include_mac_address",
 		sharedOptions.IncludeMACAddress,
@@ -311,6 +304,10 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 	network := options.Network.Build()
 	enableTCP := common.Contains(network, N.NetworkTCP)
 	enableUDP := common.Contains(network, N.NetworkUDP)
+	vpnServerBypass, err := normalizeVPNServerBypass(options.Local.VPNServerBypass, enableTCP, enableUDP)
+	if err != nil {
+		return nil, err
+	}
 	networkManager := service.FromContext[adapter.NetworkManager](ctx)
 	if networkManager == nil {
 		return nil, E.New("missing network manager")
@@ -337,32 +334,29 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 			platform := service.FromContext[adapter.PlatformInterface](ctx)
 			return platform != nil && platform.UsePlatformConnectionOwnerFinder()
 		}(),
-		localEnabled:            localEnabled,
-		localDataPlane:          localDataPlane,
-		cgroupPath:              cgroupPath,
-		selfBypass:              selfBypass,
-		processInfoCache:        newProcessInfoCache(),
-		enableTCP:               enableTCP,
-		enableUDP:               enableUDP,
-		localDNSMode:            localDNSMode,
-		sharedDNSMode:           sharedDNSMode,
-		localIPv6:               localEnabled && enabledByDefault(options.Local.IPv6),
-		sharedOptions:           sharedOptions,
-		sharedEnabled:           sharedEnabled,
-		sharedDataPlane:         sharedDataPlane,
-		sharedIPv6:              sharedEnabled && enabledByDefault(options.Shared.IPv6),
-		sharedBypassPrivate:     options.Shared.BypassPrivateAddress == nil || *options.Shared.BypassPrivateAddress,
-		localBypassPort:         localBypassPort,
-		endpointConnectedBypass: endpointConnectedBypass,
-		endpointEnableTCP:       endpointEnableTCP,
-		endpointEnableUDP:       endpointEnableUDP,
-		endpointConnectedPorts:  endpointConnectedPorts,
-		sharedBypassPort:        sharedBypassPort,
-		localBypassExclude:      localBypassExclude,
-		sharedBypassExclude:     sharedBypassExclude,
-		tcPriority:              uint16(options.TCPriority),
-		sharedIncludeMAC:        sharedIncludeMAC,
-		sharedExcludeMAC:        sharedExcludeMAC,
+		localEnabled:        localEnabled,
+		localDataPlane:      localDataPlane,
+		cgroupPath:          cgroupPath,
+		selfBypass:          selfBypass,
+		processInfoCache:    newProcessInfoCache(),
+		enableTCP:           enableTCP,
+		enableUDP:           enableUDP,
+		localDNSMode:        localDNSMode,
+		sharedDNSMode:       sharedDNSMode,
+		localIPv6:           localEnabled && enabledByDefault(options.Local.IPv6),
+		sharedOptions:       sharedOptions,
+		sharedEnabled:       sharedEnabled,
+		sharedDataPlane:     sharedDataPlane,
+		sharedIPv6:          sharedEnabled && enabledByDefault(options.Shared.IPv6),
+		sharedBypassPrivate: options.Shared.BypassPrivateAddress == nil || *options.Shared.BypassPrivateAddress,
+		localBypassPort:     localBypassPort,
+		vpnServerBypass:     vpnServerBypass,
+		sharedBypassPort:    sharedBypassPort,
+		localBypassExclude:  localBypassExclude,
+		sharedBypassExclude: sharedBypassExclude,
+		tcPriority:          uint16(options.TCPriority),
+		sharedIncludeMAC:    sharedIncludeMAC,
+		sharedExcludeMAC:    sharedExcludeMAC,
 		localPolicy: localUIDPolicy{
 			BypassPrivateAddress: options.Local.BypassPrivateAddress == nil || *options.Local.BypassPrivateAddress,
 			IncludeUIDConfigured: len(options.Local.IncludeUID) > 0 ||
@@ -394,6 +388,7 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 	}
 	warnBypassPortConflicts(logger, "local", localDNSMode, localBypassPort)
 	warnBypassPortConflicts(logger, "shared", sharedDNSMode, sharedBypassPort)
+	warnVPNServerBypassDNSPort(logger, localDNSMode, vpnServerBypass.Ports)
 	loadRuleSets := func(scope string, target *[]adapter.RuleSet, tags ...[]string) error {
 		seen := make(map[string]struct{})
 		for _, tagList := range tags {
@@ -428,6 +423,21 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 	inbound.udpFragment = options.UDPFragment != nil && *options.UDPFragment
 	inbound.udpNat = newUDPNATService(inbound, inbound.preparePacketConnection, udpTimeout)
 	return inbound, nil
+}
+
+// warnVPNServerBypassDNSPort reports port 53 entries that DNS precedence in the
+// data plane makes unreachable for the VPN server gate.
+func warnVPNServerBypassDNSPort(logger log.ContextLogger, dnsMode string, ports []portRange) {
+	if logger == nil || dnsMode == dnsModeRespectPolicy {
+		return
+	}
+	for _, portRange := range ports {
+		if portRange.Start <= 53 && portRange.End >= 53 {
+			logger.Warn("eBPF local.vpn_server_bypass includes DNS port 53, but dns_mode=", dnsMode,
+				" handles DNS first, so the gate never applies to it")
+			return
+		}
+	}
 }
 
 func warnBypassPortConflicts(logger log.ContextLogger, scope, dnsMode string, ports []portRange) {
