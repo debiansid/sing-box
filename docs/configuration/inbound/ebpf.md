@@ -180,6 +180,87 @@ precedence; configuring port 53 therefore emits a warning.
 
 Destination port ranges to bypass, in inclusive `start:end` form.
 
+### local.vpn_server_bypass
+
+Optional gate for the server address of an external VPN client running on this
+device (for example an IKEv2/IPsec, WireGuard or OpenVPN app). It is not an
+outbound selector and is unrelated to sing-box [endpoints](/configuration/endpoint/).
+
+```json
+"vpn_server_bypass": {
+  "enabled": true,
+  "network": ["tcp", "udp"],
+  "ip_cidr": ["203.0.113.0/24"],
+  "port": [500, 4500],
+  "port_range": [],
+  "vpn_interface_address": ["10.8.0.0/16"]
+}
+```
+
+Requires `local.data_plane` to be set to `tc` explicitly; enabling this option
+never changes the local data plane. `cgroup`, `cgroup_path`, or disabled local
+interception are invalid.
+
+Matching traffic is forced into the normal Router until the VPN is ready, and
+bypasses local TC natively afterwards. A flow matches when its destination is
+in `ip_cidr` **and** its port is in `port`/`port_range`; the two lists are
+combined as a cross product. FakeIP and DNS handling keep precedence (a port 53
+entry only applies with `dns_mode` `respect_policy`, otherwise a warning is
+logged). The gate itself takes precedence over UID/package and other bypass
+policy: before readiness it intercepts matching traffic even from excluded
+apps, after readiness it bypasses matching traffic even from included apps.
+Unmatched traffic and shared policy are unchanged.
+
+Readiness changes never break established connections: a TCP flow keeps the
+path decided when its SYN was sent until it closes, so only new TCP
+connections follow a change. UDP follows the current state per packet, so a
+UDP tunnel migrates to the native path once ready and the server sees a new
+source address and port; IKEv2 NAT-T and WireGuard handle this.
+
+#### network
+
+`tcp`, `udp`, or both. Omitted means the protocols enabled by the inbound
+`network`; an explicit protocol the inbound does not enable is invalid.
+
+#### ip_cidr
+
+==Required==
+
+VPN server destination prefixes. Default routes (`0.0.0.0/0`, `::/0`) are
+rejected.
+
+#### port
+
+VPN server destination ports. `port` or `port_range` is required.
+
+#### port_range
+
+VPN server destination port ranges, in inclusive `start:end` form. All ports
+times enabled protocols must not exceed 4096 entries.
+
+#### vpn_interface_address
+
+Address prefixes assigned to the VPN tunnel interface. When set, a `tun*` or
+`ipsec*` interface counts toward readiness only if it holds an address in one of
+these prefixes. Recommended on Android, where VpnService apps such as firewalls
+or ad blockers also create `tun*` interfaces and Wi-Fi calling creates `ipsec*`
+tunnels that would otherwise make the gate ready.
+
+#### Readiness
+
+An eligible VPN is an UP `tun*` or `ipsec*` interface with a global-unicast
+address (matching `vpn_interface_address` when set), excluding sing-box's own
+interfaces. A TUN interface becomes ready after RX/TX growth since its first
+sample, keyed by name and ifindex, and stays ready while it exists. An IPsec
+interface is ready while it has a non-local-table unicast default route.
+Readiness clears when no eligible interface is ready.
+
+Network events (link, address and route changes) re-evaluate readiness;
+packet counters are polled once per second only while a TUN candidate is still
+waiting for traffic. Only the READY control bit changes. Core sockets retain the
+existing underlying/protect and self-bypass path; ordinary VPN payload is not
+globally protected or marked by this feature.
+
 ## shared
 
 ### shared.enabled
@@ -274,6 +355,7 @@ any matching exclude selector takes precedence.
   effective attach, UDP cleanup, socket-storage, and time-source modes after
   fallback. It requires the
   [sing-box API service](/configuration/service/api/).
+- When the Clash API is configured, `GET /ebpf` exposes the same diagnostics.
 
 For local TC and shared `socket_assign`, the response also reports the effective
 TCX/clsact attachment mode, SOCKMAP/direct listener lookup, delivery interface,
