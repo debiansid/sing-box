@@ -227,8 +227,10 @@ func TestValidateScopedOptions(t *testing.T) {
 		{ExcludePackage: []string{"com.example.exclude"}},
 		{BypassPort: []uint16{443}},
 		{BypassPortRange: []string{"8000:8080"}},
-		{EndpointConnectedBypass: option.EBPFEndpointConnectedBypassOptions{Enabled: true}},
-		{EndpointConnectedBypass: option.EBPFEndpointConnectedBypassOptions{Network: option.NetworkList("udp")}},
+		{VPNServerBypass: option.EBPFVPNServerBypassOptions{Enabled: true}},
+		{VPNServerBypass: option.EBPFVPNServerBypassOptions{Network: option.NetworkList("udp")}},
+		{VPNServerBypass: option.EBPFVPNServerBypassOptions{PortRange: []string{"500:600"}}},
+		{VPNServerBypass: option.EBPFVPNServerBypassOptions{VPNInterfaceAddress: []netip.Prefix{netip.MustParsePrefix("10.8.0.0/16")}}},
 	} {
 		if err := validateLocalOptions(false, options); err == nil {
 			t.Fatalf("expected local-only options to be rejected: %+v", options)
@@ -273,8 +275,7 @@ func TestNormalizeLocalDataPlane(t *testing.T) {
 		{name: "cgroup root", options: option.EBPFLocalOptions{DataPlane: "cgroup"}, dataPlane: localDataPlaneCgroup},
 		{name: "explicit cgroup", options: option.EBPFLocalOptions{DataPlane: "cgroup", CgroupPath: "/sys/fs/cgroup/sing-box"}, dataPlane: localDataPlaneCgroup, cgroupPath: "/sys/fs/cgroup/sing-box"},
 		{name: "implicit cgroup path", options: option.EBPFLocalOptions{CgroupPath: "/sys/fs/cgroup/sing-box"}, dataPlane: localDataPlaneCgroup, cgroupPath: "/sys/fs/cgroup/sing-box"},
-		{name: "endpoint defaults to tc", options: option.EBPFLocalOptions{EndpointConnectedBypass: option.EBPFEndpointConnectedBypassOptions{Enabled: true}}, dataPlane: localDataPlaneTC},
-		{name: "endpoint explicit tc", options: option.EBPFLocalOptions{DataPlane: "tc", EndpointConnectedBypass: option.EBPFEndpointConnectedBypassOptions{Enabled: true}}, dataPlane: localDataPlaneTC},
+		{name: "VPN server bypass explicit tc", options: option.EBPFLocalOptions{DataPlane: "tc", VPNServerBypass: option.EBPFVPNServerBypassOptions{Enabled: true}}, dataPlane: localDataPlaneTC},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			dataPlane, path, err := normalizeLocalDataPlane(testCase.options)
@@ -290,9 +291,11 @@ func TestNormalizeLocalDataPlane(t *testing.T) {
 		{DataPlane: "invalid"},
 		{DataPlane: "tc", CgroupPath: "/sys/fs/cgroup/sing-box"},
 		{DataPlane: "cgroup", CgroupPath: "relative"},
-		{DataPlane: "cgroup", EndpointConnectedBypass: option.EBPFEndpointConnectedBypassOptions{Enabled: true}},
-		{CgroupPath: "/sys/fs/cgroup/sing-box", EndpointConnectedBypass: option.EBPFEndpointConnectedBypassOptions{Enabled: true}},
-		{DataPlane: "tc", CgroupPath: "/sys/fs/cgroup/sing-box", EndpointConnectedBypass: option.EBPFEndpointConnectedBypassOptions{Enabled: true}},
+		// Enabling the bypass must not switch the default cgroup data plane to TC.
+		{VPNServerBypass: option.EBPFVPNServerBypassOptions{Enabled: true}},
+		{DataPlane: "cgroup", VPNServerBypass: option.EBPFVPNServerBypassOptions{Enabled: true}},
+		{CgroupPath: "/sys/fs/cgroup/sing-box", VPNServerBypass: option.EBPFVPNServerBypassOptions{Enabled: true}},
+		{DataPlane: "tc", CgroupPath: "/sys/fs/cgroup/sing-box", VPNServerBypass: option.EBPFVPNServerBypassOptions{Enabled: true}},
 	} {
 		if _, _, err := normalizeLocalDataPlane(options); err == nil {
 			t.Fatalf("expected invalid local data plane options to fail: %+v", options)
@@ -300,64 +303,103 @@ func TestNormalizeLocalDataPlane(t *testing.T) {
 	}
 }
 
-func TestNormalizeEndpointConnectedBypass(t *testing.T) {
-	for _, disabled := range []option.EBPFEndpointConnectedBypassOptions{
+func TestNormalizeVPNServerBypass(t *testing.T) {
+	cidr := []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}
+	for _, disabled := range []option.EBPFVPNServerBypassOptions{
 		{},
 		{Enabled: false},
-		{
-			Enabled: false,
-			IPCIDR:  []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")},
-			Port:    []uint16{500},
-		},
+		{Enabled: false, IPCIDR: cidr, Port: []uint16{500}},
 	} {
-		options, ports, enableTCP, enableUDP, err := normalizeEndpointConnectedBypass(disabled)
-		if err != nil || options.Enabled || len(options.IPCIDR) != 0 || len(ports) != 0 || enableTCP || enableUDP {
-			t.Fatalf("disabled endpoint policy was not accepted and cleared: options=%+v ports=%v err=%v", options, ports, err)
+		policy, err := normalizeVPNServerBypass(disabled, true, true)
+		if err != nil || policy.Enabled || len(policy.IPCIDR) != 0 || len(policy.Ports) != 0 || policy.EnableTCP || policy.EnableUDP {
+			t.Fatalf("disabled VPN server bypass was not accepted and cleared: policy=%+v err=%v", policy, err)
 		}
 	}
 
-	options, ports, enableTCP, enableUDP, err := normalizeEndpointConnectedBypass(option.EBPFEndpointConnectedBypassOptions{
+	policy, err := normalizeVPNServerBypass(option.EBPFVPNServerBypassOptions{
 		Enabled: true,
 		IPCIDR: []netip.Prefix{
 			netip.MustParsePrefix("162.120.128.9/17"),
 			netip.MustParsePrefix("::ffff:192.0.2.1/120"),
 		},
-		Port: []uint16{4500, 500, 4500},
-	})
+		Port:                []uint16{4500, 500, 4500},
+		PortRange:           []string{"10000:10002"},
+		VPNInterfaceAddress: []netip.Prefix{netip.MustParsePrefix("10.8.0.1/16"), netip.MustParsePrefix("10.8.0.0/16")},
+	}, true, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !enableTCP || !enableUDP {
-		t.Fatalf("omitted endpoint network did not enable TCP and UDP: tcp=%v udp=%v", enableTCP, enableUDP)
+	if !policy.EnableTCP || !policy.EnableUDP {
+		t.Fatalf("omitted network did not enable TCP and UDP: %+v", policy)
 	}
 	wantPrefixes := []netip.Prefix{netip.MustParsePrefix("162.120.128.0/17"), netip.MustParsePrefix("192.0.2.0/24")}
-	if !slices.Equal([]netip.Prefix(options.IPCIDR), wantPrefixes) {
-		t.Fatalf("unexpected endpoint prefixes: %v", options.IPCIDR)
+	if !slices.Equal(policy.IPCIDR, wantPrefixes) {
+		t.Fatalf("unexpected prefixes: %v", policy.IPCIDR)
 	}
-	wantPorts := []portRange{{Start: 500, End: 500}, {Start: 4500, End: 4500}}
-	if !slices.Equal(ports, wantPorts) {
-		t.Fatalf("unexpected endpoint ports: %v", ports)
+	wantPorts := []portRange{{Start: 500, End: 500}, {Start: 4500, End: 4500}, {Start: 10000, End: 10002}}
+	if !slices.Equal(policy.Ports, wantPorts) {
+		t.Fatalf("unexpected ports: %v", policy.Ports)
 	}
-	_, _, enableTCP, enableUDP, err = normalizeEndpointConnectedBypass(option.EBPFEndpointConnectedBypassOptions{
-		Enabled: true,
-		Network: option.NetworkList("udp"),
-		IPCIDR:  []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")},
-		Port:    []uint16{500},
-	})
-	if err != nil {
-		t.Fatal(err)
+	if !slices.Equal(policy.VPNInterfaceAddress, []netip.Prefix{netip.MustParsePrefix("10.8.0.0/16")}) {
+		t.Fatalf("unexpected VPN interface prefixes: %v", policy.VPNInterfaceAddress)
 	}
-	if enableTCP || !enableUDP {
-		t.Fatalf("unexpected UDP-only endpoint network: tcp=%v udp=%v", enableTCP, enableUDP)
+
+	policy, err = normalizeVPNServerBypass(option.EBPFVPNServerBypassOptions{
+		Enabled: true, Network: option.NetworkList("udp"), IPCIDR: cidr, Port: []uint16{500},
+	}, true, true)
+	if err != nil || policy.EnableTCP || !policy.EnableUDP {
+		t.Fatalf("unexpected UDP-only policy: %+v err=%v", policy, err)
 	}
-	for _, invalid := range []option.EBPFEndpointConnectedBypassOptions{
-		{Enabled: true, Port: []uint16{500}},
-		{Enabled: true, IPCIDR: []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}},
-		{Enabled: true, IPCIDR: []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}, Port: []uint16{0}},
-		{Enabled: true, Network: option.NetworkList("icmp"), IPCIDR: []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}, Port: []uint16{500}},
+	policy, err = normalizeVPNServerBypass(option.EBPFVPNServerBypassOptions{
+		Enabled: true, IPCIDR: cidr, Port: []uint16{500},
+	}, false, true)
+	if err != nil || policy.EnableTCP || !policy.EnableUDP {
+		t.Fatalf("omitted network did not follow the inbound network: %+v err=%v", policy, err)
+	}
+
+	for _, testCase := range []struct {
+		name       string
+		options    option.EBPFVPNServerBypassOptions
+		inboundTCP bool
+	}{
+		{name: "missing CIDR", options: option.EBPFVPNServerBypassOptions{Enabled: true, Port: []uint16{500}}},
+		{name: "missing port", options: option.EBPFVPNServerBypassOptions{Enabled: true, IPCIDR: cidr}},
+		{name: "port zero", options: option.EBPFVPNServerBypassOptions{Enabled: true, IPCIDR: cidr, Port: []uint16{0}}},
+		{name: "invalid range", options: option.EBPFVPNServerBypassOptions{Enabled: true, IPCIDR: cidr, PortRange: []string{"600:500"}}},
+		{name: "unknown network", options: option.EBPFVPNServerBypassOptions{Enabled: true, Network: option.NetworkList("icmp"), IPCIDR: cidr, Port: []uint16{500}}},
+		{name: "IPv4 default route", options: option.EBPFVPNServerBypassOptions{Enabled: true, IPCIDR: []netip.Prefix{netip.MustParsePrefix("0.0.0.0/0")}, Port: []uint16{443}}},
+		{name: "IPv6 default route", options: option.EBPFVPNServerBypassOptions{Enabled: true, IPCIDR: []netip.Prefix{netip.MustParsePrefix("::/0")}, Port: []uint16{443}}},
+		{name: "mapped default route", options: option.EBPFVPNServerBypassOptions{Enabled: true, IPCIDR: []netip.Prefix{netip.MustParsePrefix("::ffff:0.0.0.0/96")}, Port: []uint16{443}}},
+		{name: "network disabled by inbound", options: option.EBPFVPNServerBypassOptions{Enabled: true, Network: option.NetworkList("tcp"), IPCIDR: cidr, Port: []uint16{500}}},
+		{name: "port capacity", options: option.EBPFVPNServerBypassOptions{Enabled: true, IPCIDR: cidr, PortRange: []string{"1000:3048"}}, inboundTCP: true},
 	} {
-		if _, _, _, _, err = normalizeEndpointConnectedBypass(invalid); err == nil {
-			t.Fatalf("expected invalid endpoint policy to fail: %+v", invalid)
+		if _, err = normalizeVPNServerBypass(testCase.options, testCase.inboundTCP, true); err == nil {
+			t.Fatalf("%s: invalid VPN server bypass was accepted: %+v", testCase.name, testCase.options)
+		}
+	}
+	if _, err = normalizeVPNServerBypass(option.EBPFVPNServerBypassOptions{
+		Enabled: true, IPCIDR: cidr, PortRange: []string{"1000:3047"},
+	}, true, true); err != nil {
+		t.Fatalf("port range at capacity was rejected: %v", err)
+	}
+}
+
+func TestWarnVPNServerBypassDNSPort(t *testing.T) {
+	dnsRange := []portRange{{Start: 50, End: 60}}
+	for _, testCase := range []struct {
+		mode  string
+		ports []portRange
+		want  int
+	}{
+		{mode: dnsModeHijack, ports: dnsRange, want: 1},
+		{mode: dnsModeOff, ports: dnsRange, want: 1},
+		{mode: dnsModeRespectPolicy, ports: dnsRange, want: 0},
+		{mode: dnsModeHijack, ports: []portRange{{Start: 500, End: 500}}, want: 0},
+	} {
+		logger := &captureLogger{}
+		warnVPNServerBypassDNSPort(logger, testCase.mode, testCase.ports)
+		if len(logger.warnMessages) != testCase.want {
+			t.Fatalf("dns_mode=%s ports=%v: warnings=%v", testCase.mode, testCase.ports, logger.warnMessages)
 		}
 	}
 }

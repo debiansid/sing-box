@@ -476,7 +476,7 @@ func (i *Inbound) checkKernelCapabilities() error {
 }
 
 func (i *Inbound) needsLPMPolicy() bool {
-	if i.localTCEnabled() && i.endpointConnectedBypass.Enabled {
+	if i.localTCEnabled() && i.vpnServerBypass.Enabled {
 		return true
 	}
 	if (i.localTCEnabled() || i.localCgroupEnabled()) &&
