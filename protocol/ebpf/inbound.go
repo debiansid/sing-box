@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	commonEBPF "github.com/CHIZI-0618/sing-ebpf"
@@ -97,6 +98,7 @@ type Inbound struct {
 	sharedIPv6                bool
 	sharedBypassPrivate       bool
 	localBypassPort           []portRange
+	vpnServerBypass           vpnServerBypassPolicy
 	sharedBypassPort          []portRange
 	localBypassExclude        []netip.Prefix
 	sharedBypassExclude       []netip.Prefix
@@ -118,6 +120,8 @@ type Inbound struct {
 	cgroupRecoveryEvents      chan commonEBPF.UDPReleaseEvent
 	lifecycleAccess           sync.Mutex
 	interfaceMonitor          tcInterfaceMonitor
+	vpnReady                  atomic.Bool
+	vpnInterfacePackets       map[vpnInterfaceIdentity]vpnInterfaceState
 
 	bypassRuleSetAccess       sync.Mutex
 	bypassRuleSet             []adapter.RuleSet
@@ -196,9 +200,12 @@ type Inbound struct {
 	// diagnosticsAPICache is request-driven only. API polling can be frequent,
 	// so native per-CPU counter reads are coalesced for a short
 	// window without adding a timer or background wakeup.
-	diagnosticsAPIAccess sync.Mutex
-	diagnosticsAPIAt     time.Time
-	diagnosticsAPIValue  adapter.EBPFRuntimeDiagnostics
+	diagnosticsAPIAccess  sync.Mutex
+	diagnosticsAPIAt      time.Time
+	diagnosticsAPIValue   adapter.EBPFRuntimeDiagnostics
+	diagnosticsJSONAccess sync.Mutex
+	diagnosticsJSONAt     time.Time
+	diagnosticsJSONValue  EBPFDiagnostics
 	// kernelRuntimeAPICache protects the more expensive global program/map
 	// enumeration. It remains request-driven and never starts a timer.
 	kernelRuntimeAPIAccess sync.Mutex
@@ -297,6 +304,10 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 	network := options.Network.Build()
 	enableTCP := common.Contains(network, N.NetworkTCP)
 	enableUDP := common.Contains(network, N.NetworkUDP)
+	vpnServerBypass, err := normalizeVPNServerBypass(options.Local.VPNServerBypass, enableTCP, enableUDP)
+	if err != nil {
+		return nil, err
+	}
 	networkManager := service.FromContext[adapter.NetworkManager](ctx)
 	if networkManager == nil {
 		return nil, E.New("missing network manager")
@@ -339,6 +350,7 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 		sharedIPv6:          sharedEnabled && enabledByDefault(options.Shared.IPv6),
 		sharedBypassPrivate: options.Shared.BypassPrivateAddress == nil || *options.Shared.BypassPrivateAddress,
 		localBypassPort:     localBypassPort,
+		vpnServerBypass:     vpnServerBypass,
 		sharedBypassPort:    sharedBypassPort,
 		localBypassExclude:  localBypassExclude,
 		sharedBypassExclude: sharedBypassExclude,
@@ -376,6 +388,7 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 	}
 	warnBypassPortConflicts(logger, "local", localDNSMode, localBypassPort)
 	warnBypassPortConflicts(logger, "shared", sharedDNSMode, sharedBypassPort)
+	warnVPNServerBypassDNSPort(logger, localDNSMode, vpnServerBypass.Ports)
 	loadRuleSets := func(scope string, target *[]adapter.RuleSet, tags ...[]string) error {
 		seen := make(map[string]struct{})
 		for _, tagList := range tags {
@@ -410,6 +423,21 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 	inbound.udpFragment = options.UDPFragment != nil && *options.UDPFragment
 	inbound.udpNat = newUDPNATService(inbound, inbound.preparePacketConnection, udpTimeout)
 	return inbound, nil
+}
+
+// warnVPNServerBypassDNSPort reports port 53 entries that DNS precedence in the
+// data plane makes unreachable for the VPN server gate.
+func warnVPNServerBypassDNSPort(logger log.ContextLogger, dnsMode string, ports []portRange) {
+	if logger == nil || dnsMode == dnsModeRespectPolicy {
+		return
+	}
+	for _, portRange := range ports {
+		if portRange.Start <= 53 && portRange.End >= 53 {
+			logger.Warn("eBPF local.vpn_server_bypass includes DNS port 53, but dns_mode=", dnsMode,
+				" handles DNS first, so the gate never applies to it")
+			return
+		}
+	}
 }
 
 func warnBypassPortConflicts(logger log.ContextLogger, scope, dnsMode string, ports []portRange) {

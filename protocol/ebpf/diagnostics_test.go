@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/netip"
 	"strings"
 	"testing"
@@ -21,6 +22,7 @@ import (
 type captureLogger struct {
 	debugMessages []string
 	infoMessages  []string
+	warnMessages  []string
 }
 
 func (l *captureLogger) Trace(args ...any) {}
@@ -33,8 +35,10 @@ func (l *captureLogger) Debug(args ...any) {
 	}
 	l.debugMessages = append(l.debugMessages, builder.String())
 }
-func (l *captureLogger) Info(args ...any)  { l.infoMessages = append(l.infoMessages, "called") }
-func (l *captureLogger) Warn(args ...any)  {}
+func (l *captureLogger) Info(args ...any) { l.infoMessages = append(l.infoMessages, "called") }
+func (l *captureLogger) Warn(args ...any) {
+	l.warnMessages = append(l.warnMessages, fmt.Sprint(args...))
+}
 func (l *captureLogger) Error(args ...any) {}
 func (l *captureLogger) Fatal(args ...any) {}
 func (l *captureLogger) Panic(args ...any) {}
@@ -63,6 +67,21 @@ func TestDiagnosticsReportsWaitingForInterfaceWhenNothingIsAttachedYet(t *testin
 	}
 	if len(diagnostics.Attachments) != 0 {
 		t.Fatalf("attachments = %v, want none", diagnostics.Attachments)
+	}
+}
+
+func TestDiagnosticsJSONUsesShortRequestDrivenCache(t *testing.T) {
+	inbound := &Inbound{localEnabled: true, localDataPlane: localDataPlaneTC}
+	first, ok := inbound.DiagnosticsJSON().(EBPFDiagnostics)
+	if !ok {
+		t.Fatal("DiagnosticsJSON did not return EBPFDiagnostics")
+	}
+	second, ok := inbound.DiagnosticsJSON().(EBPFDiagnostics)
+	if !ok {
+		t.Fatal("second DiagnosticsJSON did not return EBPFDiagnostics")
+	}
+	if !first.ObservedAt.Equal(second.ObservedAt) {
+		t.Fatalf("cache miss inside TTL: first=%v second=%v", first.ObservedAt, second.ObservedAt)
 	}
 }
 
