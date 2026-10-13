@@ -73,7 +73,7 @@ icon: material/new-box
 
 #### bind_interface
 
-要绑定到的网络接口。
+要绑定到的网络接口。在 Linux 上支持通配符模式（例如 `ipsec*`），动态绑定到最新匹配且处于 UP 状态的活动接口。
 
 #### inet4_bind_address
 
