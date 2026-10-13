@@ -490,6 +490,9 @@ func (i *Inbound) needsLPMPolicy() bool {
 		(i.sharedEnabled && (len(i.sharedBypassExclude) > 0 || i.sharedBypassPrivate)) {
 		return true
 	}
+	if i.localSocketAssignEnabled() && i.vpnServerBypass.Enabled {
+		return true
+	}
 	if (i.localSocketAssignEnabled() || i.localCgroupEnabled()) &&
 		(len(i.localPolicy.IncludeUID) > 0 || len(i.localPolicy.ExcludeUID) > 0) {
 		return true
@@ -518,8 +521,6 @@ func combineStartError(startErr error, cleanupErr error) error {
 }
 
 func (i *Inbound) Close() error {
-	i.lifecycleAccess.Lock()
-	defer i.lifecycleAccess.Unlock()
 	return i.closeResources()
 }
 
@@ -530,6 +531,9 @@ func (i *Inbound) cleanupStartFailure() error {
 func (i *Inbound) closeResources() error {
 	i.stopTCAssignmentJanitor()
 	monitorErr := i.stopTCInterfaceMonitor()
+	// Join the worker before taking the lock it uses for interface updates.
+	i.lifecycleAccess.Lock()
+	defer i.lifecycleAccess.Unlock()
 	i.stopBypassRuleSets()
 	sharedRewriteErr := error(nil)
 	if shared := i.takeSharedRewrite(); shared != nil {

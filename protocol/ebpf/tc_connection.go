@@ -146,7 +146,7 @@ func (i *Inbound) prepareTCPacketConnection(
 	key udpSessionKey,
 ) (bool, context.Context, N.PacketWriter, N.CloseHandlerFunc) {
 	ctx := log.ContextWithNewID(i.ctx)
-	clientState := i.udpClientTable.loadOrCreate(key)
+	clientState := i.udpClientTable.renew(key)
 	var writer N.PacketWriter
 	if key.Scope == udpSessionScopeLocalCgroup {
 		writer = &cgroupPacketWriter{inbound: i, key: key, clientState: clientState}

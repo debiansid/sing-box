@@ -21,6 +21,7 @@ import (
 type captureLogger struct {
 	debugMessages []string
 	infoMessages  []string
+	warnMessages  []string
 }
 
 func (l *captureLogger) Trace(args ...any) {}
@@ -33,8 +34,16 @@ func (l *captureLogger) Debug(args ...any) {
 	}
 	l.debugMessages = append(l.debugMessages, builder.String())
 }
-func (l *captureLogger) Info(args ...any)  { l.infoMessages = append(l.infoMessages, "called") }
-func (l *captureLogger) Warn(args ...any)  {}
+func (l *captureLogger) Info(args ...any) { l.infoMessages = append(l.infoMessages, "called") }
+func (l *captureLogger) Warn(args ...any) {
+	var builder strings.Builder
+	for _, arg := range args {
+		if text, ok := arg.(string); ok {
+			builder.WriteString(text)
+		}
+	}
+	l.warnMessages = append(l.warnMessages, builder.String())
+}
 func (l *captureLogger) Error(args ...any) {}
 func (l *captureLogger) Fatal(args ...any) {}
 func (l *captureLogger) Panic(args ...any) {}

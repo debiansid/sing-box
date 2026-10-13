@@ -46,8 +46,15 @@ type udpNATService struct {
 	socketReleaseEvents            atomic.Uint64
 	socketReleaseMatched           atomic.Uint64
 	pendingReleaseCapacityRejected atomic.Uint64
+	replacingAccess                sync.Mutex
+	replacing                      map[udpSessionKey]*udpNATReplacingEntry
 	closed                         atomic.Bool
 	closeOnce                      sync.Once
+}
+
+type udpNATReplacingEntry struct {
+	refs    int
+	evicted []*udpNATConn
 }
 
 func newUDPNATService(
@@ -80,6 +87,7 @@ func newUDPNATService(
 		cleanupDone:        make(chan struct{}),
 		releaseConnections: make(map[uint64]*udpNATConn),
 		pendingReleases:    make(map[uint64]time.Time),
+		replacing:          make(map[udpSessionKey]*udpNATReplacingEntry),
 	}
 	service.cleanup = newUDPNATCleanupQueue(service)
 	cache.SetOnEvict(func(_ udpSessionKey, conn *udpNATConn) {
@@ -130,6 +138,8 @@ func (s *udpNATService) connection(
 	if s.closed.Load() {
 		return nil, false
 	}
+	s.startReplacing(key)
+	defer s.finishReplacing(key)
 	var (
 		newContext context.Context
 	)
@@ -160,6 +170,7 @@ func (s *udpNATService) connection(
 		return nil, false
 	}
 	if s.closed.Load() {
+		conn.close()
 		s.cache.Remove(key)
 		if !updated {
 			conn.handleClose(net.ErrClosed)
@@ -168,6 +179,7 @@ func (s *udpNATService) connection(
 	}
 	if !updated {
 		if !s.registerReleaseConnection(conn) {
+			conn.close()
 			s.cache.Remove(key)
 			conn.handleClose(net.ErrClosed)
 			return nil, false
@@ -368,8 +380,71 @@ func (s *udpNATService) Close() error {
 		clear(s.releaseConnections)
 		clear(s.pendingReleases)
 		s.releaseAccess.Unlock()
+		s.replacingAccess.Lock()
+		clear(s.replacing)
+		s.replacingAccess.Unlock()
 	})
 	return nil
+}
+
+func (s *udpNATService) startReplacing(key udpSessionKey) {
+	if s == nil {
+		return
+	}
+	s.replacingAccess.Lock()
+	if s.replacing == nil {
+		s.replacing = make(map[udpSessionKey]*udpNATReplacingEntry)
+	}
+	entry := s.replacing[key]
+	if entry == nil {
+		entry = &udpNATReplacingEntry{}
+		s.replacing[key] = entry
+	}
+	entry.refs++
+	s.replacingAccess.Unlock()
+}
+
+func (s *udpNATService) finishReplacing(key udpSessionKey) {
+	if s == nil {
+		return
+	}
+	s.replacingAccess.Lock()
+	if s.replacing == nil {
+		s.replacingAccess.Unlock()
+		return
+	}
+	entry := s.replacing[key]
+	if entry == nil {
+		s.replacingAccess.Unlock()
+		return
+	}
+	entry.refs--
+	var evicted []*udpNATConn
+	if entry.refs <= 0 {
+		delete(s.replacing, key)
+		evicted = entry.evicted
+	}
+	s.replacingAccess.Unlock()
+	for _, conn := range evicted {
+		conn.handleClose(net.ErrClosed)
+	}
+}
+
+func (s *udpNATService) deferEvictedClose(key udpSessionKey, conn *udpNATConn) bool {
+	if s == nil {
+		return false
+	}
+	s.replacingAccess.Lock()
+	defer s.replacingAccess.Unlock()
+	if s.replacing == nil {
+		return false
+	}
+	entry := s.replacing[key]
+	if entry == nil {
+		return false
+	}
+	entry.evicted = append(entry.evicted, conn)
+	return true
 }
 
 type udpNATConn struct {
@@ -566,8 +641,14 @@ func (c *udpNATConn) close() {
 
 func (c *udpNATConn) closeFromCache() {
 	c.close()
-	c.service.cleanup.remove(c.cleanupEntry)
-	c.handleClose(net.ErrClosed)
+	if c.service != nil {
+		c.service.cleanup.remove(c.cleanupEntry)
+		if !c.service.deferEvictedClose(c.key, c) {
+			c.handleClose(net.ErrClosed)
+		}
+	} else {
+		c.handleClose(net.ErrClosed)
+	}
 }
 
 // handleClose owns the cleanup callback passed to the downstream handler. The
