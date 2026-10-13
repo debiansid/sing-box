@@ -1442,6 +1442,19 @@
                     }
                   ]
                 },
+                "interface_name": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  ]
+                },
                 "interface_address": {
                   "type": "object",
                   "additionalProperties": {
@@ -10455,6 +10468,19 @@
                 }
               ]
             },
+            "interface_name": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              ]
+            },
             "interface_address": {
               "type": "object",
               "additionalProperties": {
@@ -11102,6 +11128,19 @@
               ]
             },
             "wifi_bssid": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              ]
+            },
+            "interface_name": {
               "anyOf": [
                 {
                   "type": "string"
@@ -17657,6 +17696,19 @@
                   ]
                 },
                 "wifi_bssid": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  ]
+                },
+                "interface_name": {
                   "anyOf": [
                     {
                       "type": "string"

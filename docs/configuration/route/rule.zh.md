@@ -163,6 +163,10 @@ icon: material/new-box
         "default_interface_address": [
           "2000::/3"
         ],
+        "interface_name": [
+          "wlan0",
+          "ipsec*"
+        ],
         "wifi_ssid": [
           "My WIFI"
         ],
@@ -461,6 +465,10 @@ icon: material/new-box
     仅支持 Linux、Windows 和 macOS.
 
 匹配默认接口地址。
+
+#### interface_name
+
+匹配活跃的网络接口名称。支持通配符模式（例如 `ipsec*`）。
 
 #### wifi_ssid
 
