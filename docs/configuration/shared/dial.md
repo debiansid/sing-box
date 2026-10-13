@@ -73,7 +73,7 @@ If enabled, all other fields will be ignored.
 
 #### bind_interface
 
-The network interface to bind to.
+The network interface to bind to. Supports wildcard patterns (e.g. `ipsec*`) on Linux to dynamically bind to the latest matching active UP interface.
 
 #### inet4_bind_address
 

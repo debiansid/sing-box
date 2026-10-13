@@ -37,7 +37,7 @@ their backends.
 - A running sing-box eBPF inbound attached to `LOCAL_IFACE`.
 - `fakeip_icmp: reply` for ICMP checks.
 - `shared.data_plane: packet_rewrite` for shared TCP/UDP checks.
-- Optionally, the sing-box API service for counter-based attribution.
+- Optionally, the sing-box API service (or Clash API `/ebpf` endpoint) for counter-based attribution.
 
 Confirm that the interface uses a hardware driver:
 

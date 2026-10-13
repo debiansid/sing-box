@@ -166,6 +166,10 @@ icon: material/new-box
         "default_interface_address": [
           "2000::/3"
         ],
+        "interface_name": [
+          "wlan0",
+          "ipsec*"
+        ],
         "wifi_ssid": [
           "My WIFI"
         ],
@@ -472,6 +476,10 @@ Matches network interface (same values as `network_type`) address.
     Only supported on Linux, Windows, and macOS.
 
 Match default interface address.
+
+#### interface_name
+
+Match active network interface name. Supports wildcard patterns (e.g. `ipsec*`).
 
 #### wifi_ssid
 
