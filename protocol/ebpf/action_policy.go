@@ -163,6 +163,17 @@ func (i *Inbound) compileActionPolicy() (commonEBPF.CompiledPolicy, error) {
 	}
 	appendDestinationPolicy(&policy.Shared, i.sharedBypassPrivate, i.sharedBypassPort, i.sharedDNSMode,
 		i.fakeIPIPv4Prefix, i.fakeIPIPv6Prefix, i.sharedBypassExclude, i.enableTCP, i.enableUDP)
+	if i.vpnServerBypass.Enabled {
+		ports := vpnServerBypassEndpointPorts(i.vpnServerBypass, i.localDNSMode)
+		if len(ports) > 0 {
+			for _, prefix := range i.vpnServerBypass.IPCIDR {
+				policy.EndpointCIDR = append(policy.EndpointCIDR, commonEBPF.CIDRDecision{
+					Prefix: prefix, Action: commonEBPF.DecisionPass,
+				})
+			}
+			policy.EndpointPort = ports
+		}
+	}
 	i.localInitialDestinations = destinationPassDecisions(policy.Local.DestinationCIDR)
 	i.sharedInitialDestinations = destinationPassDecisions(policy.Shared.DestinationCIDR)
 	return commonEBPF.CompileActionPolicy(policy)
@@ -183,6 +194,31 @@ func destinationPassDecisions(decisions []commonEBPF.CIDRDecision) []commonEBPF.
 		}
 	}
 	return result
+}
+
+func vpnServerBypassEndpointPorts(policy vpnServerBypassPolicy, dnsMode string) []commonEBPF.PortDecision {
+	var ports []commonEBPF.PortDecision
+	for _, portRange := range policy.Ports {
+		for port := portRange.Start; port <= portRange.End; port++ {
+			if port == 53 && dnsMode != dnsModeRespectPolicy {
+				continue
+			}
+			if policy.EnableTCP {
+				ports = append(ports, commonEBPF.PortDecision{
+					Protocol: commonEBPF.ProtocolTCP, Port: port, Action: commonEBPF.DecisionPass,
+				})
+			}
+			if policy.EnableUDP {
+				ports = append(ports, commonEBPF.PortDecision{
+					Protocol: commonEBPF.ProtocolUDP, Port: port, Action: commonEBPF.DecisionPass,
+				})
+			}
+			if port == portRange.End {
+				break
+			}
+		}
+	}
+	return ports
 }
 
 // appendDestinationPolicy is deliberately shared by local and shared data
