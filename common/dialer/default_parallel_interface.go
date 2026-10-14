@@ -209,7 +209,6 @@ func appendDialerControl(dialer *net.Dialer, fn control.Func) {
 	}
 	dialer.Control = control.Append(dialer.Control, fn)
 }
-}
 
 func (d *DefaultDialer) serialInterfaceControl(strategy C.NetworkStrategy, interfaceType []C.InterfaceType, fallbackInterfaceType []C.InterfaceType) control.Func {
 	return func(network, address string, conn syscall.RawConn) error {
