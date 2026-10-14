@@ -354,6 +354,11 @@ func NewDefaultDNSRule(ctx context.Context, logger log.ContextLogger, options op
 		rule.items = append(rule.items, item)
 		rule.allItems = append(rule.allItems, item)
 	}
+	if len(options.InterfaceName) > 0 {
+		item := NewInterfaceNameItem(networkManager, options.InterfaceName)
+		rule.items = append(rule.items, item)
+		rule.allItems = append(rule.allItems, item)
+	}
 	if options.InterfaceAddress != nil && options.InterfaceAddress.Size() > 0 {
 		item := NewInterfaceAddressItem(networkManager, options.InterfaceAddress)
 		rule.items = append(rule.items, item)
