@@ -167,6 +167,7 @@ type RawDefaultDNSRule struct {
 	NetworkIsConstrained     bool                                                                        `json:"network_is_constrained,omitempty"`
 	WIFISSID                 badoption.Listable[string]                                                  `json:"wifi_ssid,omitempty"`
 	WIFIBSSID                badoption.Listable[string]                                                  `json:"wifi_bssid,omitempty"`
+	InterfaceName            badoption.Listable[string]                                                  `json:"interface_name,omitempty"`
 	InterfaceAddress         *badjson.TypedMap[string, badoption.Listable[*badoption.Prefixable]]        `json:"interface_address,omitempty"`
 	NetworkInterfaceAddress  *badjson.TypedMap[InterfaceType, badoption.Listable[*badoption.Prefixable]] `json:"network_interface_address,omitempty"`
 	DefaultInterfaceAddress  badoption.Listable[*badoption.Prefixable]                                   `json:"default_interface_address,omitempty"`
