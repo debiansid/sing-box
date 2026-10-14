@@ -5,7 +5,10 @@ import (
 	"errors"
 	"net"
 	"net/netip"
+	"os"
+	"path/filepath"
 	"slices"
+	"strings"
 	"syscall"
 	"time"
 
@@ -81,7 +84,10 @@ func NewDefault(ctx context.Context, options option.DialerOptions) (*DefaultDial
 		if !(C.IsLinux || C.IsDarwin || C.IsWindows) {
 			return nil, E.New("`bind_interface` is only supported on Linux, macOS and Windows")
 		}
-		bindFunc := control.BindToInterface(interfaceFinder, options.BindInterface, -1)
+		bindFunc, err := bindToInterface(interfaceFinder, options.BindInterface)
+		if err != nil {
+			return nil, err
+		}
 		dialer.Control = control.Append(dialer.Control, bindFunc)
 		listenConfig.Control = control.Append(listenConfig.Control, bindFunc)
 	}
@@ -102,7 +108,10 @@ func NewDefault(ctx context.Context, options option.DialerOptions) (*DefaultDial
 	if networkManager != nil {
 		defaultOptions := networkManager.DefaultOptions()
 		if defaultOptions.BindInterface != "" && !disableDefaultBind {
-			bindFunc := control.BindToInterface(networkManager.InterfaceFinder(), defaultOptions.BindInterface, -1)
+			bindFunc, err := bindToInterface(networkManager.InterfaceFinder(), defaultOptions.BindInterface)
+			if err != nil {
+				return nil, err
+			}
 			dialer.Control = control.Append(dialer.Control, bindFunc)
 			listenConfig.Control = control.Append(listenConfig.Control, bindFunc)
 		} else if networkManager.AutoDetectInterface() && !disableDefaultBind {
@@ -556,4 +565,47 @@ func (d *DefaultDialer) dialAttribution(ctx context.Context, destination M.Socks
 		attribution.Destination = destination.String()
 	}
 	return attribution
+}
+
+func bindToInterface(finder control.InterfaceFinder, interfaceName string) (control.Func, error) {
+	if strings.Contains(interfaceName, "*") || strings.Contains(interfaceName, "?") {
+		// shortcut: Match may stop before a bad tail; probing the pattern itself catches the common cases.
+		if _, err := filepath.Match(interfaceName, interfaceName); err != nil {
+			return nil, E.Cause(err, "invalid bind_interface pattern: ", interfaceName)
+		}
+		return control.BindToInterfaceFunc(finder, func(network string, address string) (string, int, error) {
+			return resolveInterface(finder, interfaceName)
+		}), nil
+	}
+	return control.BindToInterface(finder, interfaceName, -1), nil
+}
+
+func resolveInterface(finder control.InterfaceFinder, pattern string) (string, int, error) {
+	if finder == nil {
+		return "", -1, os.ErrInvalid
+	}
+	find := func() (*control.Interface, bool) {
+		var best *control.Interface
+		for _, iif := range finder.Interfaces() {
+			if iif.Flags&net.FlagUp == 0 {
+				continue
+			}
+			matched, _ := filepath.Match(pattern, iif.Name)
+			if matched {
+				if best == nil || iif.Index > best.Index {
+					match := iif
+					best = &match
+				}
+			}
+		}
+		return best, best != nil
+	}
+	if best, ok := find(); ok {
+		return best.Name, best.Index, nil
+	}
+	_ = finder.Update()
+	if best, ok := find(); ok {
+		return best.Name, best.Index, nil
+	}
+	return "", -1, E.New("no active interface matches pattern '", pattern, "'")
 }
