@@ -371,6 +371,68 @@ func TestRetryLoopHealthyWatchdogSkipsFullReconcile(t *testing.T) {
 	}
 }
 
+func TestRetryLoopWatchdogDefersToPendingRetry(t *testing.T) {
+	// A persistently failing component must stay on its exponential backoff:
+	// short (Android) watchdog ticks may not turn into a reconcile per tick.
+	timer := &testRetryTimer{
+		expired: make(chan time.Time, 1),
+		actions: make(chan testRetryTimerAction, 64),
+	}
+	previous := tcRetryTimerFactory
+	tcRetryTimerFactory = func() tcRetryTimer { return timer }
+	t.Cleanup(func() { tcRetryTimerFactory = previous })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	updates := make(chan struct{}, 1)
+	ran := make(chan struct{}, 64)
+	finished := make(chan struct{})
+	go func() {
+		defer close(finished)
+		runTCInterfaceUpdateLoopWithHealth(
+			ctx,
+			updates,
+			5*time.Millisecond,
+			func(context.Context) bool { return false },
+			func(context.Context) tcUpdateOutcome {
+				ran <- struct{}{}
+				return tcUpdateOutcome{
+					sharedRewrite: tcSharedRewriteSettled,
+					general:       tcSharedRewriteRecoverable,
+					bypassRuleSet: tcSharedRewriteSettled,
+				}
+			},
+			nil,
+		)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-finished:
+		case <-time.After(2 * time.Second):
+			t.Error("update loop did not exit after cancellation")
+		}
+	})
+
+	updates <- struct{}{}
+	select {
+	case <-ran:
+	case <-time.After(2 * time.Second):
+		t.Fatal("event did not drive the first reconcile")
+	}
+	// Many watchdog ticks elapse while the retry is armed; none may reconcile.
+	select {
+	case <-ran:
+		t.Fatal("watchdog tick bypassed the pending retry backoff")
+	case <-time.After(60 * time.Millisecond):
+	}
+	timer.fire(t)
+	select {
+	case <-ran:
+	case <-time.After(2 * time.Second):
+		t.Fatal("retry timer did not drive the recovery")
+	}
+}
+
 func TestRetryLoopWithoutHealthCheckWaitsForEvent(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	updates := make(chan struct{}, 1)

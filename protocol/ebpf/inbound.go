@@ -30,6 +30,7 @@ const (
 	dnsModeRespectPolicy         = "respect_policy"
 	dnsModeOff                   = "off"
 	defaultTCPriority            = 1
+	defaultAndroidTCPriority     = 2
 )
 
 var (
@@ -89,6 +90,7 @@ type inboundWorkers struct {
 	cgroupRecoveryDone        chan struct{}
 	cgroupRecoveryEvents      chan commonEBPF.UDPReleaseEvent
 	interfaceMonitor          tcInterfaceMonitor
+	egressGuard               androidEgressGuard
 	tcAssignmentWake          chan struct{}
 	tcAssignmentJanitorAccess sync.Mutex
 	tcAssignmentJanitorCancel context.CancelFunc
@@ -364,7 +366,11 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 		},
 	}
 	if inbound.tcPriority == 0 {
-		inbound.tcPriority = defaultTCPriority
+		if runtime.GOOS == "android" {
+			inbound.tcPriority = defaultAndroidTCPriority
+		} else {
+			inbound.tcPriority = defaultTCPriority
+		}
 	}
 	inbound.tcAssignmentSweepFailure.Store("")
 	if dnsTransportManager := service.FromContext[adapter.DNSTransportManager](ctx); dnsTransportManager != nil {

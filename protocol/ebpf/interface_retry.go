@@ -4,6 +4,7 @@ package ebpf
 
 import (
 	"context"
+	"runtime"
 	"time"
 )
 
@@ -164,11 +165,20 @@ func (i *Inbound) runTCInterfaceUpdates(ctx context.Context, updates <-chan stru
 	}, i.recordNextRetryDeadline, vpnInterfacePollInterval, syncVPN)
 }
 
+const androidTCDriftCheckInterval = 3 * time.Second
+
+// A failed attach on Android usually races netd setting up a new network, so it is retried
+// almost at once; the doubling backoff still bounds a persistent failure.
+const androidTCRetryInitialDelay = 200 * time.Millisecond
+
 func (i *Inbound) interfaceDriftCheckInterval() time.Duration {
 	i.tcDataPlaneAccess.RLock()
 	hasTCDataPlane := i.tcDataPlane != nil
 	i.tcDataPlaneAccess.RUnlock()
 	if hasTCDataPlane || i.sharedRewriteInstance() != nil {
+		if runtime.GOOS == "android" {
+			return androidTCDriftCheckInterval
+		}
 		return tcDriftCheckInterval
 	}
 	return 0
@@ -314,6 +324,12 @@ func runTCInterfaceUpdateLoopWithVPN(
 		// schedule independently of anything below.
 		if ctx.Err() != nil {
 			return
+		}
+		// With a short (Android) drift interval, a failing health check would
+		// otherwise force a full reconcile every tick and defeat the retry
+		// backoff. While a retry is already scheduled, leave recovery to it.
+		if triggeredByHealthCheck && retryChannel != nil {
+			continue
 		}
 		if triggeredByHealthCheck && healthCheck != nil && healthCheck(ctx) {
 			refreshVPN()

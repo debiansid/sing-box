@@ -4,6 +4,7 @@ package ebpf
 
 import (
 	"context"
+	"runtime"
 	"slices"
 	"time"
 )
@@ -58,6 +59,9 @@ func (i *Inbound) tcInterfaceHealthCheck(ctx context.Context) (healthy bool) {
 }
 
 func nextTCRetryDelay(current time.Duration) time.Duration {
+	if current <= 0 && runtime.GOOS == "android" {
+		return androidTCRetryInitialDelay
+	}
 	if current <= 0 {
 		return tcRetryInitialDelay
 	}
@@ -169,6 +173,7 @@ func (i *Inbound) updateTCInterfaces(ctx context.Context) (outcome tcUpdateOutco
 		return
 	}
 	if !changed {
+		i.syncAndroidEgressGuard(localInterface)
 		if err = i.updateTCHostAddresses(hostAddresses); err != nil {
 			i.interfaceWarnings.hostPolicy.warn(i.logger, "refresh TC eBPF host addresses: ", err)
 			outcome.general = tcSharedRewriteRecoverable
@@ -194,6 +199,7 @@ func (i *Inbound) updateTCInterfaces(ctx context.Context) (outcome tcUpdateOutco
 		return
 	}
 	i.warnIfLocalFakeIPICMPIPv6Unroutable(localInterface)
+	i.syncAndroidEgressGuard(localInterface)
 	if err = i.updateCgroupHostAddresses(hostAddresses); err != nil {
 		i.interfaceWarnings.hostPolicy.warn(i.logger, "refresh cgroup eBPF host addresses: ", err)
 		outcome.general = tcSharedRewriteRecoverable
