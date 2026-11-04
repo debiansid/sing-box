@@ -4,12 +4,17 @@ package ebpf
 
 import (
 	"context"
+	"net"
+	"runtime"
+	"strings"
 	"sync"
 
+	"github.com/sagernet/netlink"
 	"github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing/common/control"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/x/list"
+	"golang.org/x/sys/unix"
 )
 
 type tcInterfaceMonitor struct {
@@ -129,7 +134,18 @@ func (i *Inbound) startTCInterfaceMonitor() error {
 	state.networkCallback = networkMonitor.RegisterCallback(i.notifyTCInterfaceUpdate)
 	state.defaultInterfaceCallback = defaultInterfaceMonitor.RegisterCallback(i.defaultInterfaceUpdated)
 	state.defaultInterfaceName = interfaceName(defaultInterfaceMonitor.DefaultInterface())
+	needsFallback := state.defaultInterfaceName == "" && runtime.GOOS == "android"
 	state.access.Unlock()
+	if needsFallback {
+		// The netlink lookup runs outside the lock; a callback that already
+		// delivered a name since registration is newer and wins.
+		name := androidDefaultInterfaceFinder()
+		state.access.Lock()
+		if state.defaultInterfaceName == "" {
+			state.defaultInterfaceName = name
+		}
+		state.access.Unlock()
+	}
 	i.resetVPNReadinessState()
 	go i.runTCInterfaceUpdates(monitorContext, updates, done)
 	if networkOwned {
@@ -195,7 +211,11 @@ func (i *Inbound) stopTCInterfaceMonitor() error {
 }
 
 func (i *Inbound) defaultInterfaceUpdated(defaultInterface *control.Interface, _ int) {
-	i.setDefaultInterfaceName(interfaceName(defaultInterface))
+	name := interfaceName(defaultInterface)
+	if name == "" && runtime.GOOS == "android" {
+		name = androidDefaultInterfaceFinder()
+	}
+	i.setDefaultInterfaceName(name)
 }
 
 func interfaceName(networkInterface *control.Interface) string {
@@ -205,12 +225,174 @@ func interfaceName(networkInterface *control.Interface) string {
 	return networkInterface.Name
 }
 
+var androidDefaultInterfaceFinder = findAndroidDefaultInterfaceName
+
 func (i *Inbound) currentDefaultInterfaceName() string {
-	defaultInterfaceMonitor := i.networkManager.InterfaceMonitor()
-	if defaultInterfaceMonitor == nil {
+	var name string
+	if defaultInterfaceMonitor := i.networkManager.InterfaceMonitor(); defaultInterfaceMonitor != nil {
+		name = interfaceName(defaultInterfaceMonitor.DefaultInterface())
+	}
+	if name == "" && runtime.GOOS == "android" {
+		name = androidDefaultInterfaceFinder()
+	}
+	return name
+}
+
+type routeLinkResolver struct {
+	names map[int]string
+}
+
+func newRouteLinkResolver() *routeLinkResolver {
+	return &routeLinkResolver{names: make(map[int]string)}
+}
+
+func (r *routeLinkResolver) resolve(index int) string {
+	if index <= 0 {
 		return ""
 	}
-	return interfaceName(defaultInterfaceMonitor.DefaultInterface())
+	if name, ok := r.names[index]; ok {
+		return name
+	}
+	link, err := netlink.LinkByIndex(index)
+	if err != nil || link == nil || link.Attrs() == nil {
+		r.names[index] = ""
+		return ""
+	}
+	attrs := link.Attrs()
+	if !isDefaultInterfaceCandidate(attrs) {
+		r.names[index] = ""
+		return ""
+	}
+	r.names[index] = attrs.Name
+	return attrs.Name
+}
+
+// clatd's raw-IP v4-* interface carries an IPv4 default route on IPv6-only
+// networks, but it is a translation shim, not the network to attach TC to.
+func isDefaultInterfaceCandidate(attrs *netlink.LinkAttrs) bool {
+	if attrs.Flags&net.FlagUp == 0 || attrs.Flags&net.FlagLoopback != 0 {
+		return false
+	}
+	return !isVPNInterface(attrs.Name) && !strings.HasPrefix(attrs.Name, "v4-")
+}
+
+func isCandidateDefaultRoute(route netlink.Route) bool {
+	if route.Table == unix.RT_TABLE_LOCAL || (route.Type != unix.RTN_UNICAST && route.Type != 0) {
+		return false
+	}
+	if route.LinkIndex <= 0 {
+		return false
+	}
+	if route.Dst == nil {
+		return true
+	}
+	ones, bits := route.Dst.Mask.Size()
+	return ones == 0 && (bits == net.IPv4len*8 || bits == net.IPv6len*8)
+}
+
+// androidRuleTables splits candidate routing tables for the default-interface
+// fallback. netd installs per-network explicit/output-interface/implicit rules
+// for every connected network ahead of the default-network rule, so taking the
+// first table with a default route can pick a secondary network (e.g. mobile
+// data while Wi-Fi is the default). The device default-network rule is the one
+// with fwmark mask 0xffff and no uidrange -- per-app default networks use the
+// same mask restricted to a uidrange -- so its table is preferred; the remaining
+// tables keep rule-priority order.
+func androidRuleTables(rules []netlink.Rule) (preferred []int, rest []int) {
+	seen := make(map[int]bool)
+	add := func(tables *[]int, table int) {
+		if table <= 0 || table == unix.RT_TABLE_LOCAL || seen[table] {
+			return
+		}
+		seen[table] = true
+		*tables = append(*tables, table)
+	}
+	// The default network's table also appears in earlier per-network rules,
+	// so pick default-network tables in a separate first pass.
+	for _, rule := range rules {
+		if rule.Mask == androidDefaultNetworkRuleMask && rule.UIDRange == nil {
+			add(&preferred, rule.Table)
+		}
+	}
+	for _, rule := range rules {
+		add(&rest, rule.Table)
+	}
+	return
+}
+
+const androidDefaultNetworkRuleMask = 0xFFFF
+
+func findAndroidDefaultInterfaceInTables(family int, tables []int, resolver *routeLinkResolver) string {
+	for _, table := range tables {
+		routes, err := netlink.RouteListFiltered(
+			family,
+			&netlink.Route{Table: table},
+			netlink.RT_FILTER_TABLE,
+		)
+		if err != nil {
+			continue
+		}
+		for _, route := range routes {
+			if !isCandidateDefaultRoute(route) {
+				continue
+			}
+			if iface := resolver.resolve(route.LinkIndex); iface != "" {
+				return iface
+			}
+		}
+	}
+	return ""
+}
+
+func findAndroidDefaultInterfaceByRoutes(family int, resolver *routeLinkResolver) string {
+	routes, err := netlink.RouteListFiltered(
+		family,
+		&netlink.Route{Table: unix.RT_TABLE_UNSPEC},
+		netlink.RT_FILTER_TABLE,
+	)
+	if err != nil {
+		return ""
+	}
+	for _, route := range routes {
+		if !isCandidateDefaultRoute(route) {
+			continue
+		}
+		if iface := resolver.resolve(route.LinkIndex); iface != "" {
+			return iface
+		}
+	}
+	return ""
+}
+
+// Each tier is tried for both families before the next, so an IPv6-only
+// default network (its IPv4 default goes through the skipped clat shim) still
+// wins over a secondary network that merely has an IPv4 default route.
+func findAndroidDefaultInterfaceName() string {
+	resolver := newRouteLinkResolver()
+	families := []int{netlink.FAMILY_V4, netlink.FAMILY_V6}
+	var rest [2][]int
+	for index, family := range families {
+		rules, err := netlink.RuleList(family)
+		if err != nil {
+			continue
+		}
+		var preferred []int
+		preferred, rest[index] = androidRuleTables(rules)
+		if name := findAndroidDefaultInterfaceInTables(family, preferred, resolver); name != "" {
+			return name
+		}
+	}
+	for index, family := range families {
+		if name := findAndroidDefaultInterfaceInTables(family, rest[index], resolver); name != "" {
+			return name
+		}
+	}
+	for _, family := range families {
+		if name := findAndroidDefaultInterfaceByRoutes(family, resolver); name != "" {
+			return name
+		}
+	}
+	return ""
 }
 
 func (i *Inbound) setDefaultInterfaceName(interfaceName string) {

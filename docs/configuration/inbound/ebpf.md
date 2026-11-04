@@ -87,9 +87,10 @@ available.
 
 ### tc_priority
 
-TC filter priority from 1 through 65535. Default is `1`. Change it only when
-coordinating with other filters. The default permits TCX when supported; a
-custom priority uses `clsact` so numeric ordering remains meaningful.
+TC filter priority from 1 through 65535. Default is `1`, or `2` on Android.
+Change it only when coordinating with other filters. Priority `1` permits TCX
+when supported; any other priority, including the Android default, uses
+`clsact` so numeric ordering remains meaningful.
 
 ### fakeip_icmp
 
