@@ -11,21 +11,59 @@ func (i *Inbound) Close() error {
 	// Record the inbound before releasing anything: a concurrent initialization
 	// then waits for this Close instead of missing resources it retains.
 	retainForRetry(i)
-	i.lifecycleAccess.Lock()
-	defer i.lifecycleAccess.Unlock()
-	err := i.closeResources()
-	if !i.retainsResources() {
+	i.closeAccess.Lock()
+	defer i.closeAccess.Unlock()
+	err, retained := i.stopAndCloseResources()
+	if !retained {
 		releaseRetained(i)
 	}
 	return err
 }
 
 func (i *Inbound) cleanupStartFailure() error {
-	return i.closeResources()
+	i.closeAccess.Lock()
+	defer i.closeAccess.Unlock()
+	err, _ := i.stopAndCloseResources()
+	return err
 }
 
-func (i *Inbound) closeResources() error {
+func (i *Inbound) stopAndCloseResources() (error, bool) {
+	// Stop background workers before taking lifecycleAccess: stopping the TC
+	// interface monitor waits for its worker goroutine, which itself takes
+	// lifecycleAccess during health checks and reconciliation. closeAccess still
+	// serializes Close callers (including startup retry) across the whole pass.
 	monitorErr := i.stopInboundWorkers()
+	i.lifecycleAccess.Lock()
+	for i.hasRunningInboundWorkers() {
+		i.lifecycleAccess.Unlock()
+		monitorErr = E.Errors(monitorErr, i.stopInboundWorkers())
+		i.lifecycleAccess.Lock()
+	}
+	defer i.lifecycleAccess.Unlock()
+	closeErr := i.closeResourcesLocked()
+	return E.Errors(monitorErr, closeErr), i.retainsResources()
+}
+
+func (i *Inbound) hasRunningInboundWorkers() bool {
+	i.tcAssignmentJanitorAccess.Lock()
+	janitorRunning := i.tcAssignmentJanitorCancel != nil
+	i.tcAssignmentJanitorAccess.Unlock()
+	if janitorRunning {
+		return true
+	}
+	i.interfaceMonitor.access.Lock()
+	monitorRunning := i.interfaceMonitor.network != nil || i.interfaceMonitor.done != nil
+	i.interfaceMonitor.access.Unlock()
+	if monitorRunning {
+		return true
+	}
+	i.bypassRuleSetAccess.Lock()
+	policyRunning := i.policyCancel != nil || i.policyDone != nil || i.localBypassRules.started || i.sharedBypassRules.started
+	i.bypassRuleSetAccess.Unlock()
+	return policyRunning
+}
+
+func (i *Inbound) closeResourcesLocked() error {
 	sharedRewriteErr := i.closeSharedRewriteOwner()
 	dataPlane := i.takeTCDataPlane()
 	disableErr := error(nil)
@@ -39,7 +77,7 @@ func (i *Inbound) closeResources() error {
 	// In particular, removing redirect routes or self-bypass while a hook is
 	// still attached can redirect traffic into a dead path or capture ourselves.
 	if i.tcBackend() != nil || i.cgroupBackendInstance() != nil || i.sharedRewriteInstance() != nil {
-		return E.Errors(monitorErr, sharedRewriteErr, disableErr, listenerErr, udpNATErr, udpReplySocketErr, dataPlaneErr, cgroupErr)
+		return E.Errors(sharedRewriteErr, disableErr, listenerErr, udpNATErr, udpReplySocketErr, dataPlaneErr, cgroupErr)
 	}
 	namespaceErr := error(nil)
 	if i.tcBackend() == nil {
@@ -73,7 +111,7 @@ func (i *Inbound) closeResources() error {
 	if i.processTrackerRollback != nil {
 		i.processTrackerRollback, processTrackerRollbackErr = closeProcessTrackerOwner(i.processTrackerRollback)
 	}
-	return E.Errors(monitorErr, sharedRewriteErr, disableErr, listenerErr, udpNATErr, udpReplySocketErr, dataPlaneErr, namespaceErr, cgroupErr, routeErr, processTrackerErr, processTrackerRollbackErr, selfBypassErr)
+	return E.Errors(sharedRewriteErr, disableErr, listenerErr, udpNATErr, udpReplySocketErr, dataPlaneErr, namespaceErr, cgroupErr, routeErr, processTrackerErr, processTrackerRollbackErr, selfBypassErr)
 }
 
 func (i *Inbound) stopInboundWorkers() error {
