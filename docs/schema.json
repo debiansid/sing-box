@@ -3670,6 +3670,9 @@
               }
             }
           ]
+        },
+        "vpn_server_bypass": {
+          "$ref": "#/$defs/EBPFVPNServerBypassOptions"
         }
       },
       "additionalProperties": false
@@ -3823,6 +3826,92 @@
               "type": "array",
               "items": {
                 "type": "string"
+              }
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "EBPFVPNServerBypassOptions": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "network": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "tcp",
+                "udp"
+              ]
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "tcp",
+                  "udp"
+                ]
+              }
+            }
+          ]
+        },
+        "ip_cidr": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IPPrefix"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/IPPrefix"
+              }
+            }
+          ]
+        },
+        "port": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 65535
+              }
+            }
+          ]
+        },
+        "port_range": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
+        },
+        "vpn_interface_address": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IPPrefix"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/IPPrefix"
               }
             }
           ]

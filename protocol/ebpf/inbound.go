@@ -93,6 +93,8 @@ type inboundWorkers struct {
 	tcAssignmentJanitorAccess sync.Mutex
 	tcAssignmentJanitorCancel context.CancelFunc
 	tcAssignmentJanitorDone   chan struct{}
+	vpnReady                  atomic.Bool
+	vpnInterfacePackets       map[vpnInterfaceIdentity]vpnInterfaceState
 }
 
 type inboundDiagnostics struct {
@@ -167,6 +169,7 @@ type Inbound struct {
 	sharedIPv6                bool
 	sharedBypassPrivate       bool
 	localBypassPort           []portRange
+	vpnServerBypass           vpnServerBypassPolicy
 	sharedBypassPort          []portRange
 	localBypassExclude        []netip.Prefix
 	sharedBypassExclude       []netip.Prefix
@@ -180,6 +183,7 @@ type Inbound struct {
 	sharedExcludeMAC          []commonEBPF.MACAddress
 	localInitialDestinations  []commonEBPF.CIDRDecision
 	sharedInitialDestinations []commonEBPF.CIDRDecision
+	closeAccess               sync.Mutex
 	lifecycleAccess           sync.Mutex
 	bypassRuleSetAccess       sync.Mutex
 	localBypassRules          bypassRuleSetState
@@ -192,6 +196,7 @@ type Inbound struct {
 func (i *Inbound) localSocketAssignEnabled() bool {
 	return i.localEnabled && i.localDataPlane == localDataPlaneSocketAssign
 }
+
 func (i *Inbound) socketAssignIPv6Enabled() bool {
 	return i.localSocketAssignEnabled() && i.localIPv6 || i.sharedSocketAssignEnabled() && i.sharedIPv6
 }
@@ -289,6 +294,10 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 	if err = validatePortPolicyCapacity("shared bypass_port", sharedBypassPort, sharedDNSMode, enableTCP, enableUDP); err != nil {
 		return nil, err
 	}
+	vpnServerBypass, err := normalizeVPNServerBypass(options.Local.VPNServerBypass, enableTCP, enableUDP)
+	if err != nil {
+		return nil, err
+	}
 	networkManager := service.FromContext[adapter.NetworkManager](ctx)
 	if networkManager == nil {
 		return nil, E.New("missing network manager")
@@ -333,6 +342,7 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 		sharedIPv6:          sharedEnabled && enabledByDefault(options.Shared.IPv6),
 		sharedBypassPrivate: options.Shared.BypassPrivateAddress == nil || *options.Shared.BypassPrivateAddress,
 		localBypassPort:     localBypassPort,
+		vpnServerBypass:     vpnServerBypass,
 		sharedBypassPort:    sharedBypassPort,
 		localBypassExclude:  localBypassExclude,
 		sharedBypassExclude: sharedBypassExclude,
@@ -375,6 +385,7 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 	}
 	warnBypassPortConflicts(logger, "local", localDNSMode, localBypassPort)
 	warnBypassPortConflicts(logger, "shared", sharedDNSMode, sharedBypassPort)
+	warnVPNServerBypassDNSPort(logger, localDNSMode, vpnServerBypass.Ports)
 	loadRuleSets := func(scope string, target *[]adapter.RuleSet, tags ...[]string) error {
 		seen := make(map[string]struct{})
 		for _, tagList := range tags {
@@ -430,5 +441,20 @@ func warnBypassPortConflicts(logger log.ContextLogger, scope, dnsMode string, po
 			logger.Warn("eBPF ", scope, ".bypass_port includes DNS port 53, but dns_mode=off already bypasses DNS")
 		}
 		break
+	}
+}
+
+// warnVPNServerBypassDNSPort reports port 53 entries that DNS precedence in the
+// data plane makes unreachable for the VPN server gate.
+func warnVPNServerBypassDNSPort(logger log.ContextLogger, dnsMode string, ports []portRange) {
+	if logger == nil || dnsMode == dnsModeRespectPolicy {
+		return
+	}
+	for _, portRange := range ports {
+		if portRange.Start <= 53 && portRange.End >= 53 {
+			logger.Warn("eBPF local.vpn_server_bypass includes DNS port 53, but dns_mode=", dnsMode,
+				" handles DNS first, so the gate never applies to it")
+			return
+		}
 	}
 }

@@ -19,6 +19,7 @@ on:
       - 'daemon/started_service*.go'
       - 'daemon/started_service.proto'
       - 'dns/transport/fakeip/store_ebpf.go'
+      - 'experimental/clashapi/ebpf*.go'
       - 'go.mod'
       - 'go.sum'
       - 'include/ebpf*.go'
