@@ -19,6 +19,10 @@ func bindEBPFSelfBypassPacketConnLifecycle(_ adapter.NetworkManager, conn net.Pa
 	return conn
 }
 
+func ebpfSelfBypassDialer(_ adapter.NetworkManager, dialer net.Dialer) (net.Dialer, func()) {
+	return dialer, func() {}
+}
+
 func RegisterEBPFSelfBypassPacketConn(_ adapter.NetworkManager, _ net.PacketConn) error {
 	return nil
 }

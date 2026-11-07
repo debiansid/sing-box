@@ -3,8 +3,10 @@
 package dialer
 
 import (
+	"errors"
 	"net"
 	"sync"
+	"syscall"
 	"testing"
 
 	commonEBPF "github.com/CHIZI-0618/sing-ebpf"
@@ -64,5 +66,41 @@ func TestSelfBypassCleanupModeContract(t *testing.T) {
 	}
 	if selfBypassNeedsUserspaceCleanup("socket_release") {
 		t.Fatal("kernel release mode must not install duplicate userspace cleanup")
+	}
+}
+
+type selfBypassNetworkManager struct {
+	adapter.NetworkManager
+	tracker *commonEBPF.SelfBypass
+}
+
+func (m selfBypassNetworkManager) EBPFSelfBypass() *commonEBPF.SelfBypass { return m.tracker }
+
+// The rollback dialer moves the chain into ControlContext; Go would ignore a
+// Control left beside it, dropping registration and interface binding.
+func TestSelfBypassRollbackDialerKeepsControlChain(t *testing.T) {
+	tracker, err := commonEBPF.NewSelfBypass()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tracker.Close()
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	refused := listener.Addr().String()
+	listener.Close()
+	controlErr := errors.New("control failed")
+	var calls int
+	dialer, rollback := ebpfSelfBypassDialer(selfBypassNetworkManager{tracker: tracker}, net.Dialer{
+		Control: func(string, string, syscall.RawConn) error {
+			calls++
+			return controlErr
+		},
+	})
+	_, err = dialer.Dial("tcp4", refused)
+	rollback()
+	if calls != 1 || !errors.Is(err, controlErr) {
+		t.Fatalf("control chain was not applied: calls=%d err=%v", calls, err)
 	}
 }

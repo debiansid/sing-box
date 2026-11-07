@@ -35,8 +35,10 @@ func (d *DefaultDialer) dialParallelInterface(ctx context.Context, dialer net.Di
 		if defaultInterface == nil || iif.Index != defaultInterface.Index {
 			perNetDialer.Control = control.Append(perNetDialer.Control, control.BindToInterface(nil, iif.Name, iif.Index))
 		}
+		perNetDialer, rollback := ebpfSelfBypassDialer(d.networkManager, perNetDialer)
 		conn, err := perNetDialer.DialContext(ctx, network, addr)
 		if err != nil {
+			rollback()
 			return nil, false, E.Cause(err, "dial ", iif.Name, " (", iif.Index, ")")
 		}
 		return conn, primary, nil
@@ -57,8 +59,10 @@ func (d *DefaultDialer) dialParallelInterface(ctx context.Context, dialer net.Di
 		if defaultInterface == nil || iif.Index != defaultInterface.Index {
 			perNetDialer.Control = control.Append(perNetDialer.Control, control.BindToInterface(nil, iif.Name, iif.Index))
 		}
+		perNetDialer, rollback := ebpfSelfBypassDialer(d.networkManager, perNetDialer)
 		conn, err := perNetDialer.DialContext(ctx, network, addr)
 		if err != nil {
+			rollback()
 			select {
 			case results <- dialResult{error: E.Cause(err, "dial ", iif.Name, " (", iif.Index, ")"), primary: primary}:
 			case <-returned:
@@ -67,6 +71,7 @@ func (d *DefaultDialer) dialParallelInterface(ctx context.Context, dialer net.Di
 			select {
 			case results <- dialResult{Conn: conn, primary: primary}:
 			case <-returned:
+				rollback()
 				conn.Close()
 			}
 		}
@@ -130,8 +135,10 @@ func (d *DefaultDialer) dialParallelInterfaceFastFallback(ctx context.Context, d
 		if defaultInterface == nil || iif.Index != defaultInterface.Index {
 			perNetDialer.Control = control.Append(perNetDialer.Control, control.BindToInterface(nil, iif.Name, iif.Index))
 		}
+		perNetDialer, rollback := ebpfSelfBypassDialer(d.networkManager, perNetDialer)
 		conn, err := perNetDialer.DialContext(ctx, network, addr)
 		if err != nil {
+			rollback()
 			return nil, false, E.Cause(err, "dial ", iif.Name, " (", iif.Index, ")")
 		}
 		return conn, primary, nil
@@ -153,8 +160,10 @@ func (d *DefaultDialer) dialParallelInterfaceFastFallback(ctx context.Context, d
 		if defaultInterface == nil || iif.Index != defaultInterface.Index {
 			perNetDialer.Control = control.Append(perNetDialer.Control, control.BindToInterface(nil, iif.Name, iif.Index))
 		}
+		perNetDialer, rollback := ebpfSelfBypassDialer(d.networkManager, perNetDialer)
 		conn, err := perNetDialer.DialContext(ctx, network, addr)
 		if err != nil {
+			rollback()
 			select {
 			case results <- dialResult{error: E.Cause(err, "dial ", iif.Name, " (", iif.Index, ")"), primary: primary}:
 			case <-returned:
@@ -166,6 +175,7 @@ func (d *DefaultDialer) dialParallelInterfaceFastFallback(ctx context.Context, d
 				if primary && time.Since(startAt) <= fallbackDelay {
 					resetFastFallback(time.Time{})
 				}
+				rollback()
 				conn.Close()
 			}
 		}

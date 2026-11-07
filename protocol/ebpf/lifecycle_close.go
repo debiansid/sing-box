@@ -8,8 +8,6 @@ import (
 )
 
 func (i *Inbound) Close() error {
-	i.lifecycleAccess.Lock()
-	defer i.lifecycleAccess.Unlock()
 	return i.closeResources()
 }
 

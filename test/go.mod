@@ -36,7 +36,7 @@ require (
 require (
 	filippo.io/edwards25519 v1.2.0 // indirect
 	github.com/Azure/go-ansiterm v0.0.0-20210617225240-d185dfc1b5a1 // indirect
-	github.com/CHIZI-0618/sing-ebpf v0.1.0-beta.1 // indirect
+	github.com/CHIZI-0618/sing-ebpf v0.1.0-beta.1.0.20261107104547-1af55b7ae208 // indirect
 	github.com/Microsoft/go-winio v0.6.1 // indirect
 	github.com/RyuaNerin/go-krypto v1.3.0 // indirect
 	github.com/ajg/form v1.5.1 // indirect
@@ -223,3 +223,5 @@ require (
 	lukechampine.com/blake3 v1.3.0 // indirect
 	zombiezen.com/go/capnproto2 v2.18.2+incompatible // indirect
 )
+
+replace github.com/CHIZI-0618/sing-ebpf => github.com/debiansid/sing-ebpf v0.1.0-beta.1.0.20261107134928-a95814a15823

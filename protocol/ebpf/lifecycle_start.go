@@ -508,6 +508,9 @@ func (i *Inbound) needsLPMPolicy() bool {
 		(i.sharedEnabled && i.fakeIPForceInterceptRequired(true)) {
 		return true
 	}
+	if i.localSocketAssignEnabled() && i.vpnServerBypass.Enabled {
+		return true
+	}
 	if (i.localSocketAssignEnabled() || i.localCgroupEnabled()) &&
 		(len(i.localPolicy.IncludeUID) > 0 || len(i.localPolicy.ExcludeUID) > 0) {
 		return true

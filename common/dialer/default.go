@@ -278,21 +278,28 @@ func (d *DefaultDialer) DialContext(ctx context.Context, network string, address
 		return nil, E.New("domain not resolved")
 	}
 	if d.networkStrategy == nil {
+		var rollback func()
 		conn, err := listener.ListenNetworkNamespace[net.Conn](ctx, d.netns, func() (net.Conn, error) {
 			switch N.NetworkName(network) {
 			case N.NetworkUDP:
-				if !address.IsIPv6() {
-					return d.udpDialer4.DialContext(ctx, network, address.String())
-				} else {
-					return d.udpDialer6.DialContext(ctx, network, address.String())
+				udpDialer := d.udpDialer4
+				if address.IsIPv6() {
+					udpDialer = d.udpDialer6
 				}
+				udpDialer, rollback = ebpfSelfBypassDialer(d.networkManager, udpDialer)
+				return udpDialer.DialContext(ctx, network, address.String())
 			}
-			if !address.IsIPv6() {
-				return DialSlowContext(&d.dialer4, ctx, d.netns, network, address)
-			} else {
-				return DialSlowContext(&d.dialer6, ctx, d.netns, network, address)
+			tcpDialer := d.dialer4
+			if address.IsIPv6() {
+				tcpDialer = d.dialer6
 			}
+			// shortcut: a TFO dial deferred to the first write is not rolled back on failure; TFO is opt-in, cover it if it is used with eBPF.
+			tcpDialer.Dialer, rollback = ebpfSelfBypassDialer(d.networkManager, tcpDialer.Dialer)
+			return DialSlowContext(&tcpDialer, ctx, d.netns, network, address)
 		})
+		if err != nil && rollback != nil {
+			rollback()
+		}
 		return d.trackConn(ctx, address, conn, err)
 	} else {
 		return d.DialParallelInterface(ctx, network, address, d.networkStrategy, d.networkType, d.fallbackNetworkType, d.networkFallbackDelay)

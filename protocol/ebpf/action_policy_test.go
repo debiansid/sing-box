@@ -203,3 +203,31 @@ func TestPortActionsExplicitlyEncodeDNSStage(t *testing.T) {
 		}
 	}
 }
+
+func TestVPNServerBypassEndpointPortsHonorDNSMode(t *testing.T) {
+	decisions := func(ports ...uint16) []commonEBPF.PortDecision {
+		var result []commonEBPF.PortDecision
+		for _, port := range ports {
+			result = append(result,
+				commonEBPF.PortDecision{Protocol: commonEBPF.ProtocolTCP, Port: port, Action: commonEBPF.DecisionPass},
+				commonEBPF.PortDecision{Protocol: commonEBPF.ProtocolUDP, Port: port, Action: commonEBPF.DecisionPass})
+		}
+		return result
+	}
+	dnsAndIKE := []portRange{{Start: 53, End: 53}, {Start: 500, End: 500}}
+	for _, testCase := range []struct {
+		dnsMode string
+		ports   []portRange
+		want    []commonEBPF.PortDecision
+	}{
+		{dnsModeRespectPolicy, dnsAndIKE, decisions(53, 500)},
+		{dnsModeHijack, dnsAndIKE, decisions(500)},
+		{dnsModeOff, dnsAndIKE, decisions(500)},
+		{dnsModeHijack, []portRange{{Start: 53, End: 53}}, nil},
+	} {
+		policy := vpnServerBypassPolicy{Enabled: true, EnableTCP: true, EnableUDP: true, Ports: testCase.ports}
+		if got := vpnServerBypassEndpointPorts(policy, testCase.dnsMode); !reflect.DeepEqual(got, testCase.want) {
+			t.Fatalf("dns_mode=%s ports=%v: got %+v, want %+v", testCase.dnsMode, testCase.ports, got, testCase.want)
+		}
+	}
+}

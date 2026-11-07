@@ -3,6 +3,7 @@
 package dialer
 
 import (
+	"context"
 	"net"
 	"runtime"
 	"sync"
@@ -14,6 +15,8 @@ import (
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common/control"
 	E "github.com/sagernet/sing/common/exceptions"
+
+	"golang.org/x/sys/unix"
 )
 
 // bindEBPFSelfBypassConnLifecycle pairs userspace socket registration with the
@@ -163,6 +166,47 @@ func EBPFSelfBypassCleanup(networkManager adapter.NetworkManager, rawConn syscal
 	var once sync.Once
 	return func() {
 		once.Do(func() { _ = tracker.UnregisterSocket(rawConn) })
+	}
+}
+
+// ebpfSelfBypassDialer returns a copy of dialer that records the cookie of
+// each socket it creates, and a rollback that unregisters those cookies. Call
+// the rollback when the dial fails or its connection is discarded: Go closes a
+// socket whose connect fails before any owner can unregister it. Apply it to
+// the final dialer, since ControlContext makes later Control changes ignored.
+func ebpfSelfBypassDialer(networkManager adapter.NetworkManager, dialer net.Dialer) (net.Dialer, func()) {
+	provider, loaded := networkManager.(interface {
+		EBPFSelfBypass() *commonEBPF.SelfBypass
+	})
+	if !loaded || provider.EBPFSelfBypass() == nil {
+		return dialer, func() {}
+	}
+	tracker := provider.EBPFSelfBypass()
+	if !selfBypassNeedsUserspaceCleanup(tracker.CleanupMode()) {
+		return dialer, func() {}
+	}
+	// One destination address dials one socket at a time, so no lock is needed.
+	var cookies []uint64
+	controlFunc := dialer.Control
+	dialer.Control = nil
+	dialer.ControlContext = func(_ context.Context, network string, address string, rawConn syscall.RawConn) error {
+		// Record the cookie first so a control failing after registration is rolled back too.
+		_ = control.Raw(rawConn, func(fd uintptr) error {
+			cookie, err := unix.GetsockoptUint64(int(fd), unix.SOL_SOCKET, unix.SO_COOKIE)
+			if err == nil && cookie != 0 {
+				cookies = append(cookies, cookie)
+			}
+			return nil
+		})
+		if controlFunc == nil {
+			return nil
+		}
+		return controlFunc(network, address, rawConn)
+	}
+	return dialer, func() {
+		for _, cookie := range cookies {
+			_ = tracker.UnregisterCookie(cookie)
+		}
 	}
 }
 
