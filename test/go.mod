@@ -14,9 +14,9 @@ require (
 	github.com/docker/docker v27.3.1+incompatible
 	github.com/docker/go-connections v0.5.0
 	github.com/gofrs/uuid/v5 v5.5.1
-	github.com/opencontainers/image-spec v1.1.0
+	github.com/opencontainers/image-spec v1.1.1
 	github.com/sagernet/quic-go v0.66.0-sing-box-mod.1
-	github.com/sagernet/sing v0.9.7-0.20261125122036-9b11dbe28a7d
+	github.com/sagernet/sing v0.9.7-0.20261127131308-bbcd8ecc42a3
 	github.com/sagernet/sing-openvpn v0.1.1-0.20261125120933-28a40b4ceb1f
 	github.com/sagernet/sing-quic v0.7.2-0.20261126024618-27f15a98d9c9
 	github.com/sagernet/sing-shadowsocks v0.2.9-0.20260929204512-65740e0f0e3e
@@ -34,6 +34,7 @@ require (
 require (
 	filippo.io/edwards25519 v1.2.0 // indirect
 	github.com/Azure/go-ansiterm v0.0.0-20210617225240-d185dfc1b5a1 // indirect
+	github.com/CHIZI-0618/sing-ebpf v0.1.0-beta.3.0.20261127160408-1b82a41143ba // indirect
 	github.com/Microsoft/go-winio v0.6.1 // indirect
 	github.com/RyuaNerin/go-krypto v1.3.0 // indirect
 	github.com/ajg/form v1.5.1 // indirect
@@ -47,6 +48,7 @@ require (
 	github.com/caddyserver/certmagic v0.25.3-0.20260421143802-60d9d8b415d6 // indirect
 	github.com/caddyserver/zerossl v0.1.5 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	github.com/cilium/ebpf v0.22.1-0.20261119135504-862b60f0fc93 // indirect
 	github.com/containerd/log v0.1.0 // indirect
 	github.com/coreos/go-iptables v0.8.0 // indirect
 	github.com/coreos/go-oidc/v3 v3.17.0 // indirect
@@ -229,3 +231,5 @@ replace github.com/sagernet/sing-snell => github.com/reF1nd/sing-snell v0.0.0-20
 replace github.com/sagernet/quic-go => github.com/reF1nd/quic-go v0.66.0-sing-box-mod.1.0.20261126120001-36dc3fd22882
 
 replace github.com/sagernet/sing-quic => github.com/reF1nd/sing-quic v0.7.2-0.20261126075647-7ca8b8c21f75
+
+replace github.com/CHIZI-0618/sing-ebpf => github.com/debiansid/sing-ebpf v0.1.0-beta.3.0.20261128001651-6f97c52ce9a9

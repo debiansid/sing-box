@@ -139,4 +139,5 @@ type interfaceWarningLimiters struct {
 	hostPolicy            warningLimiter
 	reconcile             warningLimiter
 	fakeIPICMPRoute       warningLimiter
+	vpnReadiness          warningLimiter
 }

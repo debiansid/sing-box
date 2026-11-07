@@ -215,3 +215,5 @@ replace github.com/sagernet/sing-snell => github.com/reF1nd/sing-snell v0.0.0-20
 replace github.com/sagernet/quic-go => github.com/reF1nd/quic-go v0.66.0-sing-box-mod.1.0.20261126120001-36dc3fd22882
 
 replace github.com/sagernet/sing-quic => github.com/reF1nd/sing-quic v0.7.2-0.20261126075647-7ca8b8c21f75
+
+replace github.com/CHIZI-0618/sing-ebpf => github.com/debiansid/sing-ebpf v0.1.0-beta.3.0.20261128001651-6f97c52ce9a9
