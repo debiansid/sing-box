@@ -55,7 +55,7 @@ func (i *Inbound) tcInterfaceHealthCheck(ctx context.Context) (healthy bool) {
 			}
 		}
 	}
-	return true
+	return i.androidEgressGuardHealthy()
 }
 
 func nextTCRetryDelay(current time.Duration) time.Duration {
@@ -173,7 +173,9 @@ func (i *Inbound) updateTCInterfaces(ctx context.Context) (outcome tcUpdateOutco
 		return
 	}
 	if !changed {
-		i.syncAndroidEgressGuard(localInterface)
+		if err = i.syncAndroidEgressGuard(localInterface); err != nil {
+			outcome.general = tcSharedRewriteRecoverable
+		}
 		if err = i.updateTCHostAddresses(hostAddresses); err != nil {
 			i.interfaceWarnings.hostPolicy.warn(i.logger, "refresh TC eBPF host addresses: ", err)
 			outcome.general = tcSharedRewriteRecoverable
@@ -199,7 +201,9 @@ func (i *Inbound) updateTCInterfaces(ctx context.Context) (outcome tcUpdateOutco
 		return
 	}
 	i.warnIfLocalFakeIPICMPIPv6Unroutable(localInterface)
-	i.syncAndroidEgressGuard(localInterface)
+	if err = i.syncAndroidEgressGuard(localInterface); err != nil {
+		outcome.general = tcSharedRewriteRecoverable
+	}
 	if err = i.updateCgroupHostAddresses(hostAddresses); err != nil {
 		i.interfaceWarnings.hostPolicy.warn(i.logger, "refresh cgroup eBPF host addresses: ", err)
 		outcome.general = tcSharedRewriteRecoverable

@@ -433,6 +433,58 @@ func TestRetryLoopWatchdogDefersToPendingRetry(t *testing.T) {
 	}
 }
 
+func TestRetryLoopWatchdogIgnoresUnrelatedPendingRetry(t *testing.T) {
+	// A bypass rule-set retry says nothing about TC attachments, so a failing
+	// health check must still reconcile without waiting for that retry.
+	timer := &testRetryTimer{
+		expired: make(chan time.Time, 1),
+		actions: make(chan testRetryTimerAction, 64),
+	}
+	previous := tcRetryTimerFactory
+	tcRetryTimerFactory = func() tcRetryTimer { return timer }
+	t.Cleanup(func() { tcRetryTimerFactory = previous })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	updates := make(chan struct{}, 1)
+	ran := make(chan struct{}, 64)
+	finished := make(chan struct{})
+	go func() {
+		defer close(finished)
+		runTCInterfaceUpdateLoopWithHealth(
+			ctx,
+			updates,
+			5*time.Millisecond,
+			func(context.Context) bool { return false },
+			func(context.Context) tcUpdateOutcome {
+				ran <- struct{}{}
+				return tcUpdateOutcome{
+					sharedRewrite: tcSharedRewriteSettled,
+					general:       tcSharedRewriteSettled,
+					bypassRuleSet: tcSharedRewriteRecoverable,
+				}
+			},
+			nil,
+		)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-finished:
+		case <-time.After(2 * time.Second):
+			t.Error("update loop did not exit after cancellation")
+		}
+	})
+
+	updates <- struct{}{}
+	for round := 0; round < 2; round++ {
+		select {
+		case <-ran:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("round %d: failing health check did not reconcile", round)
+		}
+	}
+}
+
 func TestRetryLoopWithoutHealthCheckWaitsForEvent(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	updates := make(chan struct{}, 1)

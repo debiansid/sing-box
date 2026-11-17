@@ -223,13 +223,19 @@ func TestAndroidRuleTablesPreferDefaultNetwork(t *testing.T) {
 		{Priority: 22000, Table: 1033, Mask: androidDefaultNetworkRuleMask},
 		{Priority: 32000, Table: 0},
 	}
-	got := androidRuleTables(rules)
-	want := []int{1033, 1021}
-	if !slices.Equal(got, want) {
-		t.Fatalf("default-network table not preferred: got %v want %v", got, want)
+	preferred, rest := androidRuleTables(rules)
+	if !slices.Equal(preferred, []int{1033}) || !slices.Equal(rest, []int{1021}) {
+		t.Fatalf("default-network table not preferred: got %v then %v", preferred, rest)
 	}
-	if got := androidRuleTables(rules[:5]); !slices.Equal(got, []int{1021, 1033}) {
-		t.Fatalf("without a default-network rule, rule order must be kept: %v", got)
+	if preferred, rest := androidRuleTables(rules[:5]); len(preferred) != 0 || !slices.Equal(rest, []int{1021, 1033}) {
+		t.Fatalf("without a default-network rule, rule order must be kept: %v then %v", preferred, rest)
+	}
+	// A per-app default network shares the mask but is limited to a uidrange.
+	perApp := append([]netlink.Rule{
+		{Priority: 21000, Table: 1021, Mask: androidDefaultNetworkRuleMask, UIDRange: netlink.NewRuleUIDRange(10100, 10100)},
+	}, rules[5:]...)
+	if preferred, _ := androidRuleTables(perApp); !slices.Equal(preferred, []int{1033}) {
+		t.Fatalf("per-app default-network rule must not be preferred: %v", preferred)
 	}
 }
 

@@ -79,9 +79,9 @@ eBPF 入站生成的代理侧 UDP 回包路径；不会让进入接管 hook 时�
 
 ### tc_priority
 
-TC filter 优先级，范围 1 至 65535，默认 `1`。仅在需要与其他 filter 协调顺序时
-修改。默认值允许在内核支持时使用 TCX；自定义优先级会使用 `clsact`，以保留数值
-排序语义。
+TC filter 优先级，范围 1 至 65535，默认 `1`，Android 上默认 `2`。仅在需要与其他
+filter 协调顺序时修改。优先级 `1` 允许在内核支持时使用 TCX；其他优先级（包括
+Android 默认值）会使用 `clsact`，以保留数值排序语义。
 
 ### fakeip_icmp
 

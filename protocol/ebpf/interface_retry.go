@@ -165,7 +165,9 @@ func (i *Inbound) runTCInterfaceUpdates(ctx context.Context, updates <-chan stru
 	}, i.recordNextRetryDeadline, vpnInterfacePollInterval, syncVPN)
 }
 
-const androidTCDriftCheckInterval = 3 * time.Second
+// Network changes arrive as events; the drift check only catches state removed behind our back
+// (TC filters, the egress guard jump), so it stays cheap on an idle phone.
+const androidTCDriftCheckInterval = 30 * time.Second
 
 // A failed attach on Android usually races netd setting up a new network, so it is retried
 // almost at once; the doubling backoff still bounds a persistent failure.
@@ -325,15 +327,18 @@ func runTCInterfaceUpdateLoopWithVPN(
 		if ctx.Err() != nil {
 			return
 		}
-		// With a short (Android) drift interval, a failing health check would
-		// otherwise force a full reconcile every tick and defeat the retry
-		// backoff. While a retry is already scheduled, leave recovery to it.
-		if triggeredByHealthCheck && retryChannel != nil {
-			continue
-		}
-		if triggeredByHealthCheck && healthCheck != nil && healthCheck(ctx) {
-			refreshVPN()
-			continue
+		if triggeredByHealthCheck && healthCheck != nil {
+			if healthCheck(ctx) {
+				refreshVPN()
+				continue
+			}
+			// The health check covers what general and sharedRewrite repair; while either
+			// already has a retry scheduled, a failing check every tick must not bypass
+			// its backoff. An unrelated pending retry (bypassRuleSet) does not defer it.
+			if states[tcRetryComponentGeneral].delay > 0 || states[tcRetryComponentSharedRewrite].delay > 0 {
+				refreshVPN()
+				continue
+			}
 		}
 		now := time.Now()
 		outcome := update(ctx)

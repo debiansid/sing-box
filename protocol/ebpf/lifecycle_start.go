@@ -64,7 +64,7 @@ func (i *Inbound) startInbound() error {
 		return E.Cause(err, "reclaim previous TC data plane")
 	}
 	if !i.localSocketAssignEnabled() {
-		i.removeAndroidEgressGuard()
+		i.removeAndroidEgressGuard(true)
 	}
 	if i.localEnabled && i.androidUIDOptions != nil {
 		if err := i.resolveAndroidUIDPolicy(); err != nil {
@@ -130,7 +130,8 @@ func (i *Inbound) startInbound() error {
 		if err = backend.Enable(); err != nil {
 			return err
 		}
-		i.syncAndroidEgressGuard(localInterface)
+		// A failure is already logged; the first reconcile retries it with backoff.
+		_ = i.syncAndroidEgressGuard(localInterface)
 	}
 	if backend != nil && !i.sharedRewriteEnabled() {
 		i.startTCAssignmentJanitor()

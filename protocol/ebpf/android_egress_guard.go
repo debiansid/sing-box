@@ -4,9 +4,11 @@ package ebpf
 
 import (
 	"context"
+	"hash/fnv"
 	"os"
 	"os/exec"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -17,10 +19,8 @@ import (
 )
 
 const (
-	androidEgressGuardChain    = "sb_ebpf_local_guard"
 	androidEgressGuardTimeout  = 5 * time.Second
 	androidFirstApplicationUID = 10000
-	androidLastUID             = 2147483647
 	androidExplicitNetworkMark = "0x10000/0x10000"
 	maxInterfaceNameLength     = 15
 )
@@ -34,65 +34,138 @@ var (
 )
 
 type androidEgressGuard struct {
-	access  sync.Mutex
-	applied string
+	access    sync.Mutex
+	applied   string
+	installed bool // an apply was attempted this run, so a chain may exist
 }
 
 // The local socket-assignment path only captures packets leaving the interface its TC programs
 // are attached to. Until they follow a new default network, and on any other network an app is
 // implicitly routed to, proxied apps would leave unproxied, so their packets are refused on every
 // interface but the attached one. Sockets explicitly bound to a network, VPN interfaces, private
-// destinations and system UIDs, which include the core, are left alone.
-func (i *Inbound) syncAndroidEgressGuard(localInterface string) {
+// destinations, system app IDs and the core's own UID are left alone.
+func (i *Inbound) syncAndroidEgressGuard(localInterface string) error {
 	if runtime.GOOS != "android" || !i.localSocketAssignEnabled() {
-		return
+		return nil
 	}
-	ipv4Rules := i.androidEgressGuardRules(localInterface, androidEgressGuardIPv4Unrouted)
+	chain := i.androidEgressGuardChain()
+	appUIDs := androidApplicationUIDRanges()
+	ipv4Rules := i.androidEgressGuardRules(chain, localInterface, androidEgressGuardIPv4Unrouted, appUIDs)
 	ipv6Rules := ""
 	if i.localIPv6 {
-		ipv6Rules = i.androidEgressGuardRules(localInterface, androidEgressGuardIPv6Unrouted)
+		ipv6Rules = i.androidEgressGuardRules(chain, localInterface, androidEgressGuardIPv6Unrouted, appUIDs)
 	}
 	applied := ipv4Rules + "\n" + ipv6Rules
 	state := &i.egressGuard
 	state.access.Lock()
 	defer state.access.Unlock()
 	if applied == state.applied {
-		return
+		return nil
 	}
-	err := applyAndroidEgressGuard("iptables", ipv4Rules)
+	state.installed = true
+	err := applyAndroidEgressGuard("iptables", chain, ipv4Rules)
 	if err == nil {
 		if ipv6Rules != "" {
-			err = applyAndroidEgressGuard("ip6tables", ipv6Rules)
+			err = applyAndroidEgressGuard("ip6tables", chain, ipv6Rules)
 		} else {
-			removeAndroidEgressGuardFamily("ip6tables")
+			removeAndroidEgressGuardFamily("ip6tables", chain)
 		}
 	}
 	if err != nil {
 		state.applied = ""
 		i.logger.Warn("eBPF local egress guard: ", err)
-		return
+		return err
 	}
 	state.applied = applied
 	i.logger.Debug("eBPF local egress guard allows interface: ", localInterface)
+	return nil
 }
 
-func (i *Inbound) removeAndroidEgressGuard() {
-	if runtime.GOOS != "android" {
-		return
+// androidEgressGuardHealthy reports whether the guard this inbound needs is still installed;
+// netd or a firewall app may flush OUTPUT, and a failed apply leaves nothing installed. Either
+// clears the cached rules so the next reconcile re-applies them.
+func (i *Inbound) androidEgressGuardHealthy() bool {
+	if runtime.GOOS != "android" || !i.localSocketAssignEnabled() {
+		return true
 	}
+	chain := i.androidEgressGuardChain()
 	state := &i.egressGuard
 	state.access.Lock()
 	defer state.access.Unlock()
-	removeAndroidEgressGuardFamily("iptables")
-	removeAndroidEgressGuardFamily("ip6tables")
-	state.applied = ""
+	if state.applied == "" {
+		return false
+	}
+	families := []string{"iptables"}
+	if i.localIPv6 {
+		families = append(families, "ip6tables")
+	}
+	for _, command := range families {
+		if runAndroidXtables(command, "", "-w", "-C", "OUTPUT", "-j", chain) != nil {
+			state.applied = ""
+			return false
+		}
+	}
+	return true
 }
 
-func (i *Inbound) androidEgressGuardRules(localInterface string, unrouted []string) string {
+// removeAndroidEgressGuard skips the xtables calls when this run never applied a guard, unless
+// stale is set: at start, a chain left by a crashed run would keep rejecting apps.
+func (i *Inbound) removeAndroidEgressGuard(stale bool) {
+	if runtime.GOOS != "android" {
+		return
+	}
+	chain := i.androidEgressGuardChain()
+	state := &i.egressGuard
+	state.access.Lock()
+	defer state.access.Unlock()
+	if !stale && !state.installed {
+		return
+	}
+	removeAndroidEgressGuardFamily("iptables", chain)
+	removeAndroidEgressGuardFamily("ip6tables", chain)
+	state.applied = ""
+	state.installed = false
+}
+
+// Each inbound owns its chain, so one inbound's cleanup never removes another's guard. The
+// name is derived from the tag so a restart after a crash finds and replaces its stale chain.
+func (i *Inbound) androidEgressGuardChain() string {
+	hash := fnv.New32a()
+	_, _ = hash.Write([]byte(i.Tag()))
+	return "sb_ebpf_guard_" + strconv.FormatUint(uint64(hash.Sum32()), 16)
+}
+
+// androidApplicationUIDRanges returns the application UID range of every Android user. App IDs
+// below 10000 are system services in every user, not only user 0.
+// shortcut: users are read when the guard is rebuilt, so a user created later is guarded from the
+// next network change on.
+func androidApplicationUIDRanges() []uidRange {
+	users := []uint32{0}
+	if entries, err := os.ReadDir("/data/user"); err == nil {
+		users = users[:0]
+		for _, entry := range entries {
+			if user, err := strconv.ParseUint(entry.Name(), 10, 32); err == nil && user < 21474 {
+				users = append(users, uint32(user))
+			}
+		}
+		if len(users) == 0 {
+			users = append(users, 0)
+		}
+	}
+	slices.Sort(users)
+	appUIDs := make([]uidRange, 0, len(users))
+	for _, user := range users {
+		base := user * androidUserRange
+		appUIDs = append(appUIDs, uidRange{Start: base + androidFirstApplicationUID, End: base + androidUserRange - 1})
+	}
+	return appUIDs
+}
+
+func (i *Inbound) androidEgressGuardRules(chain string, localInterface string, unrouted []string, appUIDs []uidRange) string {
 	var builder strings.Builder
-	builder.WriteString("*filter\n:" + androidEgressGuardChain + " - [0:0]\n-F " + androidEgressGuardChain + "\n")
+	builder.WriteString("*filter\n:" + chain + " - [0:0]\n-F " + chain + "\n")
 	add := func(rule string) {
-		builder.WriteString("-A " + androidEgressGuardChain + " " + rule + "\n")
+		builder.WriteString("-A " + chain + " " + rule + "\n")
 	}
 	add("-o lo -j RETURN")
 	if localInterface != "" {
@@ -107,6 +180,10 @@ func (i *Inbound) androidEgressGuardRules(localInterface string, unrouted []stri
 	for _, prefix := range unrouted {
 		add("-d " + prefix + " -j RETURN")
 	}
+	// The core may run inside an app process; its own sockets bound with SO_BINDTODEVICE carry
+	// no explicit-network mark.
+	selfUID := uint32(os.Getuid())
+	add(androidUIDOwner(selfUID, selfUID) + " -j RETURN")
 	decisions, defaultDecision := i.compileProcessUIDPolicy()
 	if defaultDecision == commonEBPF.DecisionIntercept {
 		for _, decision := range decisions {
@@ -114,16 +191,20 @@ func (i *Inbound) androidEgressGuardRules(localInterface string, unrouted []stri
 				add(androidUIDOwner(decision.Start, decision.End) + " -j RETURN")
 			}
 		}
-		add(androidUIDOwner(androidFirstApplicationUID, androidLastUID) + " -j REJECT")
+		for _, appUID := range appUIDs {
+			add(androidUIDOwner(appUID.Start, appUID.End) + " -j REJECT")
+		}
 	} else {
 		for _, decision := range decisions {
 			if decision.Action != commonEBPF.DecisionIntercept {
 				continue
 			}
-			start := max(decision.Start, androidFirstApplicationUID)
-			end := min(decision.End, androidLastUID)
-			if start <= end {
-				add(androidUIDOwner(start, end) + " -j REJECT")
+			for _, appUID := range appUIDs {
+				start := max(decision.Start, appUID.Start)
+				end := min(decision.End, appUID.End)
+				if start <= end {
+					add(androidUIDOwner(start, end) + " -j REJECT")
+				}
 			}
 		}
 	}
@@ -136,27 +217,27 @@ func androidUIDOwner(start uint32, end uint32) string {
 }
 
 // iptables-restore replaces the chain in one commit, so switching interfaces never opens a gap.
-func applyAndroidEgressGuard(command string, rules string) error {
+func applyAndroidEgressGuard(command string, chain string, rules string) error {
 	if err := runAndroidXtables(command+"-restore", rules, "-w", "--noflush"); err != nil {
 		return E.Cause(err, command, "-restore")
 	}
-	if runAndroidXtables(command, "", "-w", "-C", "OUTPUT", "-j", androidEgressGuardChain) == nil {
+	if runAndroidXtables(command, "", "-w", "-C", "OUTPUT", "-j", chain) == nil {
 		return nil
 	}
-	if err := runAndroidXtables(command, "", "-w", "-I", "OUTPUT", "1", "-j", androidEgressGuardChain); err != nil {
+	if err := runAndroidXtables(command, "", "-w", "-I", "OUTPUT", "1", "-j", chain); err != nil {
 		return E.Cause(err, command, " OUTPUT jump")
 	}
 	return nil
 }
 
-func removeAndroidEgressGuardFamily(command string) {
+func removeAndroidEgressGuardFamily(command string, chain string) {
 	for attempt := 0; attempt < 8; attempt++ {
-		if runAndroidXtables(command, "", "-w", "-D", "OUTPUT", "-j", androidEgressGuardChain) != nil {
+		if runAndroidXtables(command, "", "-w", "-D", "OUTPUT", "-j", chain) != nil {
 			break
 		}
 	}
-	_ = runAndroidXtables(command, "", "-w", "-F", androidEgressGuardChain)
-	_ = runAndroidXtables(command, "", "-w", "-X", androidEgressGuardChain)
+	_ = runAndroidXtables(command, "", "-w", "-F", chain)
+	_ = runAndroidXtables(command, "", "-w", "-X", chain)
 }
 
 func runAndroidXtables(name string, stdin string, args ...string) error {
